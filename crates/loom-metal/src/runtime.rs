@@ -1071,10 +1071,26 @@ impl RuntimeState {
             }
             DispatchDomain::Fixed(_) => None,
         };
-        let width = pipeline
-            .thread_execution_width()
-            .min(pipeline.max_total_threads_per_threadgroup())
-            .max(1);
+        let width = match pass.threads_per_threadgroup {
+            Some(requested)
+                if u64::from(requested) <= pipeline.max_total_threads_per_threadgroup() =>
+            {
+                u64::from(requested)
+            }
+            Some(requested) => {
+                return Err(RuntimeDiagnostic::new(
+                    RuntimeDiagnosticCode::UnsupportedGraph,
+                    format!(
+                        "pass requests {requested} threads per threadgroup but its Metal pipeline supports at most {}",
+                        pipeline.max_total_threads_per_threadgroup()
+                    ),
+                ));
+            }
+            None => pipeline
+                .thread_execution_width()
+                .min(pipeline.max_total_threads_per_threadgroup())
+                .max(1),
+        };
         if let Some(count) = dynamic_count {
             let indirect = self.indirect.as_ref().ok_or_else(|| {
                 RuntimeDiagnostic::new(
@@ -2294,7 +2310,7 @@ mod tests {
     use super::{MetalRuntime, RuntimeState, encode_f32_initializer, pacing_offset};
     use crate::{BenchmarkConfig, BenchmarkMode, BenchmarkRunner};
     use loom_core::{
-        DataType, Literal,
+        DataType, Literal, StreamInitializer,
         conformance::{hello_field_builder, hello_population_builder},
         hello_organism_builder,
     };
@@ -2480,6 +2496,195 @@ mod tests {
         assert!(
             active_count > 1,
             "the organizer should have produced at least one daughter"
+        );
+    }
+
+    #[test]
+    fn parallel_population_compacts_and_allocates_one_thousand_parents() {
+        const INITIAL_COUNT: u32 = 1_024;
+        const CAPACITY: u32 = 4_096;
+
+        let mut graph = hello_organism_builder(CAPACITY).build().unwrap();
+        let repeat = |value, count| StreamInitializer::Repeat { value, count };
+        for stream in &mut graph.resources.streams {
+            stream.initial = match stream.name.as_str() {
+                "cells.active_count" => Some(StreamInitializer::Explicit(Literal::Array(vec![
+                    Literal::U32(INITIAL_COUNT),
+                ]))),
+                "cells.next_stable_id" => Some(StreamInitializer::Explicit(Literal::Array(vec![
+                    Literal::U32(INITIAL_COUNT + 1),
+                ]))),
+                "cells.stable_id" => Some(StreamInitializer::Explicit(Literal::Array(
+                    (1..=INITIAL_COUNT).rev().map(Literal::U32).collect(),
+                ))),
+                "cells.position" => Some(StreamInitializer::Grid2D {
+                    origin: Literal::Vector(vec![
+                        Literal::f32(-0.93),
+                        Literal::f32(-0.93),
+                        Literal::f32(0.0),
+                    ]),
+                    column_step: Literal::Vector(vec![
+                        Literal::f32(0.06),
+                        Literal::f32(0.0),
+                        Literal::f32(0.0),
+                    ]),
+                    row_step: Literal::Vector(vec![
+                        Literal::f32(0.0),
+                        Literal::f32(0.06),
+                        Literal::f32(0.0),
+                    ]),
+                    columns: 32,
+                    count: INITIAL_COUNT,
+                }),
+                "cells.radius" => Some(repeat(Literal::f32(0.01), INITIAL_COUNT)),
+                "cells.energy" => Some(repeat(Literal::f32(4.0), INITIAL_COUNT)),
+                "cells.age" => Some(repeat(Literal::U32(240), INITIAL_COUNT)),
+                "cells.fate" | "cells.previous_fate" => {
+                    Some(repeat(Literal::U32(1), INITIAL_COUNT))
+                }
+                "cells.phase" => Some(repeat(Literal::U32(1), INITIAL_COUNT)),
+                "cells.health" => Some(StreamInitializer::Explicit(Literal::Array(
+                    (0..INITIAL_COUNT)
+                        .map(|index| Literal::U32(u32::from(index % 4 == 0) * 2))
+                        .collect(),
+                ))),
+                "cells.fate_confidence" | "cells.time_in_fate" => {
+                    Some(repeat(Literal::U32(100), INITIAL_COUNT))
+                }
+                "cells.parent_id" => Some(repeat(Literal::U32(0), INITIAL_COUNT)),
+                "cells.color" => Some(repeat(
+                    Literal::Vector(vec![
+                        Literal::f32(0.8),
+                        Literal::f32(0.8),
+                        Literal::f32(0.9),
+                        Literal::f32(1.0),
+                    ]),
+                    INITIAL_COUNT,
+                )),
+                _ => stream.initial.clone(),
+            };
+        }
+
+        let stream_id = |name: &str| {
+            graph
+                .resources
+                .streams
+                .iter()
+                .find(|stream| stream.name == name)
+                .unwrap()
+                .id
+        };
+        let active_count_id = stream_id("cells.active_count");
+        let stable_id = stream_id("cells.stable_id");
+        let parent_id = stream_id("cells.parent_id");
+        let overflow_id = stream_id("population.neighbor_overflow");
+        let report = Validator::validate(&graph);
+        assert!(
+            report.is_valid(),
+            "seeded organism diagnostics: {:#?}",
+            report.diagnostics
+        );
+        let validated = report.validated.unwrap();
+        let device = metal::Device::system_default().expect("Metal device");
+        let layer = metal::MetalLayer::new();
+        layer.set_device(&device);
+        layer.set_pixel_format(metal::MTLPixelFormat::BGRA8Unorm);
+        let mut state = RuntimeState::new(validated, device.clone(), layer).unwrap();
+        state
+            .run_benchmark(
+                &device,
+                BenchmarkConfig {
+                    mode: BenchmarkMode::Headless,
+                    runner: BenchmarkRunner::LoomPlan,
+                    warmup_ticks: 0,
+                    sample_ticks: 1,
+                    ..BenchmarkConfig::default()
+                },
+            )
+            .expect("parallel population tick must execute");
+
+        let scalar_readback = device.new_buffer(8, metal::MTLResourceOptions::StorageModeShared);
+        let command_buffer = state.queue.new_command_buffer();
+        let blit = command_buffer.new_blit_command_encoder();
+        blit.copy_from_buffer(
+            &state.stream_buffers[active_count_id.0 as usize][0],
+            0,
+            &scalar_readback,
+            0,
+            4,
+        );
+        blit.copy_from_buffer(
+            &state.stream_buffers[overflow_id.0 as usize][0],
+            0,
+            &scalar_readback,
+            4,
+            4,
+        );
+        blit.end_encoding();
+        command_buffer.commit();
+        command_buffer.wait_until_completed();
+        let scalars =
+            unsafe { std::slice::from_raw_parts(scalar_readback.contents().cast::<u32>(), 2) };
+        let active_count = scalars[0];
+        assert!(
+            active_count > INITIAL_COUNT,
+            "parallel allocation should accept daughters"
+        );
+        assert_eq!(scalars[1], 0, "reference density must not overflow bins");
+
+        let id_readback = device.new_buffer(
+            u64::from(active_count) * 8,
+            metal::MTLResourceOptions::StorageModeShared,
+        );
+        let command_buffer = state.queue.new_command_buffer();
+        let blit = command_buffer.new_blit_command_encoder();
+        blit.copy_from_buffer(
+            &state.stream_buffers[stable_id.0 as usize][0],
+            0,
+            &id_readback,
+            0,
+            u64::from(active_count) * 4,
+        );
+        blit.copy_from_buffer(
+            &state.stream_buffers[parent_id.0 as usize][0],
+            0,
+            &id_readback,
+            u64::from(active_count) * 4,
+            u64::from(active_count) * 4,
+        );
+        blit.end_encoding();
+        command_buffer.commit();
+        command_buffer.wait_until_completed();
+        let ids = unsafe {
+            std::slice::from_raw_parts(id_readback.contents().cast::<u32>(), active_count as usize)
+        };
+        let parents = unsafe {
+            std::slice::from_raw_parts(
+                id_readback
+                    .contents()
+                    .cast::<u32>()
+                    .add(active_count as usize),
+                active_count as usize,
+            )
+        };
+        assert!(
+            ids.windows(2).all(|pair| pair[0] < pair[1]),
+            "compaction and allocation must preserve canonical stable-ID order"
+        );
+        assert!(
+            ids.iter()
+                .filter(|id| **id <= INITIAL_COUNT)
+                .all(|id| (INITIAL_COUNT - *id) % 4 != 0),
+            "cells with accepted death intents must be removed during compaction"
+        );
+        let child_parents = ids
+            .iter()
+            .zip(parents)
+            .filter_map(|(id, parent)| (*id > INITIAL_COUNT).then_some(*parent))
+            .collect::<Vec<_>>();
+        assert!(
+            child_parents.windows(2).all(|pair| pair[0] < pair[1]),
+            "birth allocation must follow stable parent ID, not input storage order"
         );
     }
 

@@ -283,103 +283,586 @@ kernel void organism_commit_fields(
     injury[index] = injury_next[index];
 }
 
-inline void copy_cell(
-    uint destination, uint source,
-    device uint* stable_id,
-    device uint* parent_id,
-    device packed_float3* position,
-    device float* radius,
-    device float* energy,
-    device uint* age,
-    device uint* fate,
-    device uint* phase,
-    device uint* health,
-    device uint* previous_fate,
-    device uint* fate_confidence,
-    device uint* time_in_fate,
-    device float4* color)
+constant uint LOOM_RADIX_BUCKETS = 16;
+constant uint LOOM_SCAN_BLOCK = 256;
+
+inline uint stable_id_digit(
+    uint source,
+    const device uint* stable_id,
+    uint shift)
 {
-    stable_id[destination] = stable_id[source];
-    parent_id[destination] = parent_id[source];
-    position[destination] = position[source];
-    radius[destination] = radius[source];
-    energy[destination] = energy[source];
-    age[destination] = age[source];
-    fate[destination] = fate[source];
-    phase[destination] = phase[source];
-    health[destination] = health[source];
-    previous_fate[destination] = previous_fate[source];
-    fate_confidence[destination] = fate_confidence[source];
-    time_in_fate[destination] = time_in_fate[source];
-    color[destination] = color[source];
+    return source == UINT_MAX ? 15u : ((stable_id[source] >> shift) & 15u);
 }
 
-kernel void organism_resolve_population(
-    device uint* active_count [[buffer(0)]],
-    device uint* next_stable_id [[buffer(1)]],
-    device uint* stable_id [[buffer(2)]],
-    device uint* parent_id [[buffer(3)]],
-    device packed_float3* position [[buffer(4)]],
-    device float* radius [[buffer(5)]],
-    device float* energy [[buffer(6)]],
-    device uint* age [[buffer(7)]],
-    device uint* fate [[buffer(8)]],
-    device uint* phase [[buffer(9)]],
-    device uint* health [[buffer(10)]],
-    device uint* previous_fate [[buffer(11)]],
-    device uint* fate_confidence [[buffer(12)]],
-    device uint* time_in_fate [[buffer(13)]],
-    device float4* color [[buffer(14)]],
-    const device uint* divide_intent [[buffer(15)]],
-    const device uint* death_intent [[buffer(16)]],
-    constant uint& capacity [[buffer(17)]],
+kernel void organism_initialize_population_order(
+    const device uint* active_count [[buffer(0)]],
+    device uint* order [[buffer(1)]],
+    uint index [[thread_position_in_grid]])
+{
+    order[index] = index < active_count[0] ? index : UINT_MAX;
+}
+
+kernel void organism_radix_histogram(
+    const device uint* order [[buffer(0)]],
+    const device uint* stable_id [[buffer(1)]],
+    device uint* block_count [[buffer(2)]],
+    constant uint& shift [[buffer(3)]],
+    uint global [[thread_position_in_grid]],
+    uint local [[thread_index_in_threadgroup]],
+    uint group [[threadgroup_position_in_grid]])
+{
+    threadgroup atomic_uint histogram[LOOM_RADIX_BUCKETS];
+    if (local < LOOM_RADIX_BUCKETS) {
+        atomic_store_explicit(&histogram[local], 0u, memory_order_relaxed);
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    const uint digit = stable_id_digit(order[global], stable_id, shift);
+    atomic_fetch_add_explicit(&histogram[digit], 1u, memory_order_relaxed);
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if (local < LOOM_RADIX_BUCKETS) {
+        block_count[group * LOOM_RADIX_BUCKETS + local] =
+            atomic_load_explicit(&histogram[local], memory_order_relaxed);
+    }
+}
+
+kernel void organism_radix_offsets(
+    const device uint* block_count [[buffer(0)]],
+    device uint* offset [[buffer(1)]],
+    constant uint& block_count_value [[buffer(2)]],
     uint index [[thread_position_in_grid]])
 {
     if (index != 0) return;
-    const uint old_count = active_count[0];
-    uint write = 0;
-    for (uint read = 0; read < old_count; ++read) {
-        if (death_intent[read] != 0) continue;
-        if (write != read) {
-            copy_cell(write, read, stable_id, parent_id, position, radius, energy,
-                      age, fate, phase, health, previous_fate, fate_confidence,
-                      time_in_fate, color);
+    uint bucket_base = 0;
+    for (uint bucket = 0; bucket < LOOM_RADIX_BUCKETS; ++bucket) {
+        uint running = bucket_base;
+        for (uint block = 0; block < block_count_value; ++block) {
+            const uint slot = block * LOOM_RADIX_BUCKETS + bucket;
+            offset[slot] = running;
+            running += block_count[slot];
         }
-        ++write;
+        bucket_base = running;
     }
-    const uint survivor_count = write;
-    for (uint parent = 0; parent < survivor_count && write < capacity; ++parent) {
-        if (divide_intent[parent] == 0) continue;
-        const float angle = float(stable_id[parent] % 32u) * 0.1963495408f;
-        const float2 offset = float2(cos(angle), sin(angle)) * radius[parent] * 2.0f;
-        const float3 candidate = float3(position[parent]) + float3(offset, 0.0f);
-        if (any(abs(candidate.xy) > 1.0f - radius[parent])) continue;
-        bool overlap = false;
-        for (uint other = 0; other < survivor_count; ++other) {
-            if (other == parent) continue;
-            const float minimum = radius[parent] + radius[other];
-            if (distance(candidate.xy, float3(position[other]).xy) < minimum) {
-                overlap = true;
-                break;
+}
+
+kernel void organism_radix_scatter(
+    const device uint* input [[buffer(0)]],
+    device uint* output [[buffer(1)]],
+    const device uint* stable_id [[buffer(2)]],
+    const device uint* offset [[buffer(3)]],
+    constant uint& shift [[buffer(4)]],
+    uint global [[thread_position_in_grid]],
+    uint group [[threadgroup_position_in_grid]])
+{
+    const uint source = input[global];
+    const uint digit = stable_id_digit(source, stable_id, shift);
+    const uint block_start = group * LOOM_SCAN_BLOCK;
+    uint local_rank = 0;
+    for (uint preceding = block_start; preceding < global; ++preceding) {
+        local_rank += uint(stable_id_digit(input[preceding], stable_id, shift) == digit);
+    }
+    const uint destination =
+        offset[group * LOOM_RADIX_BUCKETS + digit] + local_rank;
+    output[destination] = source;
+}
+
+constant uint LOOM_SPATIAL_AXIS = 64;
+constant uint LOOM_SPATIAL_BINS = LOOM_SPATIAL_AXIS * LOOM_SPATIAL_AXIS;
+constant uint LOOM_BIN_CAPACITY = 128;
+
+inline uint spatial_key(float2 position) {
+    const float2 normalized = clamp(position * 0.5f + 0.5f, 0.0f, 0.999999f);
+    const uint2 cell = uint2(normalized * float(LOOM_SPATIAL_AXIS));
+    return cell.y * LOOM_SPATIAL_AXIS + cell.x;
+}
+
+inline int2 spatial_cell(float2 position) {
+    const uint key = spatial_key(position);
+    return int2(int(key % LOOM_SPATIAL_AXIS), int(key / LOOM_SPATIAL_AXIS));
+}
+
+inline float2 daughter_position(float2 parent, float radius, uint stable_id) {
+    const float angle = float(stable_id % 32u) * 0.1963495408f;
+    return parent + float2(cos(angle), sin(angle)) * radius * 2.0f;
+}
+
+inline int2 q16_position(float2 value) {
+    return int2(round(value * float(LOOM_Q16)));
+}
+
+inline uint q16_radius(float value) {
+    return uint(round(max(value, 0.0f) * float(LOOM_Q16)));
+}
+
+inline bool quantized_overlap(float2 left_position, float left_radius,
+                              float2 right_position, float right_radius) {
+    const long2 delta = long2(q16_position(left_position)) - long2(q16_position(right_position));
+    const ulong distance_squared = ulong(delta.x * delta.x + delta.y * delta.y);
+    const ulong minimum = ulong(q16_radius(left_radius) + q16_radius(right_radius));
+    return distance_squared < minimum * minimum;
+}
+
+inline bool quantized_contact(float2 left_position, float left_radius,
+                              float2 right_position, float right_radius) {
+    const long2 delta = long2(q16_position(left_position)) - long2(q16_position(right_position));
+    const ulong distance_squared = ulong(delta.x * delta.x + delta.y * delta.y);
+    const uint left = q16_radius(left_radius);
+    const uint right = q16_radius(right_radius);
+    const ulong maximum = ulong(left + right + min(left, right) / 4u);
+    return distance_squared <= maximum * maximum;
+}
+
+kernel void organism_clear_population_bins(
+    device uint* living_count [[buffer(0)]],
+    device uint* candidate_count [[buffer(1)]],
+    device uint* overflow [[buffer(2)]],
+    uint index [[thread_position_in_grid]])
+{
+    living_count[index] = 0;
+    candidate_count[index] = 0;
+    if (index == 0) overflow[0] = 0;
+}
+
+kernel void organism_bin_living(
+    const device uint* active_count [[buffer(0)]],
+    const device packed_float3* position [[buffer(1)]],
+    device atomic_uint* count [[buffer(2)]],
+    device uint* indices [[buffer(3)]],
+    device atomic_uint* overflow [[buffer(4)]],
+    uint index [[thread_position_in_grid]])
+{
+    if (index >= active_count[0]) return;
+    const uint key = spatial_key(float3(position[index]).xy);
+    const uint slot = atomic_fetch_add_explicit(&count[key], 1u, memory_order_relaxed);
+    if (slot < LOOM_BIN_CAPACITY) {
+        indices[key * LOOM_BIN_CAPACITY + slot] = index;
+    } else {
+        atomic_fetch_add_explicit(&overflow[0], 1u, memory_order_relaxed);
+    }
+}
+
+kernel void organism_sort_bins(
+    const device uint* count [[buffer(0)]],
+    device uint* indices [[buffer(1)]],
+    const device uint* stable_id [[buffer(2)]],
+    uint bin [[thread_position_in_grid]])
+{
+    const uint length = min(count[bin], LOOM_BIN_CAPACITY);
+    const uint base = bin * LOOM_BIN_CAPACITY;
+    for (uint i = 1; i < length; ++i) {
+        const uint candidate = indices[base + i];
+        const uint candidate_id = stable_id[candidate];
+        uint insertion = i;
+        while (insertion > 0) {
+            const uint previous = indices[base + insertion - 1];
+            if (stable_id[previous] <= candidate_id) break;
+            indices[base + insertion] = previous;
+            --insertion;
+        }
+        indices[base + insertion] = candidate;
+    }
+}
+
+kernel void organism_prequalify_population(
+    const device uint* active_count [[buffer(0)]],
+    const device packed_float3* position [[buffer(1)]],
+    const device float* radius [[buffer(2)]],
+    const device uint* stable_id [[buffer(3)]],
+    const device uint* divide [[buffer(4)]],
+    const device uint* death [[buffer(5)]],
+    const device uint* bin_count [[buffer(6)]],
+    const device uint* bin_indices [[buffer(7)]],
+    device uint* survival [[buffer(8)]],
+    device uint* birth [[buffer(9)]],
+    device atomic_uint* overflow [[buffer(10)]],
+    uint index [[thread_position_in_grid]])
+{
+    if (index >= active_count[0]) {
+        survival[index] = 0;
+        birth[index] = 0;
+        return;
+    }
+    const bool survives = death[index] == 0;
+    survival[index] = survives ? 1u : 0u;
+    birth[index] = 0;
+    if (!survives || divide[index] == 0) return;
+
+    const float2 parent = float3(position[index]).xy;
+    const float2 candidate = daughter_position(parent, radius[index], stable_id[index]);
+    if (any(abs(candidate) > 1.0f - radius[index])) return;
+    if (!quantized_contact(parent, radius[index], candidate, radius[index])) return;
+
+    const int2 center = spatial_cell(candidate);
+    uint observed = 0;
+    bool invalid = false;
+    bool exceeded = false;
+    for (int y = -1; y <= 1 && !invalid; ++y) {
+        for (int x = -1; x <= 1 && !invalid; ++x) {
+            const int2 cell = center + int2(x, y);
+            if (any(cell < 0) || any(cell >= int(LOOM_SPATIAL_AXIS))) continue;
+            const uint key = uint(cell.y) * LOOM_SPATIAL_AXIS + uint(cell.x);
+            const uint length = min(bin_count[key], LOOM_BIN_CAPACITY);
+            const uint base = key * LOOM_BIN_CAPACITY;
+            for (uint item = 0; item < length; ++item) {
+                const uint other = bin_indices[base + item];
+                if (other == index) continue;
+                if (observed++ >= LOOM_BIN_CAPACITY) {
+                    exceeded = true;
+                    invalid = true;
+                    break;
+                }
+                invalid = quantized_overlap(
+                    candidate, radius[index], float3(position[other]).xy, radius[other]);
+                if (invalid) break;
             }
         }
-        if (overlap) continue;
-        copy_cell(write, parent, stable_id, parent_id, position, radius, energy,
-                  age, fate, phase, health, previous_fate, fate_confidence,
-                  time_in_fate, color);
-        parent_id[write] = stable_id[parent];
-        stable_id[write] = next_stable_id[0]++;
-        position[write] = packed_float3(candidate);
-        energy[parent] = max(0.0f, energy[parent] - 1.0f);
-        energy[write] = 1.0f;
-        age[parent] = 0;
-        age[write] = 0;
-        fate[write] = 1;
-        phase[write] = 0;
-        previous_fate[write] = 1;
-        fate_confidence[write] = 0;
-        time_in_fate[write] = 0;
-        ++write;
     }
-    active_count[0] = write;
+    if (exceeded) {
+        atomic_fetch_add_explicit(&overflow[0], 1u, memory_order_relaxed);
+    }
+    birth[index] = invalid ? 0u : 1u;
+}
+
+kernel void organism_bin_candidates(
+    const device uint* active_count [[buffer(0)]],
+    const device packed_float3* position [[buffer(1)]],
+    const device float* radius [[buffer(2)]],
+    const device uint* stable_id [[buffer(3)]],
+    const device uint* birth [[buffer(4)]],
+    device atomic_uint* count [[buffer(5)]],
+    device uint* indices [[buffer(6)]],
+    device atomic_uint* overflow [[buffer(7)]],
+    uint index [[thread_position_in_grid]])
+{
+    if (index >= active_count[0] || birth[index] == 0) return;
+    const float2 candidate = daughter_position(
+        float3(position[index]).xy, radius[index], stable_id[index]);
+    const uint key = spatial_key(candidate);
+    const uint slot = atomic_fetch_add_explicit(&count[key], 1u, memory_order_relaxed);
+    if (slot < LOOM_BIN_CAPACITY) {
+        indices[key * LOOM_BIN_CAPACITY + slot] = index;
+    } else {
+        atomic_fetch_add_explicit(&overflow[0], 1u, memory_order_relaxed);
+    }
+}
+
+kernel void organism_resolve_candidate_conflicts(
+    const device uint* active_count [[buffer(0)]],
+    const device packed_float3* position [[buffer(1)]],
+    const device float* radius [[buffer(2)]],
+    const device uint* stable_id [[buffer(3)]],
+    const device uint* prequalified [[buffer(4)]],
+    const device uint* bin_count [[buffer(5)]],
+    const device uint* bin_indices [[buffer(6)]],
+    device uint* birth [[buffer(7)]],
+    device atomic_uint* overflow [[buffer(8)]],
+    uint index [[thread_position_in_grid]])
+{
+    if (index >= active_count[0] || prequalified[index] == 0) {
+        birth[index] = 0;
+        return;
+    }
+    const float2 candidate = daughter_position(
+        float3(position[index]).xy, radius[index], stable_id[index]);
+    const int2 center = spatial_cell(candidate);
+    uint observed = 0;
+    bool blocked = false;
+    bool exceeded = false;
+    for (int y = -1; y <= 1 && !blocked; ++y) {
+        for (int x = -1; x <= 1 && !blocked; ++x) {
+            const int2 cell = center + int2(x, y);
+            if (any(cell < 0) || any(cell >= int(LOOM_SPATIAL_AXIS))) continue;
+            const uint key = uint(cell.y) * LOOM_SPATIAL_AXIS + uint(cell.x);
+            const uint length = min(bin_count[key], LOOM_BIN_CAPACITY);
+            const uint base = key * LOOM_BIN_CAPACITY;
+            for (uint item = 0; item < length; ++item) {
+                const uint other = bin_indices[base + item];
+                if (other == index || stable_id[other] >= stable_id[index]) continue;
+                if (observed++ >= LOOM_BIN_CAPACITY) {
+                    exceeded = true;
+                    blocked = true;
+                    break;
+                }
+                const float2 other_candidate = daughter_position(
+                    float3(position[other]).xy, radius[other], stable_id[other]);
+                blocked = quantized_overlap(
+                    candidate, radius[index], other_candidate, radius[other]);
+                if (blocked) break;
+            }
+        }
+    }
+    if (exceeded) {
+        atomic_fetch_add_explicit(&overflow[0], 1u, memory_order_relaxed);
+    }
+    birth[index] = blocked ? 0u : 1u;
+}
+
+kernel void organism_scan_population_blocks(
+    const device uint* active_count [[buffer(0)]],
+    const device uint* order [[buffer(1)]],
+    const device uint* survival [[buffer(2)]],
+    const device uint* birth [[buffer(3)]],
+    device uint* survival_prefix [[buffer(4)]],
+    device uint* birth_prefix [[buffer(5)]],
+    device uint* survival_block_sum [[buffer(6)]],
+    device uint* birth_block_sum [[buffer(7)]],
+    uint global [[thread_position_in_grid]],
+    uint local [[thread_index_in_threadgroup]],
+    uint group [[threadgroup_position_in_grid]])
+{
+    threadgroup uint survival_scan[LOOM_SCAN_BLOCK];
+    threadgroup uint birth_scan[LOOM_SCAN_BLOCK];
+    const bool active = global < active_count[0];
+    const uint source = active ? order[global] : UINT_MAX;
+    survival_scan[local] = active ? survival[source] : 0u;
+    birth_scan[local] = active ? birth[source] : 0u;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    for (uint offset = 1; offset < LOOM_SCAN_BLOCK; offset <<= 1) {
+        const uint survival_add = local >= offset ? survival_scan[local - offset] : 0u;
+        const uint birth_add = local >= offset ? birth_scan[local - offset] : 0u;
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        survival_scan[local] += survival_add;
+        birth_scan[local] += birth_add;
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    survival_prefix[global] = survival_scan[local];
+    birth_prefix[global] = birth_scan[local];
+    if (local + 1 == LOOM_SCAN_BLOCK) {
+        survival_block_sum[group] = survival_scan[local];
+        birth_block_sum[group] = birth_scan[local];
+    }
+}
+
+kernel void organism_scan_population_block_sums(
+    const device uint* survival_block_sum [[buffer(0)]],
+    const device uint* birth_block_sum [[buffer(1)]],
+    device uint* survival_block_prefix [[buffer(2)]],
+    device uint* birth_block_prefix [[buffer(3)]],
+    constant uint& block_count [[buffer(4)]],
+    uint local [[thread_index_in_threadgroup]])
+{
+    threadgroup uint survival_scan[LOOM_SCAN_BLOCK];
+    threadgroup uint birth_scan[LOOM_SCAN_BLOCK];
+    survival_scan[local] = local < block_count ? survival_block_sum[local] : 0u;
+    birth_scan[local] = local < block_count ? birth_block_sum[local] : 0u;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    for (uint offset = 1; offset < LOOM_SCAN_BLOCK; offset <<= 1) {
+        const uint survival_add = local >= offset ? survival_scan[local - offset] : 0u;
+        const uint birth_add = local >= offset ? birth_scan[local - offset] : 0u;
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        survival_scan[local] += survival_add;
+        birth_scan[local] += birth_add;
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    if (local < block_count) {
+        survival_block_prefix[local] = survival_scan[local];
+        birth_block_prefix[local] = birth_scan[local];
+    }
+}
+
+kernel void organism_add_population_block_offsets(
+    const device uint* active_count [[buffer(0)]],
+    device uint* survival_prefix [[buffer(1)]],
+    device uint* birth_prefix [[buffer(2)]],
+    const device uint* survival_block_prefix [[buffer(3)]],
+    const device uint* birth_block_prefix [[buffer(4)]],
+    uint global [[thread_position_in_grid]],
+    uint group [[threadgroup_position_in_grid]])
+{
+    if (global >= active_count[0] || group == 0) return;
+    survival_prefix[global] += survival_block_prefix[group - 1];
+    birth_prefix[global] += birth_block_prefix[group - 1];
+}
+
+kernel void organism_resolve_population_counts(
+    const device uint* active_count [[buffer(0)]],
+    const device uint* survival [[buffer(1)]],
+    const device uint* birth [[buffer(2)]],
+    const device uint* survival_prefix [[buffer(3)]],
+    const device uint* birth_prefix [[buffer(4)]],
+    device uint* survivor_count [[buffer(5)]],
+    device uint* accepted_birth_count [[buffer(6)]],
+    device uint* next_count [[buffer(7)]],
+    device uint* rejected_births [[buffer(8)]],
+    constant uint& capacity [[buffer(9)]],
+    uint index [[thread_position_in_grid]])
+{
+    if (index != 0) return;
+    const uint count = active_count[0];
+    const uint survivors = count == 0 ? 0u : survival_prefix[count - 1];
+    const uint requested = count == 0 ? 0u : birth_prefix[count - 1];
+    const uint available = capacity > survivors ? capacity - survivors : 0u;
+    const uint accepted = min(requested, available);
+    survivor_count[0] = survivors;
+    accepted_birth_count[0] = accepted;
+    next_count[0] = survivors + accepted;
+    rejected_births[0] = requested - accepted;
+}
+
+kernel void organism_scatter_population_core(
+    const device uint* active_count [[buffer(0)]],
+    const device uint* order [[buffer(1)]],
+    const device uint* stable_id [[buffer(2)]],
+    const device uint* parent_id [[buffer(3)]],
+    const device packed_float3* position [[buffer(4)]],
+    const device float* radius [[buffer(5)]],
+    const device float* energy [[buffer(6)]],
+    const device uint* survival [[buffer(7)]],
+    const device uint* birth [[buffer(8)]],
+    const device uint* survival_prefix [[buffer(9)]],
+    const device uint* birth_prefix [[buffer(10)]],
+    const device uint* survivor_count [[buffer(11)]],
+    const device uint* accepted_birth_count [[buffer(12)]],
+    const device uint* next_stable_id [[buffer(13)]],
+    device uint* stage_stable_id [[buffer(14)]],
+    device uint* stage_parent_id [[buffer(15)]],
+    device packed_float3* stage_position [[buffer(16)]],
+    device float* stage_radius [[buffer(17)]],
+    device float* stage_energy [[buffer(18)]],
+    uint index [[thread_position_in_grid]])
+{
+    if (index >= active_count[0]) return;
+    const uint source = order[index];
+    const bool accepted_birth =
+        birth[source] != 0 && birth_prefix[index] <= accepted_birth_count[0];
+    if (survival[source] != 0) {
+        const uint destination = survival_prefix[index] - 1;
+        stage_stable_id[destination] = stable_id[source];
+        stage_parent_id[destination] = parent_id[source];
+        stage_position[destination] = position[source];
+        stage_radius[destination] = radius[source];
+        stage_energy[destination] =
+            accepted_birth ? max(0.0f, energy[source] - 1.0f) : energy[source];
+    }
+    if (accepted_birth) {
+        const uint rank = birth_prefix[index] - 1;
+        const uint destination = survivor_count[0] + rank;
+        stage_stable_id[destination] = next_stable_id[0] + rank;
+        stage_parent_id[destination] = stable_id[source];
+        stage_position[destination] = packed_float3(
+            daughter_position(
+                float3(position[source]).xy, radius[source], stable_id[source]),
+            0.0f);
+        stage_radius[destination] = radius[source];
+        stage_energy[destination] = 1.0f;
+    }
+}
+
+kernel void organism_scatter_population_development(
+    const device uint* active_count [[buffer(0)]],
+    const device uint* order [[buffer(1)]],
+    const device uint* age [[buffer(2)]],
+    const device uint* fate [[buffer(3)]],
+    const device uint* phase [[buffer(4)]],
+    const device uint* health [[buffer(5)]],
+    const device uint* previous_fate [[buffer(6)]],
+    const device uint* fate_confidence [[buffer(7)]],
+    const device uint* time_in_fate [[buffer(8)]],
+    const device float4* color [[buffer(9)]],
+    const device uint* survival [[buffer(10)]],
+    const device uint* birth [[buffer(11)]],
+    const device uint* survival_prefix [[buffer(12)]],
+    const device uint* birth_prefix [[buffer(13)]],
+    const device uint* survivor_count [[buffer(14)]],
+    const device uint* accepted_birth_count [[buffer(15)]],
+    device uint* stage_age [[buffer(16)]],
+    device uint* stage_fate [[buffer(17)]],
+    device uint* stage_phase [[buffer(18)]],
+    device uint* stage_health [[buffer(19)]],
+    device uint* stage_previous_fate [[buffer(20)]],
+    device uint* stage_fate_confidence [[buffer(21)]],
+    device uint* stage_time_in_fate [[buffer(22)]],
+    device float4* stage_color [[buffer(23)]],
+    uint index [[thread_position_in_grid]])
+{
+    if (index >= active_count[0]) return;
+    const uint source = order[index];
+    const bool accepted_birth =
+        birth[source] != 0 && birth_prefix[index] <= accepted_birth_count[0];
+    if (survival[source] != 0) {
+        const uint destination = survival_prefix[index] - 1;
+        stage_age[destination] = accepted_birth ? 0u : age[source];
+        stage_fate[destination] = fate[source];
+        stage_phase[destination] = phase[source];
+        stage_health[destination] = health[source];
+        stage_previous_fate[destination] = previous_fate[source];
+        stage_fate_confidence[destination] = fate_confidence[source];
+        stage_time_in_fate[destination] = time_in_fate[source];
+        stage_color[destination] = color[source];
+    }
+    if (accepted_birth) {
+        const uint destination = survivor_count[0] + birth_prefix[index] - 1;
+        stage_age[destination] = 0;
+        stage_fate[destination] = 1;
+        stage_phase[destination] = 0;
+        stage_health[destination] = 0;
+        stage_previous_fate[destination] = 1;
+        stage_fate_confidence[destination] = 0;
+        stage_time_in_fate[destination] = 0;
+        stage_color[destination] = float4(0.8, 0.8, 0.9, 1.0);
+    }
+}
+
+kernel void organism_commit_population_core(
+    const device uint* next_count [[buffer(0)]],
+    const device uint* stage_stable_id [[buffer(1)]],
+    const device uint* stage_parent_id [[buffer(2)]],
+    const device packed_float3* stage_position [[buffer(3)]],
+    const device float* stage_radius [[buffer(4)]],
+    const device float* stage_energy [[buffer(5)]],
+    device uint* stable_id [[buffer(6)]],
+    device uint* parent_id [[buffer(7)]],
+    device packed_float3* position [[buffer(8)]],
+    device float* radius [[buffer(9)]],
+    device float* energy [[buffer(10)]],
+    uint index [[thread_position_in_grid]])
+{
+    if (index >= next_count[0]) return;
+    stable_id[index] = stage_stable_id[index];
+    parent_id[index] = stage_parent_id[index];
+    position[index] = stage_position[index];
+    radius[index] = stage_radius[index];
+    energy[index] = stage_energy[index];
+}
+
+kernel void organism_commit_population_development(
+    const device uint* next_count [[buffer(0)]],
+    const device uint* stage_age [[buffer(1)]],
+    const device uint* stage_fate [[buffer(2)]],
+    const device uint* stage_phase [[buffer(3)]],
+    const device uint* stage_health [[buffer(4)]],
+    const device uint* stage_previous_fate [[buffer(5)]],
+    const device uint* stage_fate_confidence [[buffer(6)]],
+    const device uint* stage_time_in_fate [[buffer(7)]],
+    const device float4* stage_color [[buffer(8)]],
+    device uint* age [[buffer(9)]],
+    device uint* fate [[buffer(10)]],
+    device uint* phase [[buffer(11)]],
+    device uint* health [[buffer(12)]],
+    device uint* previous_fate [[buffer(13)]],
+    device uint* fate_confidence [[buffer(14)]],
+    device uint* time_in_fate [[buffer(15)]],
+    device float4* color [[buffer(16)]],
+    uint index [[thread_position_in_grid]])
+{
+    if (index >= next_count[0]) return;
+    age[index] = stage_age[index];
+    fate[index] = stage_fate[index];
+    phase[index] = stage_phase[index];
+    health[index] = stage_health[index];
+    previous_fate[index] = stage_previous_fate[index];
+    fate_confidence[index] = stage_fate_confidence[index];
+    time_in_fate[index] = stage_time_in_fate[index];
+    color[index] = stage_color[index];
+}
+
+kernel void organism_finalize_population(
+    device uint* active_count [[buffer(0)]],
+    device uint* next_stable_id [[buffer(1)]],
+    const device uint* next_count [[buffer(2)]],
+    const device uint* accepted_birth_count [[buffer(3)]],
+    uint index [[thread_position_in_grid]])
+{
+    if (index != 0) return;
+    active_count[0] = next_count[0];
+    next_stable_id[0] += accepted_birth_count[0];
 }

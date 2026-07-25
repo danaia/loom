@@ -22,5 +22,8 @@ Run it on Metal:
 ./scripts/run-hello-particle.sh organism 16384 --bench headless --samples 300
 ```
 
-The current membership resolver is deliberately serial and deterministic. It is
-the correctness oracle for the later stable-ID GPU sort and prefix allocator.
+Population mutation is GPU-parallel: a stable LSD radix pipeline removes input
+storage-order semantics, cells enter bounded spatial bins, each bin is
+canonicalized by stable ID, births are qualified in two deterministic phases,
+survivors and births receive prefix-scan destinations, and structure-of-arrays
+state is compacted through staging buffers before the authoritative count commit.

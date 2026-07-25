@@ -2,7 +2,7 @@
 
 ## Implemented Substrate
 
-The schema-v2 graph adds the minimum generic semantics required by emergent
+The schema-v3 graph adds the minimum generic semantics required by emergent
 systems:
 
 - count-backed dynamic stream lengths,
@@ -12,6 +12,10 @@ systems:
 - state-mutation and membership-mutation capabilities,
 - tick-addressed scenario interventions with canonical value overrides,
 - GPU indirect compute dispatch and indirect rendering,
+- explicit per-pass threadgroup-width contracts,
+- global stable-ID LSD radix ordering, canonical bounded spatial bins,
+  hierarchical prefix scans, stable-ID birth allocation, and parallel
+  structure-of-arrays compaction,
 - deterministic reference rules for transitions, quantization, deposits,
   neighborhoods, contact connectivity, stable compaction, allocation, energy,
   and sustained recovery envelopes.
@@ -65,6 +69,8 @@ Implemented and tested:
 - field passes execute in declared order,
 - the coupled organism executes 300 ticks,
 - the organizer produces at least one daughter,
+- one GPU tick compacts deaths and allocates daughters from 1,024 simultaneous
+  parents while retaining canonical stable-ID order,
 - unauthorized writes and malformed membership capabilities are rejected,
 - transition tables, quantization, reflective diffusion, storage-order
   independence, contact connectivity, stable allocation, energy ledgers, and
@@ -73,8 +79,7 @@ Implemented and tested:
 Not yet claimed:
 
 - real-time 16,384-cell morphogenesis,
-- stable-ID GPU radix sorting and prefix allocation,
-- bounded GPU neighbor traversal and overflow diagnostics,
+- developmental and physical neighbor observations beyond population placement,
 - full connected-component and morphology reductions on GPU,
 - 30,000-tick homeostasis and 50,000-tick regeneration acceptance,
 - adaptive fine-to-coarse aggregation,

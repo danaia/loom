@@ -104,6 +104,7 @@ pub struct PlannedPass {
     pub kernel: loom_core::KernelId,
     pub bindings: Vec<loom_core::Binding>,
     pub dispatch: DispatchDomain,
+    pub threads_per_threadgroup: Option<u32>,
     pub abi: loom_core::KernelAbi,
     pub implementation: loom_core::BackendImplementation,
 }
@@ -565,6 +566,16 @@ fn validate_structure(graph: &ModuleGraph, diagnostics: &mut Vec<Diagnostic>) {
                 "stream",
                 diagnostics,
             );
+        }
+        if pass
+            .threads_per_threadgroup
+            .is_some_and(|count| count == 0 || count > 1024)
+        {
+            diagnostics.push(Diagnostic::error(
+                DiagnosticCode::InvalidDispatch,
+                "threads per threadgroup must be between 1 and 1024",
+                pass_path.child("threads_per_threadgroup"),
+            ));
         }
     }
     for view in &graph.views {
@@ -2470,7 +2481,7 @@ fn build_execution_plan(
         .map(|pass| plan_pass(graph, pass))
         .collect();
     ExecutionPlan {
-        schema_version: 4,
+        schema_version: 5,
         schedules,
         intervention_passes,
     }
@@ -2493,6 +2504,7 @@ fn plan_pass(graph: CheckedGraph<'_>, pass_id: loom_core::PassId) -> PlannedPass
         kernel: kernel.id,
         bindings,
         dispatch: pass.dispatch.clone(),
+        threads_per_threadgroup: pass.threads_per_threadgroup,
         abi: kernel.abi.clone(),
         implementation,
     }
@@ -2508,7 +2520,7 @@ fn artifact_fingerprint(graph: &ModuleGraph, plan: &ExecutionPlan) -> String {
 
     let canonical_graph = canonicalize(graph);
     let bytes = serde_json::to_vec(&ArtifactIdentity {
-        validator_schema_version: 2,
+        validator_schema_version: 3,
         canonical_graph: &canonical_graph.bytes,
         execution_plan: plan,
     })

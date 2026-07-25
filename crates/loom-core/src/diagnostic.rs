@@ -20,6 +20,7 @@ pub enum DiagnosticCode {
     MissingWriteAuthority,
     InvalidMembershipAuthority,
     InvalidIntervention,
+    InvalidDispatch,
     CapacityExceeded,
     InvalidLogicalLength,
     InvalidInFlightPolicy,

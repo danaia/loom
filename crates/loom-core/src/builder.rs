@@ -358,6 +358,7 @@ impl ModuleBuilder {
                     kernel,
                     bindings,
                     dispatch,
+                    threads_per_threadgroup: draft.threads_per_threadgroup,
                     capabilities: draft
                         .capabilities
                         .iter()
@@ -689,7 +690,7 @@ impl ModuleBuilder {
         }
 
         Ok(ModuleGraph {
-            schema_version: 2,
+            schema_version: 3,
             name: self.name,
             target: self.target,
             resources: ResourceGraph {
@@ -990,6 +991,7 @@ pub struct PassDraft {
     pub kernel: String,
     pub bindings: Vec<BindingDraft>,
     pub dispatch: DispatchDraft,
+    pub threads_per_threadgroup: Option<u32>,
     pub capabilities: Vec<String>,
 }
 
@@ -1000,6 +1002,7 @@ impl PassDraft {
             kernel: kernel.into(),
             bindings: Vec::new(),
             dispatch: DispatchDraft::Fixed(1),
+            threads_per_threadgroup: None,
             capabilities: Vec::new(),
         }
     }
@@ -1014,6 +1017,16 @@ impl PassDraft {
 
     pub fn dispatch_over(mut self, stream: impl Into<String>) -> Self {
         self.dispatch = DispatchDraft::OverStream(stream.into());
+        self
+    }
+
+    pub fn dispatch_fixed(mut self, count: u32) -> Self {
+        self.dispatch = DispatchDraft::Fixed(count);
+        self
+    }
+
+    pub fn threads_per_threadgroup(mut self, count: u32) -> Self {
+        self.threads_per_threadgroup = Some(count);
         self
     }
 

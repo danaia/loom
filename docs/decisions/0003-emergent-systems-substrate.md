@@ -44,12 +44,14 @@ are schemas built from those primitives rather than new language nouns.
 - `Hello Field` proves packaged field kernels, reflective five-point diffusion,
   explicit deposit clearing, and committed next-tick state.
 - `Hello Organism` couples both systems with quantized perception, typed intents,
-  transition resolvers, energy accounting, deterministic serial reference
-  allocation, and indirect execution/rendering.
+  transition resolvers, energy accounting, canonical spatial bins, hierarchical
+  prefix allocation, parallel compaction, and indirect execution/rendering.
 
-The serial membership resolver is a correctness oracle. A stable-ID prefix
-allocator, spatial sorting, bounded neighbor passes, morphology reductions,
-regeneration, and adaptive aggregation remain measured follow-on gates.
+The backend-neutral reference rules remain the correctness oracle. The Metal
+membership path now uses global stable-ID radix ordering, stable-ID bin
+canonicalization, and prefix allocation. Full developmental neighbor passes,
+morphology reductions, regeneration, and adaptive aggregation remain measured
+follow-on gates.
 
 ## Consequences
 

@@ -408,6 +408,7 @@ pub struct PassNode {
     pub kernel: KernelId,
     pub bindings: Vec<Binding>,
     pub dispatch: DispatchDomain,
+    pub threads_per_threadgroup: Option<u32>,
     pub capabilities: Vec<CapabilityId>,
 }
 

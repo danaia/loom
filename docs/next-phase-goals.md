@@ -93,11 +93,13 @@ hash
 **Gate:** Bounded neighbor work using spatial hashing, with measurable overflow
 behavior and no silent truncation.
 
-Current status: backend-neutral reference semantics now cover stable
-`(grid key, stable ID)` ordering, separate physical and perception bounds,
-quantized contact connectivity, stable compaction, isolated-daughter rejection,
-and stable-ID birth ordering. Parallel radix-sort, prefix-scan, and reduction
-passes remain the next GPU gate.
+Current status: the organism population path now globally orders storage indices
+with a stable GPU LSD radix pipeline, bins living cells and daughter candidates,
+canonicalizes every bounded bin by stable ID, reports dense-bin and observation
+overflow, performs hierarchical prefix scans, and compacts state in parallel. A
+1,024-parent Metal test begins with reversed storage order, exercises simultaneous
+death and birth, and proves increasing stable-ID output plus stable-parent birth
+ordering. Swarm force kernels and reduction passes remain open.
 
 ### Swarm determinism
 
@@ -105,12 +107,6 @@ Hello Swarm uses tolerance-based physical determinism. Parallel insertion,
 neighbor ordering, and floating-point accumulation are not required to reproduce
 bit-for-bit results. Its contracts declare numerical tolerances and invariant
 metrics explicitly rather than inheriting Hello Particle’s exact tier.
-
-### Swarm collection identity
-
-The active swarm collection is semantically unordered. Particles retain stable IDs
-for inspection and external references, but compaction is not required to preserve
-storage order.
 
 ## 4. Hello Organism
 
@@ -127,8 +123,11 @@ sample and quantize fields
 ```
 
 It uses count-backed indirect execution, packaged Metal kernels, immutable
-transition rules, derived behavior, and explicit state/field/membership
-capabilities. A 300-tick GPU test proves that the organizer produces a daughter.
+transition rules, derived behavior, explicit state/field/membership capabilities,
+bounded canonical spatial bins, hierarchical scans, stable-ID birth allocation,
+and parallel compaction. A 300-tick GPU test proves that the organizer produces a
+daughter; a separate 1,024-parent test proves simultaneous deterministic
+population mutation.
 
 The full acceptance gate remains:
 

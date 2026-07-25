@@ -164,7 +164,12 @@ Bindings are named and total:
 - an undeclared binding is an error,
 - and a kernel cannot fall back to a global name.
 
-`dispatch over stream_name` means one logical invocation per active element of that stream. Backends derive legal physical grid and threadgroup sizes from the compiled pipeline and target.
+`dispatch over stream_name` means one logical invocation per active element of
+that stream. Backends normally derive a legal threadgroup width from the compiled
+pipeline and target. A pass may instead declare `threads_per_threadgroup` when
+threadgroup-local algorithms such as scans make the width semantic; the validator
+accepts only `1...1024`, and the backend rejects widths unsupported by the
+compiled pipeline.
 
 ## Pattern 4 — Connect a Schedule
 

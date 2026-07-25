@@ -73,7 +73,7 @@ fn dynamic_population_uses_a_mutable_count_stream_and_explicit_authority() {
         "unexpected diagnostics: {:#?}",
         report.diagnostics
     );
-    assert_eq!(graph.schema_version, 2);
+    assert_eq!(graph.schema_version, 3);
     assert!(matches!(
         graph.resources.streams[1].length,
         loom_core::StreamLength::Dynamic(_)
@@ -164,12 +164,43 @@ fn organism_specimen_separates_decision_state_field_and_membership_authority() {
         .find(|pass| pass.name == "resolve_state")
         .unwrap();
     assert_eq!(resolve_state.capabilities.len(), 1);
-    let resolve_population = graph
+    let commit_population = graph
         .passes
         .iter()
-        .find(|pass| pass.name == "resolve_population")
+        .find(|pass| pass.name == "commit_population_core")
         .unwrap();
-    assert_eq!(resolve_population.capabilities.len(), 2);
+    assert_eq!(commit_population.capabilities.len(), 1);
+    let finalize_population = graph
+        .passes
+        .iter()
+        .find(|pass| pass.name == "finalize_population")
+        .unwrap();
+    assert_eq!(finalize_population.capabilities.len(), 2);
+    let scan = report
+        .validated
+        .as_ref()
+        .unwrap()
+        .execution_plan()
+        .schedules
+        .iter()
+        .flat_map(|schedule| &schedule.passes)
+        .find(|pass| graph.pass(pass.pass).unwrap().name == "scan_population_blocks")
+        .unwrap();
+    assert_eq!(scan.threads_per_threadgroup, Some(256));
+}
+
+#[test]
+fn invalid_threadgroup_width_is_rejected_before_runtime_lowering() {
+    let mut graph = dynamic_population_builder(true).build().unwrap();
+    graph.passes.nodes[0].threads_per_threadgroup = Some(0);
+    let report = Validator::validate(&graph);
+    assert!(report.validated.is_none());
+    assert!(
+        report
+            .diagnostics
+            .iter()
+            .any(|diagnostic| { diagnostic.code == loom_core::DiagnosticCode::InvalidDispatch })
+    );
 }
 
 #[test]
