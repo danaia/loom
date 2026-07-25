@@ -3,7 +3,7 @@
 ## North Star
 
 - Create the lowest practical software layer for agent-authored 3D space and physics
-- Treat particles as the fundamental state atoms of a physical world
+- Treat particles as primary physical entities represented by typed state streams
 - Compile Loom programs into native ARM64 host code and Metal GPU kernels
 - Exploit Apple Silicon GPU compute, unified memory, SIMD execution, and low-overhead Metal dispatch
 - Keep humans out of the hot authoring loop without removing human auditability
@@ -53,7 +53,7 @@
 - A general-purpose human programming language
 - A conversational prompt interpreted at runtime
 - A neural model in the trusted execution path
-- A text-file-oriented source language
+- A language whose meaning depends on text files or parser state
 - A wrapper around an existing game engine
 - A promise that AI can ignore hardware limits
 
@@ -76,17 +76,84 @@
   - Executes only validated artifacts
   - Does not call an AI model during a simulation step
 
-## Core Machine Primitives
+## Core Language Primitives
+
+### Module
+
+- Versioned program and namespace boundary
+- Owns declarations and imports
+- Does not own mutable runtime state
+
+### Value
+
+- Immutable typed scalar, vector, matrix, struct, or handle
+- Carries physical units where applicable
+- Must be bound explicitly before a kernel can read it
+
+### Stream
+
+- Fundamental mutable-state primitive
+- Typed, indexed, structure-of-arrays storage
+- Explicit logical capacity
+- Explicit access and mutability
+- Optional physical storage, layout, buffering, and residency hints
+
+### Kernel
+
+- Reusable parallel computation
+- Typed slots with explicit effects
+- Cannot reach undeclared state
+- May have target-specific implementations behind a target-neutral signature
+
+### Pass
+
+- Concrete invocation of a kernel
+- Binds every kernel slot to a value or stream
+- Declares the dispatch domain
+
+### Schedule
+
+- Orders passes and views
+- Declares semantic dependency edges
+- Owns timing, catch-up, overload, and in-flight policy
+- Does not encode backend-specific barriers, fences, or encoder boundaries
+
+### Contract
+
+- Physical correctness
+- Memory safety
+- Determinism tier and fingerprint
+- Scoped allocation, copy, and blit limits
+- Performance and working-set budgets
+- Numerical error budget
+
+### Scenario
+
+- Deterministic setup and ordered inputs
+- Run duration or tick count
+- Typed comparisons, tolerances, and expected results
+
+### View
+
+- Render projection
+- Inspector projection
+- Telemetry projection
+- Reads authoritative state without becoming authoritative state
+
+### Capability
+
+- Explicit permission for exceptional host mutation, inspection readback, or external work
+- Narrow, bindable, and auditable
+- Never ambient
+
+## Domain Primitives
 
 ### Particle
 
-- Fundamental physical state atom
-- Stable semantic identity where identity is required
-- Position
-- Velocity
-- Optional acceleration
-- Physical attributes
-- Lifecycle state
+- Domain entity represented by related streams
+- Stable semantic identity only where required
+- Position, velocity, optional acceleration, physical attributes, and lifecycle state
+- Not the universal primitive for memory, execution, rendering, or identity
 
 ### Space
 
@@ -106,56 +173,6 @@
 - Pressure
 - Signed distance
 - Probability or occupancy
-
-### Kernel
-
-- Pure transformation over particle streams or fields
-- Explicit input and output buffers
-- Explicit read and write effects
-- Explicit execution domain
-  - GPU compute
-  - GPU render
-  - CPU SIMD fallback
-- Explicit scheduling and synchronization requirements
-
-### Buffer
-
-- Element schema
-- Structure-of-arrays or array-of-structures layout
-- Storage mode
-- Residency policy
-- Alignment
-- Capacity
-- Mutability
-- Lifetime
-
-### Schedule
-
-- Fixed simulation timestep
-- Dispatch order
-- Dependencies
-- Barriers
-- Asynchronous overlap
-- Update frequency by simulation level
-
-### Contract
-
-- Physical correctness
-- Memory safety
-- Determinism tier
-- Maximum allocation count
-- Maximum copy count
-- Performance budget
-- Working-set budget
-- Numerical error budget
-
-### Projection
-
-- Render view
-- Inspector view
-- Telemetry view
-- Debug-readable Loom projection
-- Never the canonical program representation
 
 ## Hello Particle Vertical Slice
 
@@ -221,12 +238,14 @@
 
 ### Storage
 
-- Versioned binary semantic bundle
+- One versioned typed semantic graph
 - Content-addressed declarations
 - Stable semantic IDs
 - Typed graph edges
-- Reproducible serialization
-- Optional debug projection for human inspection
+- Canonical ordering and reproducible hashing
+- Direct typed builder API
+- `.loom` canonical textual projection
+- `.loomb` validated compiled bundle
 
 ### Agent Input
 
@@ -239,32 +258,37 @@
 
 ### Semantic Graph Nodes
 
+- Module
 - Target
-- Space
-- Particle schema
-- Field
-- Boundary
-- Buffer
+- Value
+- Stream
 - Kernel
+- Pass
 - Schedule
-- Render projection
 - Contract
 - Scenario
+- View
+- Capability
+- Space
+- Field
+- Boundary
 - Benchmark
 - Provenance
 
-### Debug Projection
+### Text Projection
 
 - Textual representation generated from the semantic graph
+- Primary agent read/write surface
 - Useful for logs, diffs, review, and bootstrapping
+- Deterministic parse and print
 - Never executed directly in production
-- Never treated as the source of truth
+- Never changes meaning through formatting
 
 ## Compiler Architecture
 
 ### Trusted Compilation Pipeline
 
-- Canonical Loom semantic bundle
+- Canonical Loom semantic graph
 - Schema and version validation
 - Unit and dimensional analysis
 - Effect and capability validation
@@ -382,9 +406,13 @@
 ### Synchronization
 
 - Triple-buffered small CPU-authored control data
-- GPU event or command-buffer dependency between compute and render
+- `after` is a completion dependency, never submission order alone
+- Execution pass dependencies and terminal presentation dependencies are distinct
+- Mutable stream reuse requires sufficient versions, serialized conflicting ticks, or a queue-order proof
+- Contract observations name pass completion, tick execution, or GPU completion
+- Views name current-completed, previous-stable, or interpolated tick state
 - No blocking CPU wait in the normal frame loop
-- Inspector readback is asynchronous
+- Inspector readback is asynchronous and names the completed tick returned
 - Simulation remains correct when the inspector is absent
 
 ## Tauri Window Into Loom
@@ -433,11 +461,12 @@
 
 ### Tier 1 — Replay on Identical Target
 
-- Same chip family
-- Same operating-system and Metal compiler versions
-- Same compiled kernel
+- Exact device and GPU identity
+- Exact operating-system, host compiler, and Metal compiler identities
+- Same compiled binary, pipelines, layouts, dispatch, and schedule
 - Same initial buffers
 - Same ordered inputs
+- Same recorded overload decisions
 - No data races
 - Bitwise replay is the target
 
@@ -558,22 +587,22 @@
 
 ## Scale Milestones
 
-### Gate 0 — One Particle
+### Scale 0 — One Particle
 
 - Complete Loom-to-Metal path
 - Correct gravity and ground contact
-- Tauri window and native Metal viewport
+- Native Metal viewport; Tauri follows after the engine proof
 - Zero steady-state allocations
 - No synchronous CPU readback
 
-### Gate 1 — 1,024 Particles
+### Scale 1 — 1,024 Particles
 
 - Batch dispatch
 - Structure-of-arrays storage
 - CPU versus GPU crossover benchmark
 - Deterministic replay
 
-### Gate 2 — One Million Particles
+### Scale 2 — One Million Particles
 
 - GPU integration
 - GPU culling and compaction
@@ -581,7 +610,7 @@
 - Bandwidth and occupancy profiling
 - Stable real-time update on the selected M4 target
 
-### Gate 3 — Ten to One Hundred Million Active Particles
+### Scale 3 — Ten to One Hundred Million Active Particles
 
 - Quantized chunk-local state
 - Spatial partitioning
@@ -589,7 +618,7 @@
 - GPU-private hot buffers
 - Explicit working-set enforcement
 
-### Gate 4 — One Billion Represented Particles
+### Scale 4 — One Billion Represented Particles
 
 - Hierarchical particles, clusters, fields, and procedural populations
 - Bounded active and visible sets
@@ -597,7 +626,7 @@
 - Measured error against a smaller full-resolution reference
 - No claim that all one billion particles receive full-rate dense updates
 
-### Gate 5 — Distributed Dense Scale
+### Scale 5 — Distributed Dense Scale
 
 - Hardware-neutral Loom execution graph
 - Multiple GPU or node partitions
@@ -606,89 +635,64 @@
 
 ## Implementation Roadmap
 
-### Phase 0 — Hardware Probe
+The detailed gate definitions and acceptance criteria live in `loom-plan.md`.
 
-- Query Metal GPU family and feature support
-- Query recommended maximum working-set size
-- Record thread execution width and maximum threads per threadgroup
-- Establish GPU counter capture
-- Establish thermal and power-state reporting
-- Save the target profile in Loom provenance
+### Gate 0 — Agent Language Foundation
 
-### Phase 1 — Native Hello Particle
+- Ratify the language charter
+- Lock the semantic nouns and composition patterns
+- Implement the typed graph and direct builder
+- Represent Hello Particle without untyped escape hatches
+- Validate units, effects, bindings, dependencies, capabilities, and contracts
 
-- Build Tauri shell
-- Embed native CAMetalLayer viewport
-- Create Metal device, queue, compute pipeline, and render pipeline
-- Allocate particle and control resources
-- Dispatch one-thread physics kernel at fixed 120 Hz
+### Gate 1 — Native Hello Particle
+
+- Consume the validated Hello Particle graph
+- Create native `CAMetalLayer`, Metal resources, and pipelines
+- Run fixed-step integration and ground contact
 - Render from GPU state
-- Implement asynchronous inspector snapshot
+- Inspect asynchronously
+- Capture hardware, pipeline, and contract evidence
 
-### Phase 2 — Trusted Loom Core
+### Gate 2 — Canonical Text Projection
 
-- Define semantic graph schema
-- Define binary bundle format
-- Implement dimensional types
-- Implement effects and capabilities
-- Implement deterministic validator
-- Generate the Hello Particle Metal and host artifacts
-- Produce a debug-readable projection
+- Stabilize the smallest useful `.loom` grammar
+- Implement deterministic parse, format, explain, and project operations
+- Preserve semantic identity through round trips
 
-### Phase 3 — Batch Engine
+### Gate 3 — Compiled Bundle
 
-- Replace scalar particle record with structure-of-arrays streams
-- Add dispatch sizing from runtime hardware properties
-- Add GPU culling and compaction
-- Add indirect rendering
-- Benchmark 1,024 through one million particles
+- Produce reproducible `.loomb` artifacts
+- Load and execute without source or special-case state
+- Reject incompatible or unvalidated artifacts before execution
 
-### Phase 4 — Spatial Physics
+### Gate 4 onward
 
-- Add chunked world space
-- Add uniform-grid or hash-grid construction
-- Add neighbor queries
-- Add bounded particle interactions
-- Add collision and constraint passes
-- Preserve race freedom and declared determinism
-
-### Phase 5 — Hierarchical Scale
-
-- Add quantized cell-local particles
-- Add particle-cluster representation
-- Add field representation
-- Add procedural expansion and collapse
-- Add active-set and update-rate scheduler
-- Demonstrate one billion represented particles with a bounded active set
-
-### Phase 6 — Agent Optimizer
-
-- Expose legal transformation space
-- Generate kernel and layout candidates
-- Run correctness and error contracts
-- Collect Metal counters and timing
-- Reject regressions
-- Store accepted variant and complete provenance
-
-### Phase 7 — Additional Hardware
-
-- Preserve hardware-neutral Physics IR
-- Add CUDA backend
-- Add Vulkan compute backend
-- Add CPU SIMD fallback
-- Compare backend-specific precision and determinism
+- Tauri shell
+- Batch engine
+- Spatial physics
+- Hierarchical representation
+- Agent optimizer
+- Additional hardware backends
 
 ## Repository Architecture
 
 ### `loom-core`
 
 - Semantic graph
-- Binary bundle
+- Typed builder API
 - Units
 - Effects
 - Capabilities
 - Contracts
 - Provenance
+
+### `loom-bundle`
+
+- Binary bundle schemas
+- Deterministic encoding and decoding
+- Artifact validation
+- Version migration
 
 ### `loom-compiler`
 
@@ -808,7 +812,8 @@
 
 ## Deliberate Non-Goals for Hello Particle
 
-- Human-friendly general-purpose syntax
+- General-purpose human application syntax
+- Macros or a general-purpose kernel-body language
 - Runtime AI inference
 - Direct Apple GPU ISA generation
 - macOS kernel or driver extensions
