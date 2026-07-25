@@ -11,6 +11,7 @@ pub enum DiagnosticCode {
     UnknownSymbol,
     InvalidReference,
     InvalidNodeId,
+    NonCanonicalOrder,
     TypeMismatch,
     UnitMismatch,
     InvalidLiteral,

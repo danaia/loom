@@ -5,9 +5,10 @@ The language documents are read in this order:
 1. [`00-language-charter.md`](00-language-charter.md) — immutable principles and the intended agent experience.
 2. [`01-semantic-model.md`](01-semantic-model.md) — primary nouns and composition patterns.
 3. [`decisions/0001-language-shape.md`](decisions/0001-language-shape.md) — why semantics are locked before punctuation.
-4. [`../examples/hello-particle/hello-particle.loom`](../examples/hello-particle/hello-particle.loom) — first conformance specimen.
-5. [`04-execution-scheduling.md`](04-execution-scheduling.md) — completion, overlap, observation, view, inspection, ABI, determinism, and overload rules.
-6. [`06-canonical-representation.md`](06-canonical-representation.md) — untrusted graphs, validation, atomic repairs, execution plans, and artifact identity.
+4. [`decisions/0002-agent-native-positioning.md`](decisions/0002-agent-native-positioning.md) — the agent-native trust boundary and current language classification.
+5. [`../examples/hello-particle/hello-particle.loom`](../examples/hello-particle/hello-particle.loom) — first conformance specimen.
+6. [`04-execution-scheduling.md`](04-execution-scheduling.md) — completion, overlap, observation, view, inspection, ABI, determinism, and overload rules.
+7. [`06-canonical-representation.md`](06-canonical-representation.md) — untrusted graphs, validation, atomic repairs, execution plans, and artifact identity.
 
 Planned specifications:
 

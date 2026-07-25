@@ -1,6 +1,17 @@
 # Loom Language Charter
 
-Loom is the language agents use to build physical worlds, execution plans, and proofs about them.
+Loom is becoming an **agent-native, low-level physical-compute language**.
+
+“Agent-native” describes its authoring and verification model, not its runtime. Agents
+create and modify Loom programs. Deterministic compilers, validators, verifiers, and
+runtimes decide what is legal and what executes. No AI model lives inside a Loom
+program or participates in its simulation loop.
+
+Today, Loom is an early agent-native systems DSL with a low-level typed execution
+model. It controls memory, effects, bindings, scheduling, synchronization,
+validation, and orchestration. Kernel arithmetic remains in external backend code,
+initially Metal. A native kernel-body language is a later evolutionary boundary,
+not part of Loom v0.
 
 It should feel like arranging a precise experiment:
 
@@ -14,6 +25,36 @@ declare the state
 ```
 
 The language is enjoyable when an agent can make a small change, understand its consequences locally, receive a useful explanation when it is wrong, and see the result quickly. “Fun” does not mean magical or implicit. In Loom, clarity creates the freedom to experiment.
+
+## Why Agent-Native
+
+Loom is native to agent workflows because an agent can deterministically:
+
+- generate and inspect the canonical typed graph,
+- compare versions using stable IDs and hashes,
+- validate explicit state, units, access, bindings, order, and authority,
+- apply structured `GraphEdit` repairs without scraping prose,
+- and prove changes through contracts, scenarios, and benchmarks.
+
+The innovation is not syntax that happens to look friendly to an AI model. It is a
+machine-verifiable representation through which an agent can author, inspect,
+repair, measure, and prove a program.
+
+## Execution Boundary
+
+```text
+agent intention
+→ Loom typed semantic graph
+→ validator and contracts
+→ execution plan
+→ Metal/native lowering
+→ GPU execution
+```
+
+Loom v0 is therefore both a typed compute/render graph and an executable physical
+specification. Metal currently performs the arithmetic behind target-neutral kernel
+signatures. This separation lets Loom establish safe execution policy before it
+grows into a complete low-level kernel language.
 
 ## Constitution
 

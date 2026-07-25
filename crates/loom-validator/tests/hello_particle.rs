@@ -21,7 +21,13 @@ fn rejects_single_buffer_with_four_unproven_overlapping_ticks() {
     let conflicts = report
         .diagnostics
         .iter()
-        .filter(|diagnostic| diagnostic.code == DiagnosticCode::InsufficientBufferVersions)
+        .filter(|diagnostic| {
+            matches!(
+                diagnostic.code,
+                DiagnosticCode::InsufficientBufferVersions
+                    | DiagnosticCode::UnsafePresentationLifetime
+            )
+        })
         .collect::<Vec<_>>();
     assert_eq!(conflicts.len(), 2, "position and velocity both mutate");
     assert!(conflicts.iter().all(|diagnostic| matches!(
@@ -256,6 +262,57 @@ fn declaration_insertion_order_does_not_change_typed_ids_or_fingerprint() {
 }
 
 #[test]
+fn reordered_semantic_sets_have_the_same_canonical_fingerprint() {
+    let graph = hello_particle_builder(HelloParticleConfig::default())
+        .build()
+        .unwrap();
+    let mut reordered = graph.clone();
+    reordered.schedules.nodes[0]
+        .execution_dependencies
+        .reverse();
+    reordered.passes.nodes[0].bindings.reverse();
+    reordered.views[0].reads.reverse();
+
+    assert_ne!(
+        serde_json::to_vec(&graph).unwrap(),
+        serde_json::to_vec(&reordered).unwrap()
+    );
+    assert_eq!(
+        canonicalize(&graph).fingerprint,
+        canonicalize(&reordered).fingerprint
+    );
+    let first = Validator::validate(&graph);
+    let second = Validator::validate(&reordered);
+    assert_diagnostics_empty(&first);
+    assert_diagnostics_empty(&second);
+    assert_eq!(first.artifact_fingerprint(), second.artifact_fingerprint());
+}
+
+#[test]
+fn reordered_declarations_are_rejected_at_the_structural_boundary() {
+    let mut graph = hello_particle_builder(HelloParticleConfig::default())
+        .build()
+        .unwrap();
+    graph.resources.values.swap(0, 1);
+    graph.resources.values[0].id = loom_core::ValueId(0);
+    graph.resources.values[1].id = loom_core::ValueId(1);
+
+    let report = Validator::validate(&graph);
+
+    assert!(!report.is_valid());
+    assert_eq!(
+        report.completed_passes,
+        [ValidationPass::StructuralReferences]
+    );
+    assert!(
+        report
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == DiagnosticCode::NonCanonicalOrder)
+    );
+}
+
+#[test]
 fn historical_view_requires_enough_buffer_versions_for_its_lag() {
     let mut graph = hello_particle_builder(HelloParticleConfig::default())
         .build()
@@ -267,7 +324,43 @@ fn historical_view_requires_enough_buffer_versions_for_its_lag() {
         report
             .diagnostics
             .iter()
-            .any(|diagnostic| diagnostic.code == DiagnosticCode::InsufficientBufferVersions)
+            .any(|diagnostic| diagnostic.code == DiagnosticCode::UnsafePresentationLifetime)
+    );
+}
+
+#[test]
+fn historical_lag_and_render_concurrency_share_one_live_range() {
+    let mut graph = hello_particle_builder(HelloParticleConfig {
+        particle_buffering: 2,
+        presentation_lifetime: PresentationLifetimePolicy::RequireResourceVersions,
+        ..HelloParticleConfig::default()
+    })
+    .build()
+    .unwrap();
+    graph.views[0].state = ViewState::PreviousStableTick { lag: 1 };
+
+    let report = Validator::validate(&graph);
+    let position = graph
+        .resources
+        .streams
+        .iter()
+        .find(|stream| stream.name == "particles.position")
+        .unwrap();
+    let allocation = report.effective_concurrency[0]
+        .resource_versions
+        .iter()
+        .find(|allocation| allocation.stream == position.id)
+        .unwrap();
+
+    assert_eq!(allocation.simulation_live_versions, 1);
+    assert_eq!(allocation.presentation_live_versions, 3);
+    assert_eq!(allocation.required_versions, 3);
+    assert_eq!(allocation.allocated_versions, 2);
+    assert!(
+        report
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == DiagnosticCode::UnsafePresentationLifetime)
     );
 }
 
@@ -514,6 +607,12 @@ fn only_validated_graphs_receive_execution_plans_and_artifact_fingerprints() {
     let valid = Validator::validate(&valid_graph);
     let validated = valid.validated.as_ref().expect("validated graph");
     assert_eq!(validated.execution_plan().schedules.len(), 1);
+    let schedule = &validated.execution_plan().schedules[0];
+    assert_eq!(schedule.passes.len(), 2);
+    assert_eq!(schedule.views.len(), 1);
+    assert!(!schedule.accesses.is_empty());
+    assert_eq!(schedule.completion_requirements.len(), 2);
+    assert!(!schedule.resource_versions.is_empty());
     assert_eq!(validated.artifact_fingerprint().len(), 64);
 
     let invalid_graph = hello_particle_builder(HelloParticleConfig::unsafe_unproven_overlap())

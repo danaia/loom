@@ -24,11 +24,11 @@ cargo test --workspace
 echo "==> Exercising agent-actionable overlap diagnostics"
 cargo run --quiet --package loom-validator --example hello_particle >"${RESULT_FILE}"
 
-CONFLICT_COUNT="$(grep -c '"code": "InsufficientBufferVersions"' "${RESULT_FILE}")"
+CONFLICT_COUNT="$(grep -Ec '"code": "(InsufficientBufferVersions|UnsafePresentationLifetime)"' "${RESULT_FILE}")"
 FIX_COUNT="$(grep -c '"SetStreamBuffering"' "${RESULT_FILE}")"
 
 if [[ "${CONFLICT_COUNT}" -ne 2 ]]; then
-  echo "Expected two insufficient-buffer diagnostics; found ${CONFLICT_COUNT}." >&2
+  echo "Expected two complete-live-range diagnostics; found ${CONFLICT_COUNT}." >&2
   exit 1
 fi
 

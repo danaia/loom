@@ -81,7 +81,8 @@ Tick serialization does not prove that a previous render has finished reading a 
 presentation_lifetime require_resource_versions
 ```
 
-Every mutable stream read by a view needs enough physical versions for the declared render frames in flight.
+Every mutable stream read by a view needs enough physical versions for the declared
+render frames in flight and the view's historical lag.
 
 ### Block until presentation completes
 
@@ -99,6 +100,24 @@ queue proof single_serial_queue_completion
 ```
 
 This is legal only when the backend proves that view reads complete before the next conflicting writes on one serial queue.
+
+### Complete live ranges
+
+Simulation overlap, presentation concurrency, and historical lag are not validated
+as independent minima. The validator derives one live range per stream.
+
+For resource-versioned presentation, simulation and presentation leases overlap:
+
+```text
+required versions
+= simulation live versions
++ presentation/history live versions
+- one shared produced version
+```
+
+For blocking or proven queue-ordered reuse, the two phases do not overlap and the
+larger live range wins. For example, lag `1` with two render frames in flight needs
+three versions—not two—even when simulation ticks are serialized.
 
 ## Kernel ABI
 

@@ -17,7 +17,7 @@ Untrusted ModuleGraph
 
 The first validator pass checks:
 
-- canonical node IDs and duplicate names,
+- canonical node IDs, declaration order, and duplicate names,
 - every value, stream, kernel, slot, pass, view, schedule, contract, scenario, benchmark, and capability reference,
 - ABI slot references,
 - resource bindings and dispatch references,
@@ -25,6 +25,12 @@ The first validator pass checks:
 - observation and predicate references.
 
 If structural validation fails, no semantic pass runs.
+
+Canonical serialization normalizes semantically unordered collections such as pass
+bindings, view reads, dependencies, capability stream sets, contract clauses, and
+scenario expectations. Reordered declarations are rejected structurally because
+dense typed IDs use declaration position. Equivalent valid graphs therefore produce
+the same canonical bytes and hash.
 
 ## Validated graphs
 
@@ -36,6 +42,15 @@ If structural validation fails, no semantic pass runs.
 
 Backend lowering accepts `ValidatedModuleGraph`, not `ModuleGraph`.
 
+The resolved `ExecutionPlan` contains the backend-facing facts Metal lowering needs:
+
+- complete per-stream resource-version allocations,
+- ordered pass and view nodes,
+- concrete resource bindings and dispatch domains,
+- kernel ABI and backend implementation identity,
+- read/write access records,
+- and completion requirements that must become ordering, barriers, events, or fences.
+
 ## Two hashes
 
 The normalized source-graph hash identifies any canonical graph, including an invalid one. It is useful for diagnostics, caching, and repair preconditions.
@@ -45,6 +60,8 @@ The executable artifact fingerprint exists only on `ValidatedModuleGraph`. It co
 - validator schema version,
 - normalized graph,
 - effective simulation and presentation concurrency,
+- complete resource-version allocations,
+- resolved bindings, dispatch, ABI, accesses, and completion requirements,
 - and topologically resolved execution plans.
 
 An invalid graph never receives an artifact fingerprint.

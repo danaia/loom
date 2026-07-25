@@ -47,6 +47,7 @@ pub struct EffectiveConcurrency {
     pub effective_render_frames: u32,
     pub basis: ConcurrencyBasis,
     pub presentation_basis: PresentationConcurrencyBasis,
+    pub resource_versions: Vec<ResourceVersionAllocation>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -79,6 +80,52 @@ pub struct ExecutionSchedule {
     pub effective_ticks: u32,
     pub requested_render_frames: u32,
     pub effective_render_frames: u32,
+    pub resource_versions: Vec<ResourceVersionAllocation>,
+    pub passes: Vec<PlannedPass>,
+    pub views: Vec<PlannedView>,
+    pub accesses: Vec<PlannedAccess>,
+    pub completion_requirements: Vec<CompletionRequirement>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResourceVersionAllocation {
+    pub stream: StreamId,
+    pub simulation_live_versions: u32,
+    pub presentation_live_versions: u32,
+    pub required_versions: u32,
+    pub allocated_versions: u32,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PlannedPass {
+    pub pass: loom_core::PassId,
+    pub kernel: loom_core::KernelId,
+    pub bindings: Vec<loom_core::Binding>,
+    pub dispatch: DispatchDomain,
+    pub abi: loom_core::KernelAbi,
+    pub implementation: loom_core::BackendImplementation,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PlannedView {
+    pub view: loom_core::ViewId,
+    pub reads: Vec<loom_core::ViewRead>,
+    pub state: ViewState,
+    pub implementation: loom_core::BackendImplementation,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PlannedAccess {
+    pub item: ScheduleItemId,
+    pub stream: StreamId,
+    pub reads: bool,
+    pub writes: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CompletionRequirement {
+    pub before: ScheduleItemId,
+    pub after: ScheduleItemId,
 }
 
 #[derive(Clone, Debug)]
@@ -259,7 +306,12 @@ impl Validator {
         validate_determinism_overload(graph, &mut diagnostics);
         completed_passes.push(ValidationPass::DeterminismAndOverload);
 
-        let execution_plan = build_execution_plan(&topological_orders, &effective_concurrency);
+        let execution_plan = build_execution_plan(
+            graph,
+            &topological_orders,
+            &effective_concurrency,
+            &accesses,
+        );
         let validated = if has_errors(&diagnostics) {
             None
         } else {
@@ -748,6 +800,7 @@ fn check_ids_and_names<'a>(
     diagnostics: &mut Vec<Diagnostic>,
 ) {
     let mut names = BTreeSet::new();
+    let mut previous_name: Option<&String> = None;
     for (expected, (actual, name)) in items.enumerate() {
         if actual != expected as u32 {
             diagnostics.push(Diagnostic::error(
@@ -756,6 +809,14 @@ fn check_ids_and_names<'a>(
                 path(scope, name),
             ));
         }
+        if previous_name.is_some_and(|previous| previous > name) {
+            diagnostics.push(Diagnostic::error(
+                DiagnosticCode::NonCanonicalOrder,
+                format!("declarations in `{scope}` must be ordered by name"),
+                path(scope, name),
+            ));
+        }
+        previous_name = Some(name);
         if !names.insert(name) {
             diagnostics.push(Diagnostic::error(
                 DiagnosticCode::DuplicateSymbol,
@@ -1557,41 +1618,9 @@ fn validate_buffer_versions(
             .map(|access| access.stream)
             .collect::<BTreeSet<_>>();
 
-        let (effective_ticks, basis) = match schedule.tick_overlap {
+        let (mut effective_ticks, mut basis) = match schedule.tick_overlap {
             TickOverlapPolicy::RequireResourceVersions => {
-                let mut valid = true;
-                for stream_id in &mutated {
-                    let stream = graph.stream(*stream_id);
-                    if stream.buffering < requested {
-                        valid = false;
-                        diagnostics.push(
-                            Diagnostic::error(
-                                DiagnosticCode::InsufficientBufferVersions,
-                                format!(
-                                    "stream `{}` has {} version(s), but schedule `{}` permits {requested} overlapping simulation ticks",
-                                    stream.name, stream.buffering, schedule.name
-                                ),
-                                path("streams", &stream.name).child("buffering"),
-                            )
-                            .related(
-                                path("schedules", &schedule.name).child("in_flight"),
-                            )
-                            .fix(GraphEdit::SetStreamBuffering {
-                                stream: stream.id,
-                                expected: stream.buffering,
-                                versions: requested,
-                            }),
-                        );
-                    }
-                }
-                (
-                    if valid { requested } else { 0 },
-                    if valid {
-                        ConcurrencyBasis::ResourceVersions
-                    } else {
-                        ConcurrencyBasis::Invalid
-                    },
-                )
+                (requested, ConcurrencyBasis::ResourceVersions)
             }
             TickOverlapPolicy::SerializeConflictingTicks => {
                 (requested.min(1), ConcurrencyBasis::SerializedConflicts)
@@ -1625,45 +1654,13 @@ fn validate_buffer_versions(
             .filter(|stream| mutated.contains(stream))
             .collect::<BTreeSet<_>>();
 
-        let (effective_render_frames, presentation_basis) = match schedule.presentation_lifetime {
-            PresentationLifetimePolicy::RequireResourceVersions => {
-                let mut valid = true;
-                for stream_id in &presented_mutable {
-                    let stream = graph.stream(*stream_id);
-                    if stream.buffering < requested_render_frames {
-                        valid = false;
-                        diagnostics.push(
-                                Diagnostic::error(
-                                    DiagnosticCode::UnsafePresentationLifetime,
-                                    format!(
-                                        "stream `{}` has {} version(s), but {} render frames may still read it",
-                                        stream.name,
-                                        stream.buffering,
-                                        requested_render_frames
-                                    ),
-                                    path("streams", &stream.name).child("buffering"),
-                                )
-                                .related(
-                                    path("schedules", &schedule.name)
-                                        .child("presentation_lifetime"),
-                                )
-                                .fix(GraphEdit::SetStreamBuffering {
-                                    stream: stream.id,
-                                    expected: stream.buffering,
-                                    versions: requested_render_frames,
-                                }),
-                            );
-                    }
-                }
-                (
-                    if valid { requested_render_frames } else { 0 },
-                    if valid {
-                        PresentationConcurrencyBasis::ResourceVersions
-                    } else {
-                        PresentationConcurrencyBasis::Invalid
-                    },
-                )
-            }
+        let (mut effective_render_frames, mut presentation_basis) = match schedule
+            .presentation_lifetime
+        {
+            PresentationLifetimePolicy::RequireResourceVersions => (
+                requested_render_frames,
+                PresentationConcurrencyBasis::ResourceVersions,
+            ),
             PresentationLifetimePolicy::BlockNextTickUntilViewsComplete => (
                 requested_render_frames.min(1),
                 PresentationConcurrencyBasis::BlockUntilPresentationCompletes,
@@ -1686,33 +1683,104 @@ fn validate_buffer_versions(
             }
         };
 
+        let mut history_depth = BTreeMap::<StreamId, u32>::new();
         for view_id in &schedule.presentation_views {
             let view = graph.view(*view_id);
-            let required_history = match view.state {
+            let depth = match view.state {
                 ViewState::CurrentCompletedTick => 1,
                 ViewState::PreviousStableTick { lag } => lag.saturating_add(1),
                 ViewState::Interpolated { older_lag, .. } => older_lag.saturating_add(1),
             };
             for read in &view.reads {
-                let stream = graph.stream(read.stream);
-                if stream.buffering < required_history {
-                    diagnostics.push(
-                        Diagnostic::error(
-                            DiagnosticCode::InsufficientBufferVersions,
-                            format!(
-                                "view `{}` requires {required_history} historical versions of `{}`",
-                                view.name, stream.name
-                            ),
-                            path("views", &view.name).child("state"),
-                        )
-                        .related(path("streams", &stream.name).child("buffering"))
-                        .fix(GraphEdit::SetStreamBuffering {
-                            stream: stream.id,
-                            expected: stream.buffering,
-                            versions: required_history,
-                        }),
-                    );
+                history_depth
+                    .entry(read.stream)
+                    .and_modify(|current| *current = (*current).max(depth))
+                    .or_insert(depth);
+            }
+        }
+
+        let relevant_streams = mutated
+            .iter()
+            .copied()
+            .chain(history_depth.keys().copied())
+            .collect::<BTreeSet<_>>();
+        let mut resource_versions = Vec::new();
+        for stream_id in relevant_streams {
+            let stream = graph.stream(stream_id);
+            let simulation_live_versions = if mutated.contains(&stream_id) {
+                match schedule.tick_overlap {
+                    TickOverlapPolicy::RequireResourceVersions => requested,
+                    TickOverlapPolicy::SerializeConflictingTicks
+                    | TickOverlapPolicy::QueueOrderedReuse => 1,
                 }
+            } else {
+                0
+            };
+            let depth = history_depth.get(&stream_id).copied().unwrap_or(0);
+            let presentation_live_versions = if presented_mutable.contains(&stream_id) {
+                match schedule.presentation_lifetime {
+                    PresentationLifetimePolicy::RequireResourceVersions => {
+                        requested_render_frames.saturating_add(depth.saturating_sub(1))
+                    }
+                    PresentationLifetimePolicy::BlockNextTickUntilViewsComplete
+                    | PresentationLifetimePolicy::QueueOrderedReuse => depth,
+                }
+            } else {
+                depth
+            };
+            let required_versions = if simulation_live_versions > 0
+                && presentation_live_versions > 0
+                && schedule.presentation_lifetime
+                    == PresentationLifetimePolicy::RequireResourceVersions
+            {
+                simulation_live_versions
+                    .saturating_add(presentation_live_versions)
+                    .saturating_sub(1)
+            } else {
+                simulation_live_versions.max(presentation_live_versions)
+            };
+
+            resource_versions.push(ResourceVersionAllocation {
+                stream: stream_id,
+                simulation_live_versions,
+                presentation_live_versions,
+                required_versions,
+                allocated_versions: stream.buffering,
+            });
+
+            if stream.buffering >= required_versions {
+                continue;
+            }
+
+            let presentation_contributes = presentation_live_versions > 0;
+            let code = if presentation_contributes {
+                DiagnosticCode::UnsafePresentationLifetime
+            } else {
+                DiagnosticCode::InsufficientBufferVersions
+            };
+            diagnostics.push(
+                Diagnostic::error(
+                    code,
+                    format!(
+                        "stream `{}` has {} version(s), but its complete live range requires {required_versions} (simulation {simulation_live_versions}, presentation/history {presentation_live_versions})",
+                        stream.name, stream.buffering
+                    ),
+                    path("streams", &stream.name).child("buffering"),
+                )
+                .related(path("schedules", &schedule.name).child("in_flight"))
+                .fix(GraphEdit::SetStreamBuffering {
+                    stream: stream.id,
+                    expected: stream.buffering,
+                    versions: required_versions,
+                }),
+            );
+            if simulation_live_versions > stream.buffering {
+                effective_ticks = 0;
+                basis = ConcurrencyBasis::Invalid;
+            }
+            if presentation_contributes {
+                effective_render_frames = 0;
+                presentation_basis = PresentationConcurrencyBasis::Invalid;
             }
         }
 
@@ -1724,6 +1792,7 @@ fn validate_buffer_versions(
             effective_render_frames,
             basis,
             presentation_basis,
+            resource_versions,
         });
     }
     results
@@ -1945,8 +2014,10 @@ fn has_errors(diagnostics: &[Diagnostic]) -> bool {
 }
 
 fn build_execution_plan(
+    graph: CheckedGraph<'_>,
     orders: &[ScheduleOrder],
     concurrency: &[EffectiveConcurrency],
+    accesses: &BTreeMap<ScheduleId, Vec<Access>>,
 ) -> ExecutionPlan {
     let schedules = orders
         .iter()
@@ -1954,6 +2025,82 @@ fn build_execution_plan(
             let concurrency = concurrency
                 .iter()
                 .find(|item| item.schedule == order.schedule)?;
+            let schedule = graph.schedule(order.schedule);
+            let mut pass_ids = schedule.execution_passes.clone();
+            pass_ids.sort();
+            pass_ids.dedup();
+            let passes = pass_ids
+                .iter()
+                .map(|pass_id| {
+                    let pass = graph.pass(*pass_id);
+                    let kernel = graph.kernel(pass.kernel);
+                    let implementation = kernel
+                        .implementations
+                        .iter()
+                        .filter(|implementation| implementation.backend == Backend::Metal)
+                        .min_by(|left, right| {
+                            (&left.source, &left.entry).cmp(&(&right.source, &right.entry))
+                        })
+                        .expect("validated Metal kernel implementation")
+                        .clone();
+                    let mut bindings = pass.bindings.clone();
+                    bindings.sort_by_key(|binding| binding.slot);
+                    PlannedPass {
+                        pass: pass.id,
+                        kernel: kernel.id,
+                        bindings,
+                        dispatch: pass.dispatch.clone(),
+                        abi: kernel.abi.clone(),
+                        implementation,
+                    }
+                })
+                .collect();
+            let mut view_ids = schedule.presentation_views.clone();
+            view_ids.sort();
+            view_ids.dedup();
+            let views = view_ids
+                .iter()
+                .map(|view_id| {
+                    let view = graph.view(*view_id);
+                    let mut reads = view.reads.clone();
+                    reads.sort_by(|left, right| {
+                        (&left.name, left.stream).cmp(&(&right.name, right.stream))
+                    });
+                    PlannedView {
+                        view: view.id,
+                        reads,
+                        state: view.state.clone(),
+                        implementation: view.implementation.clone(),
+                    }
+                })
+                .collect();
+            let accesses = accesses
+                .get(&order.schedule)
+                .into_iter()
+                .flatten()
+                .map(|access| PlannedAccess {
+                    item: access.item,
+                    stream: access.stream,
+                    reads: access.reads,
+                    writes: access.writes,
+                })
+                .collect();
+            let mut completion_requirements = schedule
+                .execution_dependencies
+                .iter()
+                .map(|edge| CompletionRequirement {
+                    before: ScheduleItemId::Pass(edge.before),
+                    after: ScheduleItemId::Pass(edge.after),
+                })
+                .chain(schedule.presentation_dependencies.iter().map(|edge| {
+                    CompletionRequirement {
+                        before: ScheduleItemId::Pass(edge.producer),
+                        after: ScheduleItemId::View(edge.consumer),
+                    }
+                }))
+                .collect::<Vec<_>>();
+            completion_requirements
+                .sort_by_key(|requirement| (requirement.before, requirement.after));
             Some(ExecutionSchedule {
                 schedule: order.schedule,
                 order: order.items.clone(),
@@ -1961,11 +2108,16 @@ fn build_execution_plan(
                 effective_ticks: concurrency.effective_ticks,
                 requested_render_frames: concurrency.requested_render_frames,
                 effective_render_frames: concurrency.effective_render_frames,
+                resource_versions: concurrency.resource_versions.clone(),
+                passes,
+                views,
+                accesses,
+                completion_requirements,
             })
         })
         .collect();
     ExecutionPlan {
-        schema_version: 1,
+        schema_version: 2,
         schedules,
     }
 }
@@ -1974,13 +2126,14 @@ fn artifact_fingerprint(graph: &ModuleGraph, plan: &ExecutionPlan) -> String {
     #[derive(Serialize)]
     struct ArtifactIdentity<'a> {
         validator_schema_version: u32,
-        graph: &'a ModuleGraph,
+        canonical_graph: &'a [u8],
         execution_plan: &'a ExecutionPlan,
     }
 
+    let canonical_graph = canonicalize(graph);
     let bytes = serde_json::to_vec(&ArtifactIdentity {
         validator_schema_version: 1,
-        graph,
+        canonical_graph: &canonical_graph.bytes,
         execution_plan: plan,
     })
     .expect("validated artifact identity serialization");

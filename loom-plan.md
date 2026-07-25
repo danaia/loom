@@ -1,6 +1,13 @@
 # Loom Implementation Roadmap
 
-A gate-driven plan for building **Loom**, the language agents use to create physical worlds and compile them into low-level execution.
+A gate-driven plan for building **Loom**, an agent-native, low-level
+physical-compute language.
+
+Agents author and modify Loom; deterministic compilers, validators, verifiers, and
+runtimes decide what executes. In v0, Loom is an early systems DSL with a low-level
+typed execution model. It orchestrates memory, effects, scheduling, validation, and
+external Metal kernels rather than embedding an AI model or yet defining all kernel
+arithmetic itself.
 
 The canonical system vision lives in `loom-hello-particle-xmind.md`. The language charter and semantic model live in `docs/00-language-charter.md` and `docs/01-semantic-model.md`.
 

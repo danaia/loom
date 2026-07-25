@@ -1,4 +1,4 @@
-# Loom — Agent-Managed Bare-Metal 3D Physics Engine
+# Loom — Agent-Native Low-Level Physical Compute
 
 ## North Star
 
@@ -41,7 +41,8 @@
 
 ### Loom Is
 
-- A machine-first language for physical computation
+- An agent-native, low-level physical-compute language in development
+- An early systems DSL with a low-level typed execution model
 - A canonical typed semantic graph with a compact binary serialization
 - A deterministic compiler and validator
 - A low-level 3D physics runtime
@@ -50,9 +51,11 @@
 
 ### Loom Is Not
 
+- An agent-based runtime in which an AI model executes the program
 - A general-purpose human programming language
 - A conversational prompt interpreted at runtime
 - A neural model in the trusted execution path
+- Yet a complete backend-independent kernel-body language
 - A language whose meaning depends on text files or parser state
 - A wrapper around an existing game engine
 - A promise that AI can ignore hardware limits
