@@ -9,12 +9,16 @@ if [[ "$#" -eq 0 ]]; then
   set -- particle
 fi
 
-CARGO_PROFILE=()
+BENCHMARK=false
 for argument in "$@"; do
   if [[ "${argument}" == "--bench" ]]; then
-    CARGO_PROFILE=(--release)
+    BENCHMARK=true
     break
   fi
 done
 
-exec cargo run "${CARGO_PROFILE[@]}" --package loom-metal --bin hello-particle-view -- "$@"
+if [[ "${BENCHMARK}" == true ]]; then
+  exec cargo run --release --package loom-metal --bin hello-particle-view -- "$@"
+fi
+
+exec cargo run --package loom-metal --bin hello-particle-view -- "$@"
