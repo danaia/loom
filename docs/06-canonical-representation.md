@@ -49,7 +49,8 @@ The resolved `ExecutionPlan` contains the backend-facing facts Metal lowering ne
 - concrete resource bindings and dispatch domains,
 - kernel ABI and backend implementation identity,
 - read/write access records,
-- and completion requirements that must become ordering, barriers, events, or fences.
+- same-tick and before-next-tick completion requirements that must become ordering,
+  barriers, events, fences, or admission waits.
 
 ## Two hashes
 

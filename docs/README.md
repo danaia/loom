@@ -36,3 +36,16 @@ cargo run -p loom-validator --example hello_particle
 ```
 
 The example intentionally constructs the unsafe one-buffer/four-overlapping-ticks variant. It proves that the invalid source receives no artifact identity, applies its two repairs atomically, revalidates, and then prints the validated artifact fingerprint.
+
+## Native Metal Hello Particle
+
+On macOS, launch the validated compute/render slice with:
+
+```text
+./scripts/run-hello-particle.sh
+```
+
+The runtime accepts a `ValidatedModuleGraph`, allocates private Metal buffers from
+the execution plan, compiles its declared compute and render implementations,
+executes `fall → bounce → viewport`, and enforces the plan's cross-tick completion
+leases before single-buffer reuse.

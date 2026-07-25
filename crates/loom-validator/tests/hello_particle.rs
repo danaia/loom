@@ -611,8 +611,17 @@ fn only_validated_graphs_receive_execution_plans_and_artifact_fingerprints() {
     assert_eq!(schedule.passes.len(), 2);
     assert_eq!(schedule.views.len(), 1);
     assert!(!schedule.accesses.is_empty());
-    assert_eq!(schedule.completion_requirements.len(), 2);
+    assert_eq!(schedule.completion_requirements.len(), 4);
     assert!(!schedule.resource_versions.is_empty());
+    assert!(schedule.completion_requirements.iter().any(|requirement| {
+        matches!(
+            requirement,
+            loom_validator::CompletionRequirement::BeforeNextTick {
+                after: loom_core::ScheduleItemId::View(_),
+                streams,
+            } if !streams.is_empty()
+        )
+    }));
     assert_eq!(validated.artifact_fingerprint().len(), 64);
 
     let invalid_graph = hello_particle_builder(HelloParticleConfig::unsafe_unproven_overlap())
@@ -622,6 +631,39 @@ fn only_validated_graphs_receive_execution_plans_and_artifact_fingerprints() {
     assert!(invalid.validated.is_none());
     assert!(invalid.artifact_fingerprint().is_none());
     assert_eq!(invalid.source_graph.fingerprint.len(), 64);
+}
+
+#[test]
+fn dropped_rendering_releases_only_unsubmitted_view_leases() {
+    let graph = hello_particle_builder(HelloParticleConfig::default())
+        .build()
+        .unwrap();
+    let report = Validator::validate(&graph);
+    let schedule = &report
+        .validated
+        .as_ref()
+        .unwrap()
+        .execution_plan()
+        .schedules[0];
+
+    assert_eq!(
+        schedule.dropped_presentation,
+        loom_validator::DroppedPresentationPolicy::ReleaseUnsubmittedLeases
+    );
+    assert!(schedule.completion_requirements.iter().any(|requirement| {
+        matches!(
+            requirement,
+            loom_validator::CompletionRequirement::BeforeNextTick {
+                after: loom_core::ScheduleItemId::View(_),
+                ..
+            }
+        )
+    }));
+    assert!(schedule.resource_versions.iter().any(|allocation| {
+        allocation.simulation_live_versions == 1
+            && allocation.presentation_live_versions == 1
+            && allocation.required_versions == 1
+    }));
 }
 
 fn assert_diagnostics_empty(report: &loom_validator::ValidationReport) {

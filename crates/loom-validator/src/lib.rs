@@ -85,6 +85,7 @@ pub struct ExecutionSchedule {
     pub views: Vec<PlannedView>,
     pub accesses: Vec<PlannedAccess>,
     pub completion_requirements: Vec<CompletionRequirement>,
+    pub dropped_presentation: DroppedPresentationPolicy,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -123,9 +124,20 @@ pub struct PlannedAccess {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CompletionRequirement {
-    pub before: ScheduleItemId,
-    pub after: ScheduleItemId,
+pub enum CompletionRequirement {
+    WithinTick {
+        before: ScheduleItemId,
+        after: ScheduleItemId,
+    },
+    BeforeNextTick {
+        after: ScheduleItemId,
+        streams: Vec<StreamId>,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DroppedPresentationPolicy {
+    ReleaseUnsubmittedLeases,
 }
 
 #[derive(Clone, Debug)]
@@ -2054,7 +2066,7 @@ fn build_execution_plan(
                         implementation,
                     }
                 })
-                .collect();
+                .collect::<Vec<_>>();
             let mut view_ids = schedule.presentation_views.clone();
             view_ids.sort();
             view_ids.dedup();
@@ -2073,7 +2085,7 @@ fn build_execution_plan(
                         implementation: view.implementation.clone(),
                     }
                 })
-                .collect();
+                .collect::<Vec<_>>();
             let accesses = accesses
                 .get(&order.schedule)
                 .into_iter()
@@ -2084,23 +2096,77 @@ fn build_execution_plan(
                     reads: access.reads,
                     writes: access.writes,
                 })
-                .collect();
+                .collect::<Vec<_>>();
             let mut completion_requirements = schedule
                 .execution_dependencies
                 .iter()
-                .map(|edge| CompletionRequirement {
+                .map(|edge| CompletionRequirement::WithinTick {
                     before: ScheduleItemId::Pass(edge.before),
                     after: ScheduleItemId::Pass(edge.after),
                 })
                 .chain(schedule.presentation_dependencies.iter().map(|edge| {
-                    CompletionRequirement {
+                    CompletionRequirement::WithinTick {
                         before: ScheduleItemId::Pass(edge.producer),
                         after: ScheduleItemId::View(edge.consumer),
                     }
                 }))
                 .collect::<Vec<_>>();
-            completion_requirements
-                .sort_by_key(|requirement| (requirement.before, requirement.after));
+
+            if matches!(
+                schedule.tick_overlap,
+                TickOverlapPolicy::SerializeConflictingTicks | TickOverlapPolicy::QueueOrderedReuse
+            ) {
+                let schedule_accesses = accesses
+                    .iter()
+                    .map(|access| (access.item, access.stream, access.writes))
+                    .collect::<Vec<_>>();
+                let mut last_writer = BTreeMap::<StreamId, ScheduleItemId>::new();
+                for item in &order.items {
+                    for (_, stream, _) in schedule_accesses
+                        .iter()
+                        .filter(|(candidate, _, writes)| candidate == item && *writes)
+                    {
+                        last_writer.insert(*stream, *item);
+                    }
+                }
+                let mut by_item = BTreeMap::<ScheduleItemId, Vec<StreamId>>::new();
+                for (stream, item) in last_writer {
+                    by_item.entry(item).or_default().push(stream);
+                }
+                completion_requirements.extend(by_item.into_iter().map(|(after, mut streams)| {
+                    streams.sort();
+                    CompletionRequirement::BeforeNextTick { after, streams }
+                }));
+            }
+
+            if matches!(
+                schedule.presentation_lifetime,
+                PresentationLifetimePolicy::BlockNextTickUntilViewsComplete
+                    | PresentationLifetimePolicy::QueueOrderedReuse
+            ) {
+                completion_requirements.extend(views.iter().filter_map(|view| {
+                    let mut streams = view
+                        .reads
+                        .iter()
+                        .map(|read| read.stream)
+                        .filter(|stream| {
+                            accesses
+                                .iter()
+                                .any(|access| access.stream == *stream && access.writes)
+                        })
+                        .collect::<Vec<_>>();
+                    streams.sort();
+                    streams.dedup();
+                    (!streams.is_empty()).then_some(CompletionRequirement::BeforeNextTick {
+                        after: ScheduleItemId::View(view.view),
+                        streams,
+                    })
+                }));
+            }
+
+            completion_requirements.sort_by_cached_key(|requirement| {
+                serde_json::to_vec(requirement).expect("completion requirement serialization")
+            });
             Some(ExecutionSchedule {
                 schedule: order.schedule,
                 order: order.items.clone(),
@@ -2113,6 +2179,7 @@ fn build_execution_plan(
                 views,
                 accesses,
                 completion_requirements,
+                dropped_presentation: DroppedPresentationPolicy::ReleaseUnsubmittedLeases,
             })
         })
         .collect();

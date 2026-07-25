@@ -119,6 +119,19 @@ For blocking or proven queue-ordered reuse, the two phases do not overlap and th
 larger live range wins. For example, lag `1` with two render frames in flight needs
 three versions—not two—even when simulation ticks are serialized.
 
+## Cross-Tick Completion
+
+The execution plan carries both:
+
+- `WithinTick { before, after }` for pass and presentation DAG edges,
+- `BeforeNextTick { after, streams }` for resource reuse across tick boundaries.
+
+The latter is emitted for serialized conflicting simulation writes and for views
+that must finish before a later tick overwrites their streams. A dropped view never
+submits a resource lease, so `drop_presentation_only` releases that unsubmitted
+lease immediately; any submitted view still satisfies its `BeforeNextTick`
+requirement before reuse.
+
 ## Kernel ABI
 
 Every kernel implementation declares:
