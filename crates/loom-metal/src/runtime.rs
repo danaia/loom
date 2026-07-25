@@ -15,8 +15,8 @@ use loom_validator::{
 use metal::{
     Buffer, CommandQueue, CompileOptions, ComputePipelineState, Device, MTLClearColor,
     MTLCommandBufferStatus, MTLLoadAction, MTLPixelFormat, MTLPrimitiveType, MTLResourceOptions,
-    MTLSize, MTLStoreAction, MetalLayer, RenderPassDescriptor, RenderPipelineDescriptor,
-    RenderPipelineState,
+    MTLSize, MTLStorageMode, MTLStoreAction, MTLTextureUsage, MetalLayer, RenderPassDescriptor,
+    RenderPipelineDescriptor, RenderPipelineState, TextureDescriptor,
 };
 use objc::{msg_send, rc::autoreleasepool, runtime::YES, sel, sel_impl};
 use winit::{
@@ -28,8 +28,8 @@ use winit::{
 };
 
 use crate::{
-    PipelineIdentity, RuntimeDiagnostic, RuntimeDiagnosticCode, RuntimeFingerprint, ShaderIdentity,
-    sha256,
+    BenchmarkConfig, BenchmarkMode, BenchmarkResult, PipelineIdentity, RuntimeDiagnostic,
+    RuntimeDiagnosticCode, RuntimeFingerprint, ShaderIdentity, ViewportSize, sha256, summarize,
 };
 
 const INTEGRATE_SOURCE: &str = include_str!("../../../kernels/euler_integrate.metal");
@@ -111,6 +111,29 @@ impl MetalRuntime {
                 _ => {}
             });
         });
+    }
+
+    pub fn benchmark(
+        validated: ValidatedModuleGraph,
+        config: BenchmarkConfig,
+    ) -> Result<BenchmarkResult, RuntimeDiagnostic> {
+        if config.sample_ticks == 0 {
+            return Err(RuntimeDiagnostic::new(
+                RuntimeDiagnosticCode::UnsupportedGraph,
+                "benchmark sample count must be positive",
+            ));
+        }
+        let device = Device::system_default().ok_or_else(|| {
+            RuntimeDiagnostic::new(
+                RuntimeDiagnosticCode::DeviceUnavailable,
+                "Metal has no system-default device",
+            )
+        })?;
+        let layer = MetalLayer::new();
+        layer.set_device(&device);
+        layer.set_pixel_format(MTLPixelFormat::BGRA8Unorm);
+        let mut state = RuntimeState::new(validated, device.clone(), layer)?;
+        state.run_benchmark(&device, config)
     }
 }
 
@@ -221,6 +244,119 @@ impl RuntimeState {
         Ok(())
     }
 
+    fn run_benchmark(
+        &mut self,
+        device: &Device,
+        config: BenchmarkConfig,
+    ) -> Result<BenchmarkResult, RuntimeDiagnostic> {
+        let render_target = (config.mode == BenchmarkMode::Rendered).then(|| {
+            let descriptor = TextureDescriptor::new();
+            descriptor.set_width(config.viewport_width as u64);
+            descriptor.set_height(config.viewport_height as u64);
+            descriptor.set_pixel_format(MTLPixelFormat::BGRA8Unorm);
+            descriptor.set_storage_mode(MTLStorageMode::Private);
+            descriptor.set_usage(MTLTextureUsage::RenderTarget);
+            device.new_texture(&descriptor)
+        });
+
+        for _ in 0..config.warmup_ticks {
+            self.benchmark_tick(render_target.as_deref())?;
+        }
+
+        let mut gpu_ms = Vec::with_capacity(config.sample_ticks as usize);
+        let mut cpu_ms = Vec::with_capacity(config.sample_ticks as usize);
+        for _ in 0..config.sample_ticks {
+            let timing = self.benchmark_tick(render_target.as_deref())?;
+            gpu_ms.push(timing.gpu_ms);
+            cpu_ms.push(timing.cpu_orchestration_ms);
+        }
+
+        let gpu_ms = summarize(&gpu_ms);
+        let cpu_orchestration_ms = summarize(&cpu_ms);
+        let particle_count = self
+            .validated
+            .graph()
+            .resources
+            .streams
+            .first()
+            .map(|stream| match stream.length {
+                StreamLength::Fixed(length) => length,
+                StreamLength::Dynamic(_) => stream.capacity,
+            })
+            .unwrap_or(0);
+        Ok(BenchmarkResult {
+            experiment: self.validated.graph().name.clone(),
+            particle_count,
+            mode: config.mode,
+            viewport: (config.mode == BenchmarkMode::Rendered).then_some(ViewportSize {
+                width: config.viewport_width,
+                height: config.viewport_height,
+            }),
+            warmup_ticks: config.warmup_ticks,
+            sample_ticks: config.sample_ticks,
+            gpu_p95_below_8_33_ms: gpu_ms.p95 < 8.33,
+            gpu_ms,
+            cpu_orchestration_ms,
+            synchronized_each_tick: true,
+            runtime: self.fingerprint.clone(),
+        })
+    }
+
+    fn benchmark_tick(
+        &self,
+        render_target: Option<&metal::TextureRef>,
+    ) -> Result<TickTiming, RuntimeDiagnostic> {
+        let schedule = &self.validated.execution_plan().schedules[0];
+        let cpu_start = Instant::now();
+        let command_buffer = self.queue.new_command_buffer();
+        command_buffer.set_label("loom.benchmark.tick");
+
+        for item in &schedule.order {
+            match item {
+                ScheduleItemId::Pass(pass_id) => {
+                    let pass = schedule
+                        .passes
+                        .iter()
+                        .find(|pass| pass.pass == *pass_id)
+                        .expect("validated plan pass");
+                    self.encode_compute(command_buffer, pass)?;
+                }
+                ScheduleItemId::View(view_id) => {
+                    if let Some(texture) = render_target {
+                        let view = schedule
+                            .views
+                            .iter()
+                            .find(|view| view.view == *view_id)
+                            .expect("validated plan view");
+                        self.encode_render(command_buffer, view, texture)?;
+                    }
+                }
+            }
+        }
+
+        command_buffer.commit();
+        let cpu_orchestration_ms = cpu_start.elapsed().as_secs_f64() * 1_000.0;
+        command_buffer.wait_until_completed();
+        if command_buffer.status() == MTLCommandBufferStatus::Error {
+            return Err(RuntimeDiagnostic::new(
+                RuntimeDiagnosticCode::CommandBufferFailed,
+                "Metal reported a benchmark command-buffer error",
+            ));
+        }
+        let gpu_start: f64 = unsafe { msg_send![command_buffer, GPUStartTime] };
+        let gpu_end: f64 = unsafe { msg_send![command_buffer, GPUEndTime] };
+        if gpu_start <= 0.0 || gpu_end < gpu_start {
+            return Err(RuntimeDiagnostic::new(
+                RuntimeDiagnosticCode::CommandBufferFailed,
+                "Metal did not provide valid command-buffer GPU timestamps",
+            ));
+        }
+        Ok(TickTiming {
+            gpu_ms: (gpu_end - gpu_start) * 1_000.0,
+            cpu_orchestration_ms,
+        })
+    }
+
     fn encode_compute(
         &self,
         command_buffer: &metal::CommandBufferRef,
@@ -286,6 +422,11 @@ impl RuntimeState {
         encoder.end_encoding();
         Ok(())
     }
+}
+
+struct TickTiming {
+    gpu_ms: f64,
+    cpu_orchestration_ms: f64,
 }
 
 fn display_name(module_name: &str) -> String {
@@ -637,6 +778,7 @@ fn make_fingerprint(
         artifact: &'a str,
         device: &'a str,
         operating_system: &'a str,
+        host_profile: &'a str,
         shader_hashes: &'a [ShaderIdentity],
         pipelines: &'a [PipelineIdentity],
     }
@@ -649,10 +791,16 @@ fn make_fingerprint(
         .filter(|output| output.status.success())
         .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_owned())
         .unwrap_or_else(|| "macOS unknown".to_owned());
+    let host_profile = if cfg!(debug_assertions) {
+        "debug".to_owned()
+    } else {
+        "release".to_owned()
+    };
     let identity = Identity {
         artifact: validated.artifact_fingerprint(),
         device: &device_name,
         operating_system: &operating_system,
+        host_profile: &host_profile,
         shader_hashes: &shader_hashes,
         pipelines: &pipelines,
     };
@@ -661,6 +809,7 @@ fn make_fingerprint(
         artifact: validated.artifact_fingerprint().to_owned(),
         device: device_name,
         operating_system,
+        host_profile,
         shader_hashes,
         pipelines,
         fingerprint: sha256(bytes),

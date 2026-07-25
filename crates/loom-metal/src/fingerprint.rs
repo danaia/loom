@@ -6,6 +6,7 @@ pub struct RuntimeFingerprint {
     pub artifact: String,
     pub device: String,
     pub operating_system: String,
+    pub host_profile: String,
     pub shader_hashes: Vec<ShaderIdentity>,
     pub pipelines: Vec<PipelineIdentity>,
     pub fingerprint: String,

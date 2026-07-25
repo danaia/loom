@@ -62,3 +62,24 @@ Select the conformance experiment through the same launcher:
 `k` and `m` suffixes. Hello Batch uses the same kernels and language path while
 testing stream capacity, logical length, plan-driven dispatch, private-buffer
 allocation, and instanced rendering at scale.
+
+Run bounded benchmarks without opening a window:
+
+```text
+./scripts/run-hello-particle.sh batch 10k --bench headless
+./scripts/run-hello-particle.sh batch 10k --bench rendered
+./scripts/run-hello-particle.sh batch 100k --bench rendered --warmup 120 --samples 600
+```
+
+Benchmark commands build and run the optimized Rust release profile automatically.
+Headless measures compute only. Rendered adds the plan-driven view into a private
+960×720 target. Results report Metal command-buffer GPU timing, CPU encoding and
+commit time, p50/p95, the 8.33 ms gate, and the runtime fingerprint.
+
+The benchmark currently synchronizes after every sampled tick to collect completed
+GPU timestamps and reports this explicitly as `synchronized_each_tick: true`.
+Removing the runtime’s per-tick wait remains the Hello Batch performance gate.
+
+Recorded baselines:
+
+- [`benchmarks/hello-batch-100k-m4-pro.md`](benchmarks/hello-batch-100k-m4-pro.md)
