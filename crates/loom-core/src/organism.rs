@@ -10,6 +10,7 @@ const SPATIAL_BIN_COUNT: u32 = SPATIAL_BIN_AXIS * SPATIAL_BIN_AXIS;
 const SPATIAL_BIN_CAPACITY: u32 = 128;
 const SPATIAL_INDEX_COUNT: u32 = SPATIAL_BIN_COUNT * SPATIAL_BIN_CAPACITY;
 const SCAN_BLOCK_SIZE: u32 = 256;
+const COMPONENT_RELAXATION_ROUNDS: u32 = 64;
 
 fn packaged_kernel(name: &str, slots: Vec<SlotDraft>) -> KernelDraft {
     let binding_order = slots
@@ -70,7 +71,9 @@ fn dynamic_stream(
 /// Population membership uses global stable-ID radix ordering, canonical spatial
 /// bins, bounded qualification, hierarchical prefix scans, parallel compaction,
 /// stable-ID birth allocation, and an authoritative final count commit.
-/// Morphology reductions and sustained homeostasis remain later proof gates.
+/// Developmental perception derives quantized density, contact, and exact
+/// eight-sector exposure from those bins. Convergence-audited component labels
+/// feed GPU morphology reductions. Sustained homeostasis remains a later gate.
 pub fn hello_organism_builder(capacity: u32) -> ModuleBuilder {
     assert!(capacity >= 2);
     assert!(
@@ -99,6 +102,9 @@ pub fn hello_organism_builder(capacity: u32) -> ModuleBuilder {
         "cells.previous_fate",
         "cells.fate_confidence",
         "cells.time_in_fate",
+        "cells.recent_activator",
+        "cells.recent_inhibitor",
+        "cells.recent_surface_exposure",
         "cells.color",
     ];
     let transient = [
@@ -107,6 +113,11 @@ pub fn hello_organism_builder(capacity: u32) -> ModuleBuilder {
         "perception.nutrient_bin",
         "perception.density_bin",
         "perception.energy_bin",
+        "perception.local_density_bin",
+        "perception.neighbor_count",
+        "perception.contact_count",
+        "perception.surface_mask",
+        "perception.surface_exposure_bin",
         "intent.requested_fate",
         "intent.requested_phase",
         "intent.requested_health",
@@ -241,6 +252,24 @@ pub fn hello_organism_builder(capacity: u32) -> ModuleBuilder {
             Literal::U32(0),
         ),
         (
+            "cells.recent_activator",
+            u32_type.clone(),
+            Unit::DIMENSIONLESS,
+            Literal::U32(0),
+        ),
+        (
+            "cells.recent_inhibitor",
+            u32_type.clone(),
+            Unit::DIMENSIONLESS,
+            Literal::U32(0),
+        ),
+        (
+            "cells.recent_surface_exposure",
+            u32_type.clone(),
+            Unit::DIMENSIONLESS,
+            Literal::U32(4095),
+        ),
+        (
             "cells.color",
             vec4.clone(),
             Unit::DIMENSIONLESS,
@@ -351,6 +380,8 @@ pub fn hello_organism_builder(capacity: u32) -> ModuleBuilder {
         "population.next_count",
         "population.rejected_births",
         "population.neighbor_overflow",
+        "population.physical_neighbor_overflow",
+        "population.perception_truncation",
     ] {
         builder = builder.stream(
             StreamDraft::new(name, u32_type.clone(), Unit::DIMENSIONLESS)
@@ -359,6 +390,61 @@ pub fn hello_organism_builder(capacity: u32) -> ModuleBuilder {
                 .initial(Literal::Array(vec![Literal::U32(0)])),
         );
     }
+    for name in [
+        "morphology.component_label_a",
+        "morphology.component_label_b",
+    ] {
+        builder = builder.stream(dynamic_stream(
+            name,
+            u32_type.clone(),
+            Unit::DIMENSIONLESS,
+            Literal::U32(u32::MAX),
+            capacity,
+            None,
+        ));
+    }
+    for name in [
+        "morphology.population",
+        "morphology.component_count",
+        "morphology.component_unresolved",
+        "morphology.organizer_count",
+        "morphology.undifferentiated_count",
+        "morphology.boundary_count",
+        "morphology.interior_count",
+        "morphology.area_q16",
+        "morphology.perimeter_q16",
+        "morphology.compactness_q16",
+    ] {
+        builder = builder.stream(
+            StreamDraft::new(name, u32_type.clone(), Unit::DIMENSIONLESS)
+                .capacity(1)
+                .length(1)
+                .initial(Literal::Array(vec![Literal::U32(0)])),
+        );
+    }
+    for name in [
+        "morphology.centroid_sum_x_q16",
+        "morphology.centroid_sum_y_q16",
+        "morphology.centroid_x_q16",
+        "morphology.centroid_y_q16",
+    ] {
+        builder = builder.stream(
+            StreamDraft::new(name, DataType::Scalar(ScalarType::I32), Unit::DIMENSIONLESS)
+                .capacity(1)
+                .length(1)
+                .initial(Literal::Array(vec![Literal::I32(0)])),
+        );
+    }
+    builder = builder.stream(
+        StreamDraft::new(
+            "morphology.radial_density",
+            u32_type.clone(),
+            Unit::DIMENSIONLESS,
+        )
+        .capacity(8)
+        .length(8)
+        .initial_repeat(Literal::U32(0), 8),
+    );
     for name in ["spatial.living_bin_count", "spatial.candidate_bin_count"] {
         builder = builder.stream(
             StreamDraft::new(name, u32_type.clone(), Unit::DIMENSIONLESS)
@@ -452,6 +538,24 @@ pub fn hello_organism_builder(capacity: u32) -> ModuleBuilder {
             Literal::U32(0),
         ),
         (
+            "population.stage_recent_activator",
+            u32_type.clone(),
+            Unit::DIMENSIONLESS,
+            Literal::U32(0),
+        ),
+        (
+            "population.stage_recent_inhibitor",
+            u32_type.clone(),
+            Unit::DIMENSIONLESS,
+            Literal::U32(0),
+        ),
+        (
+            "population.stage_recent_surface_exposure",
+            u32_type.clone(),
+            Unit::DIMENSIONLESS,
+            Literal::U32(0),
+        ),
+        (
             "population.stage_color",
             vec4.clone(),
             Unit::DIMENSIONLESS,
@@ -523,8 +627,141 @@ pub fn hello_organism_builder(capacity: u32) -> ModuleBuilder {
         radix_predecessor = scatter;
     }
 
+    builder = builder
+        .pass(
+            PassDraft::new("observe_neighbors", "organism_observe_neighbors")
+                .bind("position", "cells.position")
+                .bind("radius", "cells.radius")
+                .bind("stable_id", "cells.stable_id")
+                .bind("bin_count", "spatial.living_bin_count")
+                .bind("bin_indices", "spatial.living_bin_indices")
+                .bind("local_density_bin", "perception.local_density_bin")
+                .bind("neighbor_count", "perception.neighbor_count")
+                .bind("contact_count", "perception.contact_count")
+                .bind("surface_mask", "perception.surface_mask")
+                .bind("surface_exposure_bin", "perception.surface_exposure_bin")
+                .bind("physical_overflow", "population.physical_neighbor_overflow")
+                .bind("perception_truncation", "population.perception_truncation")
+                .dispatch_over("cells.stable_id"),
+        )
+        .pass(
+            PassDraft::new("initialize_components", "organism_initialize_components")
+                .bind("stable_id", "cells.stable_id")
+                .bind("label", "morphology.component_label_a")
+                .dispatch_over("cells.stable_id"),
+        );
+    let mut component_predecessor = "initialize_components".to_owned();
+    let mut component_dependencies = Vec::new();
+    for round in 0..COMPONENT_RELAXATION_ROUNDS {
+        let clear = format!("clear_component_changes_{round}");
+        let relax = format!("relax_components_{round}");
+        let (input, output) = if round % 2 == 0 {
+            (
+                "morphology.component_label_a",
+                "morphology.component_label_b",
+            )
+        } else {
+            (
+                "morphology.component_label_b",
+                "morphology.component_label_a",
+            )
+        };
+        builder = builder
+            .pass(
+                PassDraft::new(&clear, "organism_clear_component_changes")
+                    .bind("changes", "morphology.component_unresolved"),
+            )
+            .pass(
+                PassDraft::new(&relax, "organism_relax_components")
+                    .bind("position", "cells.position")
+                    .bind("radius", "cells.radius")
+                    .bind("bin_count", "spatial.living_bin_count")
+                    .bind("bin_indices", "spatial.living_bin_indices")
+                    .bind("input_label", input)
+                    .bind("output_label", output)
+                    .bind("changes", "morphology.component_unresolved")
+                    .dispatch_over("cells.stable_id"),
+            );
+        component_dependencies.push((clear.clone(), component_predecessor));
+        component_dependencies.push((relax.clone(), clear));
+        component_predecessor = relax;
+    }
+    builder = builder
+        .pass(
+            PassDraft::new("clear_morphology", "organism_clear_morphology")
+                .bind("radial_density", "morphology.radial_density")
+                .bind("component_count", "morphology.component_count")
+                .bind("organizer_count", "morphology.organizer_count")
+                .bind(
+                    "undifferentiated_count",
+                    "morphology.undifferentiated_count",
+                )
+                .bind("boundary_count", "morphology.boundary_count")
+                .bind("interior_count", "morphology.interior_count")
+                .bind("area_q16", "morphology.area_q16")
+                .bind("perimeter_q16", "morphology.perimeter_q16")
+                .bind("centroid_sum_x_q16", "morphology.centroid_sum_x_q16")
+                .bind("centroid_sum_y_q16", "morphology.centroid_sum_y_q16")
+                .dispatch_over("morphology.radial_density"),
+        )
+        .pass(
+            PassDraft::new("reduce_morphology", "organism_reduce_morphology")
+                .bind("stable_id", "cells.stable_id")
+                .bind("fate", "cells.fate")
+                .bind("position", "cells.position")
+                .bind("radius", "cells.radius")
+                .bind("surface_exposure_bin", "perception.surface_exposure_bin")
+                .bind("component_label", "morphology.component_label_a")
+                .bind("component_count", "morphology.component_count")
+                .bind("organizer_count", "morphology.organizer_count")
+                .bind(
+                    "undifferentiated_count",
+                    "morphology.undifferentiated_count",
+                )
+                .bind("boundary_count", "morphology.boundary_count")
+                .bind("interior_count", "morphology.interior_count")
+                .bind("area_q16", "morphology.area_q16")
+                .bind("perimeter_q16", "morphology.perimeter_q16")
+                .bind("centroid_sum_x_q16", "morphology.centroid_sum_x_q16")
+                .bind("centroid_sum_y_q16", "morphology.centroid_sum_y_q16")
+                .dispatch_over("cells.stable_id"),
+        )
+        .pass(
+            PassDraft::new("finalize_morphology", "organism_finalize_morphology")
+                .bind("active_count", "cells.active_count")
+                .bind("population", "morphology.population")
+                .bind("area_q16", "morphology.area_q16")
+                .bind("perimeter_q16", "morphology.perimeter_q16")
+                .bind("centroid_sum_x_q16", "morphology.centroid_sum_x_q16")
+                .bind("centroid_sum_y_q16", "morphology.centroid_sum_y_q16")
+                .bind("centroid_x_q16", "morphology.centroid_x_q16")
+                .bind("centroid_y_q16", "morphology.centroid_y_q16")
+                .bind("compactness_q16", "morphology.compactness_q16"),
+        )
+        .pass(
+            PassDraft::new("reduce_radial_density", "organism_reduce_radial_density")
+                .bind("position", "cells.position")
+                .bind("centroid_x_q16", "morphology.centroid_x_q16")
+                .bind("centroid_y_q16", "morphology.centroid_y_q16")
+                .bind("radial_density", "morphology.radial_density")
+                .dispatch_over("cells.stable_id"),
+        );
+
     let mut schedule = ScheduleDraft::fixed("simulation", 120)
-        .run("sample")
+        .run("clear_population_bins")
+        .run_after("bin_living", "clear_population_bins")
+        .run_after("sort_living_bins", "bin_living")
+        .run_after("observe_neighbors", "sort_living_bins")
+        .run_after("initialize_components", "observe_neighbors");
+    for (pass, predecessor) in component_dependencies {
+        schedule = schedule.run_after(pass, predecessor);
+    }
+    schedule = schedule
+        .run_after("clear_morphology", component_predecessor)
+        .run_after("reduce_morphology", "clear_morphology")
+        .run_after("finalize_morphology", "reduce_morphology")
+        .run_after("reduce_radial_density", "finalize_morphology")
+        .run_after("sample", "reduce_radial_density")
         .run_after("decide", "sample")
         .run_after("resolve_state", "decide")
         .run_after("clear_deposits", "resolve_state")
@@ -536,10 +773,7 @@ pub fn hello_organism_builder(capacity: u32) -> ModuleBuilder {
         schedule = schedule.run_after(pass, predecessor);
     }
     schedule = schedule
-        .run_after("clear_population_bins", radix_predecessor)
-        .run_after("bin_living", "clear_population_bins")
-        .run_after("sort_living_bins", "bin_living")
-        .run_after("prequalify_population", "sort_living_bins")
+        .run_after("prequalify_population", radix_predecessor)
         .run_after("bin_candidates", "prequalify_population")
         .run_after("sort_candidate_bins", "bin_candidates")
         .run_after("resolve_candidate_conflicts", "sort_candidate_bins")
@@ -590,10 +824,15 @@ pub fn hello_organism_builder(capacity: u32) -> ModuleBuilder {
                 ("health", SlotAccess::Read),
                 ("age", SlotAccess::Read),
                 ("fate_confidence", SlotAccess::Read),
+                ("time_in_fate", SlotAccess::Read),
                 ("activator_bin", SlotAccess::Read),
                 ("inhibitor_bin", SlotAccess::Read),
                 ("nutrient_bin", SlotAccess::Read),
                 ("density_bin", SlotAccess::Read),
+                ("local_density_bin", SlotAccess::Read),
+                ("contact_count", SlotAccess::Read),
+                ("surface_exposure_bin", SlotAccess::Read),
+                ("recent_surface_exposure", SlotAccess::Read),
                 ("energy_bin", SlotAccess::Read),
                 ("requested_fate", SlotAccess::Write),
                 ("requested_phase", SlotAccess::Write),
@@ -626,6 +865,24 @@ pub fn hello_organism_builder(capacity: u32) -> ModuleBuilder {
                     SlotAccess::ReadWrite,
                     false,
                 ),
+                stream_slot(
+                    "recent_activator",
+                    u32_type.clone(),
+                    SlotAccess::ReadWrite,
+                    false,
+                ),
+                stream_slot(
+                    "recent_inhibitor",
+                    u32_type.clone(),
+                    SlotAccess::ReadWrite,
+                    false,
+                ),
+                stream_slot(
+                    "recent_surface_exposure",
+                    u32_type.clone(),
+                    SlotAccess::ReadWrite,
+                    false,
+                ),
                 stream_slot("age", u32_type.clone(), SlotAccess::ReadWrite, false),
                 stream_slot("energy", f32_type.clone(), SlotAccess::ReadWrite, false),
                 stream_slot("color", vec4.clone(), SlotAccess::Write, false),
@@ -638,6 +895,14 @@ pub fn hello_organism_builder(capacity: u32) -> ModuleBuilder {
                     false,
                 ),
                 stream_slot("nutrient_bin", u32_type.clone(), SlotAccess::Read, false),
+                stream_slot("activator_bin", u32_type.clone(), SlotAccess::Read, false),
+                stream_slot("inhibitor_bin", u32_type.clone(), SlotAccess::Read, false),
+                stream_slot(
+                    "surface_exposure_bin",
+                    u32_type.clone(),
+                    SlotAccess::Read,
+                    false,
+                ),
                 stream_slot(
                     "activator_deposit",
                     u32_type.clone(),
@@ -779,6 +1044,18 @@ pub fn hello_organism_builder(capacity: u32) -> ModuleBuilder {
                     false,
                 ),
                 stream_slot("overflow", u32_type.clone(), SlotAccess::Write, true),
+                stream_slot(
+                    "physical_overflow",
+                    u32_type.clone(),
+                    SlotAccess::Write,
+                    true,
+                ),
+                stream_slot(
+                    "perception_truncation",
+                    u32_type.clone(),
+                    SlotAccess::Write,
+                    true,
+                ),
             ],
         ))
         .kernel(packaged_kernel(
@@ -803,6 +1080,246 @@ pub fn hello_organism_builder(capacity: u32) -> ModuleBuilder {
                 stream_slot("count", u32_type.clone(), SlotAccess::Read, false),
                 stream_slot("indices", u32_type.clone(), SlotAccess::ReadWrite, true),
                 stream_slot("stable_id", u32_type.clone(), SlotAccess::Read, true),
+            ],
+        ))
+        .kernel(packaged_kernel(
+            "organism_observe_neighbors",
+            vec![
+                stream_slot_unit(
+                    "position",
+                    vec3.clone(),
+                    Unit::METER,
+                    SlotAccess::Read,
+                    false,
+                ),
+                stream_slot_unit(
+                    "radius",
+                    f32_type.clone(),
+                    Unit::METER,
+                    SlotAccess::Read,
+                    false,
+                ),
+                stream_slot("stable_id", u32_type.clone(), SlotAccess::Read, false),
+                stream_slot("bin_count", u32_type.clone(), SlotAccess::Read, true),
+                stream_slot("bin_indices", u32_type.clone(), SlotAccess::Read, true),
+                stream_slot(
+                    "local_density_bin",
+                    u32_type.clone(),
+                    SlotAccess::Write,
+                    false,
+                ),
+                stream_slot("neighbor_count", u32_type.clone(), SlotAccess::Write, false),
+                stream_slot("contact_count", u32_type.clone(), SlotAccess::Write, false),
+                stream_slot("surface_mask", u32_type.clone(), SlotAccess::Write, false),
+                stream_slot(
+                    "surface_exposure_bin",
+                    u32_type.clone(),
+                    SlotAccess::Write,
+                    false,
+                ),
+                stream_slot(
+                    "physical_overflow",
+                    u32_type.clone(),
+                    SlotAccess::Atomic,
+                    true,
+                ),
+                stream_slot(
+                    "perception_truncation",
+                    u32_type.clone(),
+                    SlotAccess::Atomic,
+                    true,
+                ),
+            ],
+        ))
+        .kernel(packaged_kernel(
+            "organism_initialize_components",
+            vec![
+                stream_slot("stable_id", u32_type.clone(), SlotAccess::Read, false),
+                stream_slot("label", u32_type.clone(), SlotAccess::Write, false),
+            ],
+        ))
+        .kernel(packaged_kernel(
+            "organism_clear_component_changes",
+            vec![stream_slot(
+                "changes",
+                u32_type.clone(),
+                SlotAccess::Write,
+                true,
+            )],
+        ))
+        .kernel(packaged_kernel(
+            "organism_relax_components",
+            vec![
+                stream_slot_unit(
+                    "position",
+                    vec3.clone(),
+                    Unit::METER,
+                    SlotAccess::Read,
+                    false,
+                ),
+                stream_slot_unit(
+                    "radius",
+                    f32_type.clone(),
+                    Unit::METER,
+                    SlotAccess::Read,
+                    false,
+                ),
+                stream_slot("bin_count", u32_type.clone(), SlotAccess::Read, true),
+                stream_slot("bin_indices", u32_type.clone(), SlotAccess::Read, true),
+                stream_slot("input_label", u32_type.clone(), SlotAccess::Read, false),
+                stream_slot("output_label", u32_type.clone(), SlotAccess::Write, false),
+                stream_slot("changes", u32_type.clone(), SlotAccess::Atomic, true),
+            ],
+        ))
+        .kernel(packaged_kernel(
+            "organism_clear_morphology",
+            vec![
+                stream_slot("radial_density", u32_type.clone(), SlotAccess::Write, false),
+                stream_slot("component_count", u32_type.clone(), SlotAccess::Write, true),
+                stream_slot("organizer_count", u32_type.clone(), SlotAccess::Write, true),
+                stream_slot(
+                    "undifferentiated_count",
+                    u32_type.clone(),
+                    SlotAccess::Write,
+                    true,
+                ),
+                stream_slot("boundary_count", u32_type.clone(), SlotAccess::Write, true),
+                stream_slot("interior_count", u32_type.clone(), SlotAccess::Write, true),
+                stream_slot("area_q16", u32_type.clone(), SlotAccess::Write, true),
+                stream_slot("perimeter_q16", u32_type.clone(), SlotAccess::Write, true),
+                stream_slot(
+                    "centroid_sum_x_q16",
+                    DataType::Scalar(ScalarType::I32),
+                    SlotAccess::Write,
+                    true,
+                ),
+                stream_slot(
+                    "centroid_sum_y_q16",
+                    DataType::Scalar(ScalarType::I32),
+                    SlotAccess::Write,
+                    true,
+                ),
+            ],
+        ))
+        .kernel(packaged_kernel(
+            "organism_reduce_morphology",
+            vec![
+                stream_slot("stable_id", u32_type.clone(), SlotAccess::Read, false),
+                stream_slot("fate", u32_type.clone(), SlotAccess::Read, false),
+                stream_slot_unit(
+                    "position",
+                    vec3.clone(),
+                    Unit::METER,
+                    SlotAccess::Read,
+                    false,
+                ),
+                stream_slot_unit(
+                    "radius",
+                    f32_type.clone(),
+                    Unit::METER,
+                    SlotAccess::Read,
+                    false,
+                ),
+                stream_slot(
+                    "surface_exposure_bin",
+                    u32_type.clone(),
+                    SlotAccess::Read,
+                    false,
+                ),
+                stream_slot("component_label", u32_type.clone(), SlotAccess::Read, false),
+                stream_slot(
+                    "component_count",
+                    u32_type.clone(),
+                    SlotAccess::Atomic,
+                    true,
+                ),
+                stream_slot(
+                    "organizer_count",
+                    u32_type.clone(),
+                    SlotAccess::Atomic,
+                    true,
+                ),
+                stream_slot(
+                    "undifferentiated_count",
+                    u32_type.clone(),
+                    SlotAccess::Atomic,
+                    true,
+                ),
+                stream_slot("boundary_count", u32_type.clone(), SlotAccess::Atomic, true),
+                stream_slot("interior_count", u32_type.clone(), SlotAccess::Atomic, true),
+                stream_slot("area_q16", u32_type.clone(), SlotAccess::Atomic, true),
+                stream_slot("perimeter_q16", u32_type.clone(), SlotAccess::Atomic, true),
+                stream_slot(
+                    "centroid_sum_x_q16",
+                    DataType::Scalar(ScalarType::I32),
+                    SlotAccess::Atomic,
+                    true,
+                ),
+                stream_slot(
+                    "centroid_sum_y_q16",
+                    DataType::Scalar(ScalarType::I32),
+                    SlotAccess::Atomic,
+                    true,
+                ),
+            ],
+        ))
+        .kernel(packaged_kernel(
+            "organism_finalize_morphology",
+            vec![
+                stream_slot("active_count", u32_type.clone(), SlotAccess::Read, true),
+                stream_slot("population", u32_type.clone(), SlotAccess::Write, true),
+                stream_slot("area_q16", u32_type.clone(), SlotAccess::Read, true),
+                stream_slot("perimeter_q16", u32_type.clone(), SlotAccess::Read, true),
+                stream_slot(
+                    "centroid_sum_x_q16",
+                    DataType::Scalar(ScalarType::I32),
+                    SlotAccess::Read,
+                    true,
+                ),
+                stream_slot(
+                    "centroid_sum_y_q16",
+                    DataType::Scalar(ScalarType::I32),
+                    SlotAccess::Read,
+                    true,
+                ),
+                stream_slot(
+                    "centroid_x_q16",
+                    DataType::Scalar(ScalarType::I32),
+                    SlotAccess::Write,
+                    true,
+                ),
+                stream_slot(
+                    "centroid_y_q16",
+                    DataType::Scalar(ScalarType::I32),
+                    SlotAccess::Write,
+                    true,
+                ),
+                stream_slot("compactness_q16", u32_type.clone(), SlotAccess::Write, true),
+            ],
+        ))
+        .kernel(packaged_kernel(
+            "organism_reduce_radial_density",
+            vec![
+                stream_slot_unit(
+                    "position",
+                    vec3.clone(),
+                    Unit::METER,
+                    SlotAccess::Read,
+                    false,
+                ),
+                stream_slot(
+                    "centroid_x_q16",
+                    DataType::Scalar(ScalarType::I32),
+                    SlotAccess::Read,
+                    true,
+                ),
+                stream_slot(
+                    "centroid_y_q16",
+                    DataType::Scalar(ScalarType::I32),
+                    SlotAccess::Read,
+                    true,
+                ),
+                stream_slot("radial_density", u32_type.clone(), SlotAccess::Atomic, true),
             ],
         ))
         .kernel(packaged_kernel(
@@ -1057,6 +1574,14 @@ pub fn hello_organism_builder(capacity: u32) -> ModuleBuilder {
                 stream_slot("previous_fate", u32_type.clone(), SlotAccess::Read, true),
                 stream_slot("fate_confidence", u32_type.clone(), SlotAccess::Read, true),
                 stream_slot("time_in_fate", u32_type.clone(), SlotAccess::Read, true),
+                stream_slot("recent_activator", u32_type.clone(), SlotAccess::Read, true),
+                stream_slot("recent_inhibitor", u32_type.clone(), SlotAccess::Read, true),
+                stream_slot(
+                    "recent_surface_exposure",
+                    u32_type.clone(),
+                    SlotAccess::Read,
+                    true,
+                ),
                 stream_slot("color", vec4.clone(), SlotAccess::Read, true),
                 stream_slot("survival", u32_type.clone(), SlotAccess::Read, false),
                 stream_slot("birth", u32_type.clone(), SlotAccess::Read, false),
@@ -1087,6 +1612,24 @@ pub fn hello_organism_builder(capacity: u32) -> ModuleBuilder {
                 ),
                 stream_slot(
                     "stage_time_in_fate",
+                    u32_type.clone(),
+                    SlotAccess::Write,
+                    false,
+                ),
+                stream_slot(
+                    "stage_recent_activator",
+                    u32_type.clone(),
+                    SlotAccess::Write,
+                    false,
+                ),
+                stream_slot(
+                    "stage_recent_inhibitor",
+                    u32_type.clone(),
+                    SlotAccess::Write,
+                    false,
+                ),
+                stream_slot(
+                    "stage_recent_surface_exposure",
                     u32_type.clone(),
                     SlotAccess::Write,
                     false,
@@ -1160,6 +1703,24 @@ pub fn hello_organism_builder(capacity: u32) -> ModuleBuilder {
                     SlotAccess::Read,
                     false,
                 ),
+                stream_slot(
+                    "stage_recent_activator",
+                    u32_type.clone(),
+                    SlotAccess::Read,
+                    false,
+                ),
+                stream_slot(
+                    "stage_recent_inhibitor",
+                    u32_type.clone(),
+                    SlotAccess::Read,
+                    false,
+                ),
+                stream_slot(
+                    "stage_recent_surface_exposure",
+                    u32_type.clone(),
+                    SlotAccess::Read,
+                    false,
+                ),
                 stream_slot("stage_color", vec4.clone(), SlotAccess::Read, false),
                 stream_slot("age", u32_type.clone(), SlotAccess::Write, true),
                 stream_slot("fate", u32_type.clone(), SlotAccess::Write, true),
@@ -1168,6 +1729,24 @@ pub fn hello_organism_builder(capacity: u32) -> ModuleBuilder {
                 stream_slot("previous_fate", u32_type.clone(), SlotAccess::Write, true),
                 stream_slot("fate_confidence", u32_type.clone(), SlotAccess::Write, true),
                 stream_slot("time_in_fate", u32_type.clone(), SlotAccess::Write, true),
+                stream_slot(
+                    "recent_activator",
+                    u32_type.clone(),
+                    SlotAccess::Write,
+                    true,
+                ),
+                stream_slot(
+                    "recent_inhibitor",
+                    u32_type.clone(),
+                    SlotAccess::Write,
+                    true,
+                ),
+                stream_slot(
+                    "recent_surface_exposure",
+                    u32_type.clone(),
+                    SlotAccess::Write,
+                    true,
+                ),
                 stream_slot("color", vec4.clone(), SlotAccess::Write, true),
             ],
         ))
@@ -1214,10 +1793,15 @@ pub fn hello_organism_builder(capacity: u32) -> ModuleBuilder {
                 .bind("health", "cells.health")
                 .bind("age", "cells.age")
                 .bind("fate_confidence", "cells.fate_confidence")
+                .bind("time_in_fate", "cells.time_in_fate")
                 .bind("activator_bin", "perception.activator_bin")
                 .bind("inhibitor_bin", "perception.inhibitor_bin")
                 .bind("nutrient_bin", "perception.nutrient_bin")
                 .bind("density_bin", "perception.density_bin")
+                .bind("local_density_bin", "perception.local_density_bin")
+                .bind("contact_count", "perception.contact_count")
+                .bind("surface_exposure_bin", "perception.surface_exposure_bin")
+                .bind("recent_surface_exposure", "cells.recent_surface_exposure")
                 .bind("energy_bin", "perception.energy_bin")
                 .bind("requested_fate", "intent.requested_fate")
                 .bind("requested_phase", "intent.requested_phase")
@@ -1236,6 +1820,9 @@ pub fn hello_organism_builder(capacity: u32) -> ModuleBuilder {
                 .bind("previous_fate", "cells.previous_fate")
                 .bind("fate_confidence", "cells.fate_confidence")
                 .bind("time_in_fate", "cells.time_in_fate")
+                .bind("recent_activator", "cells.recent_activator")
+                .bind("recent_inhibitor", "cells.recent_inhibitor")
+                .bind("recent_surface_exposure", "cells.recent_surface_exposure")
                 .bind("age", "cells.age")
                 .bind("energy", "cells.energy")
                 .bind("color", "cells.color")
@@ -1243,6 +1830,9 @@ pub fn hello_organism_builder(capacity: u32) -> ModuleBuilder {
                 .bind("requested_phase", "intent.requested_phase")
                 .bind("requested_health", "intent.requested_health")
                 .bind("nutrient_bin", "perception.nutrient_bin")
+                .bind("activator_bin", "perception.activator_bin")
+                .bind("inhibitor_bin", "perception.inhibitor_bin")
+                .bind("surface_exposure_bin", "perception.surface_exposure_bin")
                 .bind("activator_deposit", "intent.activator_deposit")
                 .bind("inhibitor_deposit", "intent.inhibitor_deposit")
                 .dispatch_over("cells.stable_id")
@@ -1305,6 +1895,8 @@ pub fn hello_organism_builder(capacity: u32) -> ModuleBuilder {
                 .bind("living_count", "spatial.living_bin_count")
                 .bind("candidate_count", "spatial.candidate_bin_count")
                 .bind("overflow", "population.neighbor_overflow")
+                .bind("physical_overflow", "population.physical_neighbor_overflow")
+                .bind("perception_truncation", "population.perception_truncation")
                 .dispatch_over("spatial.living_bin_count"),
         )
         .pass(
@@ -1468,6 +2060,9 @@ pub fn hello_organism_builder(capacity: u32) -> ModuleBuilder {
             .bind("previous_fate", "cells.previous_fate")
             .bind("fate_confidence", "cells.fate_confidence")
             .bind("time_in_fate", "cells.time_in_fate")
+            .bind("recent_activator", "cells.recent_activator")
+            .bind("recent_inhibitor", "cells.recent_inhibitor")
+            .bind("recent_surface_exposure", "cells.recent_surface_exposure")
             .bind("color", "cells.color")
             .bind("survival", "population.survival_flag")
             .bind("birth", "population.birth_flag")
@@ -1482,6 +2077,18 @@ pub fn hello_organism_builder(capacity: u32) -> ModuleBuilder {
             .bind("stage_previous_fate", "population.stage_previous_fate")
             .bind("stage_fate_confidence", "population.stage_fate_confidence")
             .bind("stage_time_in_fate", "population.stage_time_in_fate")
+            .bind(
+                "stage_recent_activator",
+                "population.stage_recent_activator",
+            )
+            .bind(
+                "stage_recent_inhibitor",
+                "population.stage_recent_inhibitor",
+            )
+            .bind(
+                "stage_recent_surface_exposure",
+                "population.stage_recent_surface_exposure",
+            )
             .bind("stage_color", "population.stage_color")
             .dispatch_over("population.survival_flag"),
         )
@@ -1514,6 +2121,18 @@ pub fn hello_organism_builder(capacity: u32) -> ModuleBuilder {
             .bind("stage_previous_fate", "population.stage_previous_fate")
             .bind("stage_fate_confidence", "population.stage_fate_confidence")
             .bind("stage_time_in_fate", "population.stage_time_in_fate")
+            .bind(
+                "stage_recent_activator",
+                "population.stage_recent_activator",
+            )
+            .bind(
+                "stage_recent_inhibitor",
+                "population.stage_recent_inhibitor",
+            )
+            .bind(
+                "stage_recent_surface_exposure",
+                "population.stage_recent_surface_exposure",
+            )
             .bind("stage_color", "population.stage_color")
             .bind("age", "cells.age")
             .bind("fate", "cells.fate")
@@ -1522,6 +2141,9 @@ pub fn hello_organism_builder(capacity: u32) -> ModuleBuilder {
             .bind("previous_fate", "cells.previous_fate")
             .bind("fate_confidence", "cells.fate_confidence")
             .bind("time_in_fate", "cells.time_in_fate")
+            .bind("recent_activator", "cells.recent_activator")
+            .bind("recent_inhibitor", "cells.recent_inhibitor")
+            .bind("recent_surface_exposure", "cells.recent_surface_exposure")
             .bind("color", "cells.color")
             .dispatch_over("population.survival_flag")
             .grant("mutate_cell_state"),

@@ -44,18 +44,23 @@ kernel void organism_decide(
     const device uint* health [[buffer(3)]],
     const device uint* age [[buffer(4)]],
     const device uint* fate_confidence [[buffer(5)]],
-    const device uint* activator_bin [[buffer(6)]],
-    const device uint* inhibitor_bin [[buffer(7)]],
-    const device uint* nutrient_bin [[buffer(8)]],
-    const device uint* density_bin [[buffer(9)]],
-    const device uint* energy_bin [[buffer(10)]],
-    device uint* requested_fate [[buffer(11)]],
-    device uint* requested_phase [[buffer(12)]],
-    device uint* requested_health [[buffer(13)]],
-    device uint* divide_intent [[buffer(14)]],
-    device uint* death_intent [[buffer(15)]],
-    device uint* activator_deposit [[buffer(16)]],
-    device uint* inhibitor_deposit [[buffer(17)]],
+    const device uint* time_in_fate [[buffer(6)]],
+    const device uint* activator_bin [[buffer(7)]],
+    const device uint* inhibitor_bin [[buffer(8)]],
+    const device uint* nutrient_bin [[buffer(9)]],
+    const device uint* density_bin [[buffer(10)]],
+    const device uint* local_density_bin [[buffer(11)]],
+    const device uint* contact_count [[buffer(12)]],
+    const device uint* surface_exposure_bin [[buffer(13)]],
+    const device uint* recent_surface_exposure [[buffer(14)]],
+    const device uint* energy_bin [[buffer(15)]],
+    device uint* requested_fate [[buffer(16)]],
+    device uint* requested_phase [[buffer(17)]],
+    device uint* requested_health [[buffer(18)]],
+    device uint* divide_intent [[buffer(19)]],
+    device uint* death_intent [[buffer(20)]],
+    device uint* activator_deposit [[buffer(21)]],
+    device uint* inhibitor_deposit [[buffer(22)]],
     uint index [[thread_position_in_grid]])
 {
     const uint current_fate = fate[index];
@@ -67,11 +72,16 @@ kernel void organism_decide(
     else if (current_phase == 2 && fate_confidence[index] >= 120) next_phase = 3;
 
     uint next_fate = current_fate;
+    const uint exposure =
+        (recent_surface_exposure[index] * 3u + surface_exposure_bin[index]) / 4u;
     if (current_fate == 1 && next_phase >= 2) {
-        next_fate = density_bin[index] < 1024 ? 2 : 3;
-    } else if (current_fate == 2 && density_bin[index] > 1792) {
+        next_fate =
+            surface_exposure_bin[index] >= 1536u || contact_count[index] < 4u ? 2u : 3u;
+    } else if (current_fate == 2 && time_in_fate[index] >= 120u &&
+               exposure < 768u && contact_count[index] >= 5u) {
         next_fate = 3;
-    } else if (current_fate == 3 && density_bin[index] < 768) {
+    } else if (current_fate == 3 && time_in_fate[index] >= 120u &&
+               exposure > 1792u) {
         next_fate = 2;
     }
 
@@ -84,7 +94,8 @@ kernel void organism_decide(
         age[index] >= 240 &&
         energy_bin[index] >= 1536 &&
         nutrient_bin[index] >= 2048 &&
-        inhibitor_bin[index] < 3072;
+        inhibitor_bin[index] < 3072 &&
+        local_density_bin[index] < 3584;
     divide_intent[index] = can_divide ? 1 : 0;
     death_intent[index] = current_health == 2 || energy_bin[index] == 0 ? 1 : 0;
     activator_deposit[index] = stable_id[index] == 1 ? LOOM_Q16 : LOOM_Q16 / 16;
@@ -116,15 +127,21 @@ kernel void organism_resolve_state(
     device uint* previous_fate [[buffer(3)]],
     device uint* fate_confidence [[buffer(4)]],
     device uint* time_in_fate [[buffer(5)]],
-    device uint* age [[buffer(6)]],
-    device float* energy [[buffer(7)]],
-    device float4* color [[buffer(8)]],
-    const device uint* requested_fate [[buffer(9)]],
-    const device uint* requested_phase [[buffer(10)]],
-    const device uint* requested_health [[buffer(11)]],
-    const device uint* nutrient_bin [[buffer(12)]],
-    const device uint* activator_deposit [[buffer(13)]],
-    const device uint* inhibitor_deposit [[buffer(14)]],
+    device uint* recent_activator [[buffer(6)]],
+    device uint* recent_inhibitor [[buffer(7)]],
+    device uint* recent_surface_exposure [[buffer(8)]],
+    device uint* age [[buffer(9)]],
+    device float* energy [[buffer(10)]],
+    device float4* color [[buffer(11)]],
+    const device uint* requested_fate [[buffer(12)]],
+    const device uint* requested_phase [[buffer(13)]],
+    const device uint* requested_health [[buffer(14)]],
+    const device uint* nutrient_bin [[buffer(15)]],
+    const device uint* activator_bin [[buffer(16)]],
+    const device uint* inhibitor_bin [[buffer(17)]],
+    const device uint* surface_exposure_bin [[buffer(18)]],
+    const device uint* activator_deposit [[buffer(19)]],
+    const device uint* inhibitor_deposit [[buffer(20)]],
     uint index [[thread_position_in_grid]])
 {
     const uint old_fate = fate[index];
@@ -146,6 +163,12 @@ kernel void organism_resolve_state(
         fate_confidence[index] = 0;
         time_in_fate[index] = 0;
     }
+    recent_activator[index] =
+        (recent_activator[index] * 7u + activator_bin[index]) / 8u;
+    recent_inhibitor[index] =
+        (recent_inhibitor[index] * 7u + inhibitor_bin[index]) / 8u;
+    recent_surface_exposure[index] =
+        (recent_surface_exposure[index] * 7u + surface_exposure_bin[index]) / 8u;
     age[index] += 1;
     const float absorbed = float(nutrient_bin[index]) / float(LOOM_DECISION_MAX) * 0.003f;
     const float signaling =
@@ -415,11 +438,17 @@ kernel void organism_clear_population_bins(
     device uint* living_count [[buffer(0)]],
     device uint* candidate_count [[buffer(1)]],
     device uint* overflow [[buffer(2)]],
+    device uint* physical_overflow [[buffer(3)]],
+    device uint* perception_truncation [[buffer(4)]],
     uint index [[thread_position_in_grid]])
 {
     living_count[index] = 0;
     candidate_count[index] = 0;
-    if (index == 0) overflow[0] = 0;
+    if (index == 0) {
+        overflow[0] = 0;
+        physical_overflow[0] = 0;
+        perception_truncation[0] = 0;
+    }
 }
 
 kernel void organism_bin_living(
@@ -460,6 +489,264 @@ kernel void organism_sort_bins(
         }
         indices[base + insertion] = candidate;
     }
+}
+
+inline uint exact_sector(int2 delta) {
+    const uint ax = uint(abs(delta.x));
+    const uint ay = uint(abs(delta.y));
+    if (ax >= ay * 2u) return delta.x >= 0 ? 0u : 4u;
+    if (ay >= ax * 2u) return delta.y >= 0 ? 2u : 6u;
+    if (delta.x >= 0 && delta.y >= 0) return 1u;
+    if (delta.x < 0 && delta.y >= 0) return 3u;
+    if (delta.x < 0 && delta.y < 0) return 5u;
+    return 7u;
+}
+
+kernel void organism_observe_neighbors(
+    const device packed_float3* position [[buffer(0)]],
+    const device float* radius [[buffer(1)]],
+    const device uint* stable_id [[buffer(2)]],
+    const device uint* bin_count [[buffer(3)]],
+    const device uint* bin_indices [[buffer(4)]],
+    device uint* local_density_bin [[buffer(5)]],
+    device uint* neighbor_count [[buffer(6)]],
+    device uint* contact_count [[buffer(7)]],
+    device uint* surface_mask [[buffer(8)]],
+    device uint* surface_exposure_bin [[buffer(9)]],
+    device atomic_uint* physical_overflow [[buffer(10)]],
+    device atomic_uint* perception_truncation [[buffer(11)]],
+    uint index [[thread_position_in_grid]])
+{
+    const float2 center_position = float3(position[index]).xy;
+    const int2 center_bin = spatial_cell(center_position);
+    const int2 center_q16 = q16_position(center_position);
+    constexpr ulong perception_radius_squared = 2048ul * 2048ul;
+    uint physical_observations = 0;
+    uint perceived = 0;
+    uint contacts = 0;
+    uint occupied_mask = 0;
+    bool physical_exceeded = false;
+    bool perception_exceeded = false;
+
+    for (int y = -1; y <= 1; ++y) {
+        for (int x = -1; x <= 1; ++x) {
+            const int2 cell = center_bin + int2(x, y);
+            if (any(cell < 0) || any(cell >= int(LOOM_SPATIAL_AXIS))) continue;
+            const uint key = uint(cell.y) * LOOM_SPATIAL_AXIS + uint(cell.x);
+            const uint length = min(bin_count[key], LOOM_BIN_CAPACITY);
+            const uint base = key * LOOM_BIN_CAPACITY;
+            for (uint item = 0; item < length; ++item) {
+                const uint other = bin_indices[base + item];
+                if (other == index || stable_id[other] == stable_id[index]) continue;
+                if (physical_observations >= 128u) {
+                    physical_exceeded = true;
+                    continue;
+                }
+                ++physical_observations;
+                const int2 delta_q16 =
+                    q16_position(float3(position[other]).xy) - center_q16;
+                const long2 delta = long2(delta_q16);
+                const ulong distance_squared =
+                    ulong(delta.x * delta.x + delta.y * delta.y);
+                if (quantized_contact(
+                        center_position, radius[index],
+                        float3(position[other]).xy, radius[other])) {
+                    ++contacts;
+                }
+                if (distance_squared <= perception_radius_squared) {
+                    if (perceived < 64u) {
+                        occupied_mask |= 1u << exact_sector(delta_q16);
+                        ++perceived;
+                    } else {
+                        perception_exceeded = true;
+                    }
+                }
+            }
+        }
+    }
+    if (physical_exceeded) {
+        atomic_fetch_add_explicit(&physical_overflow[0], 1u, memory_order_relaxed);
+    }
+    if (perception_exceeded) {
+        atomic_fetch_add_explicit(&perception_truncation[0], 1u, memory_order_relaxed);
+    }
+    const uint exposed_sectors = popcount((~occupied_mask) & 255u);
+    neighbor_count[index] = perceived;
+    contact_count[index] = contacts;
+    surface_mask[index] = occupied_mask;
+    surface_exposure_bin[index] = exposed_sectors * LOOM_DECISION_MAX / 8u;
+    local_density_bin[index] = perceived * LOOM_DECISION_MAX / 64u;
+}
+
+kernel void organism_initialize_components(
+    const device uint* stable_id [[buffer(0)]],
+    device uint* label [[buffer(1)]],
+    uint index [[thread_position_in_grid]])
+{
+    label[index] = stable_id[index];
+}
+
+kernel void organism_clear_component_changes(
+    device uint* changes [[buffer(0)]],
+    uint index [[thread_position_in_grid]])
+{
+    if (index == 0) changes[0] = 0;
+}
+
+kernel void organism_relax_components(
+    const device packed_float3* position [[buffer(0)]],
+    const device float* radius [[buffer(1)]],
+    const device uint* bin_count [[buffer(2)]],
+    const device uint* bin_indices [[buffer(3)]],
+    const device uint* input_label [[buffer(4)]],
+    device uint* output_label [[buffer(5)]],
+    device atomic_uint* changes [[buffer(6)]],
+    uint index [[thread_position_in_grid]])
+{
+    const float2 center_position = float3(position[index]).xy;
+    const int2 center_bin = spatial_cell(center_position);
+    uint minimum_label = input_label[index];
+    for (int y = -1; y <= 1; ++y) {
+        for (int x = -1; x <= 1; ++x) {
+            const int2 cell = center_bin + int2(x, y);
+            if (any(cell < 0) || any(cell >= int(LOOM_SPATIAL_AXIS))) continue;
+            const uint key = uint(cell.y) * LOOM_SPATIAL_AXIS + uint(cell.x);
+            const uint length = min(bin_count[key], LOOM_BIN_CAPACITY);
+            const uint base = key * LOOM_BIN_CAPACITY;
+            for (uint item = 0; item < length; ++item) {
+                const uint other = bin_indices[base + item];
+                if (other == index) continue;
+                if (quantized_contact(
+                        center_position, radius[index],
+                        float3(position[other]).xy, radius[other])) {
+                    minimum_label = min(minimum_label, input_label[other]);
+                }
+            }
+        }
+    }
+    output_label[index] = minimum_label;
+    if (minimum_label != input_label[index]) {
+        atomic_fetch_add_explicit(&changes[0], 1u, memory_order_relaxed);
+    }
+}
+
+kernel void organism_clear_morphology(
+    device uint* radial_density [[buffer(0)]],
+    device uint* component_count [[buffer(1)]],
+    device uint* organizer_count [[buffer(2)]],
+    device uint* undifferentiated_count [[buffer(3)]],
+    device uint* boundary_count [[buffer(4)]],
+    device uint* interior_count [[buffer(5)]],
+    device uint* area_q16 [[buffer(6)]],
+    device uint* perimeter_q16 [[buffer(7)]],
+    device int* centroid_sum_x_q16 [[buffer(8)]],
+    device int* centroid_sum_y_q16 [[buffer(9)]],
+    uint index [[thread_position_in_grid]])
+{
+    radial_density[index] = 0;
+    if (index == 0) {
+        component_count[0] = 0;
+        organizer_count[0] = 0;
+        undifferentiated_count[0] = 0;
+        boundary_count[0] = 0;
+        interior_count[0] = 0;
+        area_q16[0] = 0;
+        perimeter_q16[0] = 0;
+        centroid_sum_x_q16[0] = 0;
+        centroid_sum_y_q16[0] = 0;
+    }
+}
+
+kernel void organism_reduce_morphology(
+    const device uint* stable_id [[buffer(0)]],
+    const device uint* fate [[buffer(1)]],
+    const device packed_float3* position [[buffer(2)]],
+    const device float* radius [[buffer(3)]],
+    const device uint* surface_exposure_bin [[buffer(4)]],
+    const device uint* component_label [[buffer(5)]],
+    device atomic_uint* component_count [[buffer(6)]],
+    device atomic_uint* organizer_count [[buffer(7)]],
+    device atomic_uint* undifferentiated_count [[buffer(8)]],
+    device atomic_uint* boundary_count [[buffer(9)]],
+    device atomic_uint* interior_count [[buffer(10)]],
+    device atomic_uint* area_q16 [[buffer(11)]],
+    device atomic_uint* perimeter_q16 [[buffer(12)]],
+    device atomic_int* centroid_sum_x_q16 [[buffer(13)]],
+    device atomic_int* centroid_sum_y_q16 [[buffer(14)]],
+    uint index [[thread_position_in_grid]])
+{
+    if (component_label[index] == stable_id[index]) {
+        atomic_fetch_add_explicit(&component_count[0], 1u, memory_order_relaxed);
+    }
+    switch (min(fate[index], 3u)) {
+        case 0: atomic_fetch_add_explicit(&organizer_count[0], 1u, memory_order_relaxed); break;
+        case 1: atomic_fetch_add_explicit(&undifferentiated_count[0], 1u, memory_order_relaxed); break;
+        case 2: atomic_fetch_add_explicit(&boundary_count[0], 1u, memory_order_relaxed); break;
+        default: atomic_fetch_add_explicit(&interior_count[0], 1u, memory_order_relaxed); break;
+    }
+    const uint radius_q16 = q16_radius(radius[index]);
+    const ulong radius_squared = ulong(radius_q16) * ulong(radius_q16);
+    const uint cell_area_q16 =
+        uint((radius_squared * 205887ul) / (ulong(LOOM_Q16) * ulong(LOOM_Q16)));
+    const uint circumference_q16 =
+        uint((ulong(radius_q16) * 411775ul) / ulong(LOOM_Q16));
+    const uint exposed_perimeter_q16 =
+        uint(ulong(circumference_q16) * ulong(surface_exposure_bin[index]) /
+             ulong(LOOM_DECISION_MAX));
+    atomic_fetch_add_explicit(&area_q16[0], cell_area_q16, memory_order_relaxed);
+    atomic_fetch_add_explicit(
+        &perimeter_q16[0], exposed_perimeter_q16, memory_order_relaxed);
+    const int2 position_q16 = q16_position(float3(position[index]).xy);
+    atomic_fetch_add_explicit(
+        &centroid_sum_x_q16[0], position_q16.x, memory_order_relaxed);
+    atomic_fetch_add_explicit(
+        &centroid_sum_y_q16[0], position_q16.y, memory_order_relaxed);
+}
+
+kernel void organism_finalize_morphology(
+    const device uint* active_count [[buffer(0)]],
+    device uint* population [[buffer(1)]],
+    const device uint* area_q16 [[buffer(2)]],
+    const device uint* perimeter_q16 [[buffer(3)]],
+    const device int* centroid_sum_x_q16 [[buffer(4)]],
+    const device int* centroid_sum_y_q16 [[buffer(5)]],
+    device int* centroid_x_q16 [[buffer(6)]],
+    device int* centroid_y_q16 [[buffer(7)]],
+    device uint* compactness_q16 [[buffer(8)]],
+    uint index [[thread_position_in_grid]])
+{
+    if (index != 0) return;
+    const uint count = active_count[0];
+    population[0] = count;
+    centroid_x_q16[0] = count == 0 ? 0 : centroid_sum_x_q16[0] / int(count);
+    centroid_y_q16[0] = count == 0 ? 0 : centroid_sum_y_q16[0] / int(count);
+    const ulong perimeter_squared =
+        ulong(perimeter_q16[0]) * ulong(perimeter_q16[0]);
+    compactness_q16[0] = perimeter_squared == 0 ? 0u : uint(min(
+        (ulong(area_q16[0]) * 823550ul * ulong(LOOM_Q16)) / perimeter_squared,
+        ulong(LOOM_Q16)));
+}
+
+kernel void organism_reduce_radial_density(
+    const device packed_float3* position [[buffer(0)]],
+    const device int* centroid_x_q16 [[buffer(1)]],
+    const device int* centroid_y_q16 [[buffer(2)]],
+    device atomic_uint* radial_density [[buffer(3)]],
+    uint index [[thread_position_in_grid]])
+{
+    const int2 delta = q16_position(float3(position[index]).xy) -
+        int2(centroid_x_q16[0], centroid_y_q16[0]);
+    const long2 wide = long2(delta);
+    const ulong distance_squared = ulong(wide.x * wide.x + wide.y * wide.y);
+    uint radial_bin = 7;
+    for (uint candidate = 0; candidate < 7; ++candidate) {
+        const ulong threshold = ulong(candidate + 1u) * 8192ul;
+        if (distance_squared < threshold * threshold) {
+            radial_bin = candidate;
+            break;
+        }
+    }
+    atomic_fetch_add_explicit(&radial_density[radial_bin], 1u, memory_order_relaxed);
 }
 
 kernel void organism_prequalify_population(
@@ -757,21 +1044,27 @@ kernel void organism_scatter_population_development(
     const device uint* previous_fate [[buffer(6)]],
     const device uint* fate_confidence [[buffer(7)]],
     const device uint* time_in_fate [[buffer(8)]],
-    const device float4* color [[buffer(9)]],
-    const device uint* survival [[buffer(10)]],
-    const device uint* birth [[buffer(11)]],
-    const device uint* survival_prefix [[buffer(12)]],
-    const device uint* birth_prefix [[buffer(13)]],
-    const device uint* survivor_count [[buffer(14)]],
-    const device uint* accepted_birth_count [[buffer(15)]],
-    device uint* stage_age [[buffer(16)]],
-    device uint* stage_fate [[buffer(17)]],
-    device uint* stage_phase [[buffer(18)]],
-    device uint* stage_health [[buffer(19)]],
-    device uint* stage_previous_fate [[buffer(20)]],
-    device uint* stage_fate_confidence [[buffer(21)]],
-    device uint* stage_time_in_fate [[buffer(22)]],
-    device float4* stage_color [[buffer(23)]],
+    const device uint* recent_activator [[buffer(9)]],
+    const device uint* recent_inhibitor [[buffer(10)]],
+    const device uint* recent_surface_exposure [[buffer(11)]],
+    const device float4* color [[buffer(12)]],
+    const device uint* survival [[buffer(13)]],
+    const device uint* birth [[buffer(14)]],
+    const device uint* survival_prefix [[buffer(15)]],
+    const device uint* birth_prefix [[buffer(16)]],
+    const device uint* survivor_count [[buffer(17)]],
+    const device uint* accepted_birth_count [[buffer(18)]],
+    device uint* stage_age [[buffer(19)]],
+    device uint* stage_fate [[buffer(20)]],
+    device uint* stage_phase [[buffer(21)]],
+    device uint* stage_health [[buffer(22)]],
+    device uint* stage_previous_fate [[buffer(23)]],
+    device uint* stage_fate_confidence [[buffer(24)]],
+    device uint* stage_time_in_fate [[buffer(25)]],
+    device uint* stage_recent_activator [[buffer(26)]],
+    device uint* stage_recent_inhibitor [[buffer(27)]],
+    device uint* stage_recent_surface_exposure [[buffer(28)]],
+    device float4* stage_color [[buffer(29)]],
     uint index [[thread_position_in_grid]])
 {
     if (index >= active_count[0]) return;
@@ -787,6 +1080,10 @@ kernel void organism_scatter_population_development(
         stage_previous_fate[destination] = previous_fate[source];
         stage_fate_confidence[destination] = fate_confidence[source];
         stage_time_in_fate[destination] = time_in_fate[source];
+        stage_recent_activator[destination] = recent_activator[source];
+        stage_recent_inhibitor[destination] = recent_inhibitor[source];
+        stage_recent_surface_exposure[destination] =
+            recent_surface_exposure[source];
         stage_color[destination] = color[source];
     }
     if (accepted_birth) {
@@ -798,6 +1095,10 @@ kernel void organism_scatter_population_development(
         stage_previous_fate[destination] = 1;
         stage_fate_confidence[destination] = 0;
         stage_time_in_fate[destination] = 0;
+        stage_recent_activator[destination] = recent_activator[source];
+        stage_recent_inhibitor[destination] = recent_inhibitor[source];
+        stage_recent_surface_exposure[destination] =
+            recent_surface_exposure[source];
         stage_color[destination] = float4(0.8, 0.8, 0.9, 1.0);
     }
 }
@@ -833,15 +1134,21 @@ kernel void organism_commit_population_development(
     const device uint* stage_previous_fate [[buffer(5)]],
     const device uint* stage_fate_confidence [[buffer(6)]],
     const device uint* stage_time_in_fate [[buffer(7)]],
-    const device float4* stage_color [[buffer(8)]],
-    device uint* age [[buffer(9)]],
-    device uint* fate [[buffer(10)]],
-    device uint* phase [[buffer(11)]],
-    device uint* health [[buffer(12)]],
-    device uint* previous_fate [[buffer(13)]],
-    device uint* fate_confidence [[buffer(14)]],
-    device uint* time_in_fate [[buffer(15)]],
-    device float4* color [[buffer(16)]],
+    const device uint* stage_recent_activator [[buffer(8)]],
+    const device uint* stage_recent_inhibitor [[buffer(9)]],
+    const device uint* stage_recent_surface_exposure [[buffer(10)]],
+    const device float4* stage_color [[buffer(11)]],
+    device uint* age [[buffer(12)]],
+    device uint* fate [[buffer(13)]],
+    device uint* phase [[buffer(14)]],
+    device uint* health [[buffer(15)]],
+    device uint* previous_fate [[buffer(16)]],
+    device uint* fate_confidence [[buffer(17)]],
+    device uint* time_in_fate [[buffer(18)]],
+    device uint* recent_activator [[buffer(19)]],
+    device uint* recent_inhibitor [[buffer(20)]],
+    device uint* recent_surface_exposure [[buffer(21)]],
+    device float4* color [[buffer(22)]],
     uint index [[thread_position_in_grid]])
 {
     if (index >= next_count[0]) return;
@@ -852,6 +1159,9 @@ kernel void organism_commit_population_development(
     previous_fate[index] = stage_previous_fate[index];
     fate_confidence[index] = stage_fate_confidence[index];
     time_in_fate[index] = stage_time_in_fate[index];
+    recent_activator[index] = stage_recent_activator[index];
+    recent_inhibitor[index] = stage_recent_inhibitor[index];
+    recent_surface_exposure[index] = stage_recent_surface_exposure[index];
     color[index] = stage_color[index];
 }
 

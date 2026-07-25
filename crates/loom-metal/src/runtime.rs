@@ -2688,6 +2688,167 @@ mod tests {
         );
     }
 
+    #[test]
+    fn developmental_neighborhoods_produce_connected_differentiated_metrics() {
+        const INITIAL_COUNT: u32 = 256;
+        const CAPACITY: u32 = 1_024;
+
+        let mut graph = hello_organism_builder(CAPACITY).build().unwrap();
+        let repeat = |value, count| StreamInitializer::Repeat { value, count };
+        for stream in &mut graph.resources.streams {
+            stream.initial = match stream.name.as_str() {
+                "cells.active_count" => Some(StreamInitializer::Explicit(Literal::Array(vec![
+                    Literal::U32(INITIAL_COUNT),
+                ]))),
+                "cells.next_stable_id" => Some(StreamInitializer::Explicit(Literal::Array(vec![
+                    Literal::U32(INITIAL_COUNT + 1),
+                ]))),
+                "cells.stable_id" => Some(StreamInitializer::Explicit(Literal::Array(
+                    (1..=INITIAL_COUNT).rev().map(Literal::U32).collect(),
+                ))),
+                "cells.position" => Some(StreamInitializer::Grid2D {
+                    origin: Literal::Vector(vec![
+                        Literal::f32(-0.15),
+                        Literal::f32(-0.15),
+                        Literal::f32(0.0),
+                    ]),
+                    column_step: Literal::Vector(vec![
+                        Literal::f32(0.02),
+                        Literal::f32(0.0),
+                        Literal::f32(0.0),
+                    ]),
+                    row_step: Literal::Vector(vec![
+                        Literal::f32(0.0),
+                        Literal::f32(0.02),
+                        Literal::f32(0.0),
+                    ]),
+                    columns: 16,
+                    count: INITIAL_COUNT,
+                }),
+                "cells.radius" => Some(repeat(Literal::f32(0.01), INITIAL_COUNT)),
+                "cells.energy" => Some(repeat(Literal::f32(4.0), INITIAL_COUNT)),
+                "cells.age" => Some(repeat(Literal::U32(0), INITIAL_COUNT)),
+                "cells.fate" | "cells.previous_fate" => {
+                    Some(repeat(Literal::U32(1), INITIAL_COUNT))
+                }
+                "cells.phase" => Some(repeat(Literal::U32(2), INITIAL_COUNT)),
+                "cells.health" => Some(repeat(Literal::U32(0), INITIAL_COUNT)),
+                "cells.fate_confidence" | "cells.time_in_fate" => {
+                    Some(repeat(Literal::U32(120), INITIAL_COUNT))
+                }
+                "cells.recent_surface_exposure" => Some(repeat(Literal::U32(4095), INITIAL_COUNT)),
+                "cells.parent_id" | "cells.recent_activator" | "cells.recent_inhibitor" => {
+                    Some(repeat(Literal::U32(0), INITIAL_COUNT))
+                }
+                "cells.color" => Some(repeat(
+                    Literal::Vector(vec![
+                        Literal::f32(0.8),
+                        Literal::f32(0.8),
+                        Literal::f32(0.9),
+                        Literal::f32(1.0),
+                    ]),
+                    INITIAL_COUNT,
+                )),
+                _ => stream.initial.clone(),
+            };
+        }
+        let stream_id = |name: &str| {
+            graph
+                .resources
+                .streams
+                .iter()
+                .find(|stream| stream.name == name)
+                .unwrap()
+                .id
+        };
+        let metric_names = [
+            "morphology.population",
+            "morphology.component_count",
+            "morphology.component_unresolved",
+            "morphology.boundary_count",
+            "morphology.interior_count",
+            "morphology.area_q16",
+            "morphology.perimeter_q16",
+            "morphology.compactness_q16",
+            "population.physical_neighbor_overflow",
+            "population.perception_truncation",
+        ];
+        let radial_id = stream_id("morphology.radial_density");
+        let metric_ids = metric_names.map(stream_id);
+        let report = Validator::validate(&graph);
+        assert!(
+            report.is_valid(),
+            "developmental metric diagnostics: {:#?}",
+            report.diagnostics
+        );
+        let device = metal::Device::system_default().expect("Metal device");
+        let layer = metal::MetalLayer::new();
+        layer.set_device(&device);
+        layer.set_pixel_format(metal::MTLPixelFormat::BGRA8Unorm);
+        let mut state =
+            RuntimeState::new(report.validated.unwrap(), device.clone(), layer).unwrap();
+        state
+            .run_benchmark(
+                &device,
+                BenchmarkConfig {
+                    mode: BenchmarkMode::Headless,
+                    runner: BenchmarkRunner::LoomPlan,
+                    warmup_ticks: 0,
+                    sample_ticks: 2,
+                    ..BenchmarkConfig::default()
+                },
+            )
+            .expect("developmental neighborhood ticks must execute");
+
+        let readback = device.new_buffer(
+            ((metric_ids.len() + 8) * 4) as u64,
+            metal::MTLResourceOptions::StorageModeShared,
+        );
+        let command_buffer = state.queue.new_command_buffer();
+        let blit = command_buffer.new_blit_command_encoder();
+        for (index, metric) in metric_ids.iter().enumerate() {
+            blit.copy_from_buffer(
+                &state.stream_buffers[metric.0 as usize][0],
+                0,
+                &readback,
+                (index * 4) as u64,
+                4,
+            );
+        }
+        blit.copy_from_buffer(
+            &state.stream_buffers[radial_id.0 as usize][0],
+            0,
+            &readback,
+            (metric_ids.len() * 4) as u64,
+            8 * 4,
+        );
+        blit.end_encoding();
+        command_buffer.commit();
+        command_buffer.wait_until_completed();
+        let values = unsafe {
+            std::slice::from_raw_parts(readback.contents().cast::<u32>(), metric_ids.len() + 8)
+        };
+        assert_eq!(values[0], INITIAL_COUNT);
+        assert_eq!(values[1], 1, "contact graph should form one component");
+        assert_eq!(values[2], 0, "component propagation should converge");
+        assert!(
+            values[3] > 0,
+            "exposed cells should differentiate as boundary: {values:?}"
+        );
+        assert!(
+            values[4] > 0,
+            "enclosed cells should differentiate as interior: {values:?}"
+        );
+        assert!(values[5] > 0 && values[6] > 0 && values[7] > 0);
+        assert_eq!(values[8], 0, "physical neighborhood must remain bounded");
+        assert_eq!(values[9], 0, "perception must not truncate");
+        assert_eq!(
+            values[metric_ids.len()..].iter().sum::<u32>(),
+            INITIAL_COUNT,
+            "radial density bins must account for every active cell"
+        );
+    }
+
     fn decode_f32(bytes: &[u8]) -> Vec<f32> {
         bytes
             .chunks_exact(4)

@@ -187,6 +187,45 @@ fn organism_specimen_separates_decision_state_field_and_membership_authority() {
         .find(|pass| graph.pass(pass.pass).unwrap().name == "scan_population_blocks")
         .unwrap();
     assert_eq!(scan.threads_per_threadgroup, Some(256));
+    let schedule = report
+        .validated
+        .as_ref()
+        .unwrap()
+        .execution_plan()
+        .schedules
+        .first()
+        .unwrap();
+    let planned_names = schedule
+        .order
+        .iter()
+        .filter_map(|item| match item {
+            loom_core::ScheduleItemId::Pass(pass) => Some(graph.pass(*pass).unwrap().name.as_str()),
+            loom_core::ScheduleItemId::View(_) => None,
+        })
+        .collect::<Vec<_>>();
+    let position = |name: &str| {
+        planned_names
+            .iter()
+            .position(|candidate| *candidate == name)
+            .unwrap()
+    };
+    assert!(position("observe_neighbors") < position("decide"));
+    assert!(position("relax_components_63") < position("reduce_morphology"));
+    for metric in [
+        "morphology.component_count",
+        "morphology.boundary_count",
+        "morphology.interior_count",
+        "morphology.compactness_q16",
+        "morphology.radial_density",
+    ] {
+        assert!(
+            graph
+                .resources
+                .streams
+                .iter()
+                .any(|stream| stream.name == metric)
+        );
+    }
 }
 
 #[test]

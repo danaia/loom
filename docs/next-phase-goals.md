@@ -125,14 +125,18 @@ sample and quantize fields
 It uses count-backed indirect execution, packaged Metal kernels, immutable
 transition rules, derived behavior, explicit state/field/membership capabilities,
 bounded canonical spatial bins, hierarchical scans, stable-ID birth allocation,
-and parallel compaction. A 300-tick GPU test proves that the organizer produces a
-daughter; a separate 1,024-parent test proves simultaneous deterministic
-population mutation.
+parallel compaction, developmental neighbor observations, convergence-audited
+contact components, and morphology reductions. A 300-tick GPU test proves that
+the organizer produces a daughter; a separate 1,024-parent test proves
+simultaneous deterministic population mutation. A 256-cell connected-body test
+proves boundary/interior differentiation, one converged component, quantized
+area/perimeter/centroid/compactness, complete radial accounting, and zero
+observation overflow.
 
 The full acceptance gate remains:
 
-- GPU neighborhood construction and surface exposure,
 - exact overflow and transition reductions,
+- formation of a bounded differentiated body from one organizer,
 - a stable pre-lesion envelope before tick 30,000,
 - recorded injury and recovery by tick 50,000,
 - 500 consecutive ticks inside the recovery envelope.

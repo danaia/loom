@@ -16,6 +16,8 @@ systems:
 - global stable-ID LSD radix ordering, canonical bounded spatial bins,
   hierarchical prefix scans, stable-ID birth allocation, and parallel
   structure-of-arrays compaction,
+- quantized developmental neighborhoods, exact eight-sector exposure masks,
+  convergence-audited contact components, and GPU morphology reductions,
 - deterministic reference rules for transitions, quantization, deposits,
   neighborhoods, contact connectivity, stable compaction, allocation, energy,
   and sustained recovery envelopes.
@@ -27,6 +29,9 @@ alongside application kernels.
 
 ```text
 committed state T
+→ rebuild canonical neighborhoods
+→ observe contact, density, and exposure
+→ reduce morphology for committed state T
 → sample fields
 → quantize perception
 → decide intents
@@ -55,6 +60,11 @@ Decision kernels cannot write protected cell state. `Hello Organism` grants:
   smaller radius.
 - Physical neighbor bound: 128.
 - Perception neighbor bound: 64.
+- Surface exposure: exact integer eight-sector occupancy.
+- Component labels: 64 deterministic contact-relaxation rounds; metrics are exact
+  only when `component_unresolved == 0`.
+- Morphology: population, fate counts, components, quantized area/perimeter,
+  centroid, compactness, and eight-bin radial density.
 
 The backend-neutral reference implementation lives in `loom_core::emergent`.
 Metal implementations are required to match its logical rules and declared
@@ -71,6 +81,9 @@ Implemented and tested:
 - the organizer produces at least one daughter,
 - one GPU tick compacts deaths and allocates daughters from 1,024 simultaneous
   parents while retaining canonical stable-ID order,
+- a 256-cell contact body converges to one component, differentiates into
+  nonempty boundary and interior populations, and reports complete morphology
+  metrics with zero overflow or truncation,
 - unauthorized writes and malformed membership capabilities are rejected,
 - transition tables, quantization, reflective diffusion, storage-order
   independence, contact connectivity, stable allocation, energy ledgers, and
@@ -79,8 +92,7 @@ Implemented and tested:
 Not yet claimed:
 
 - real-time 16,384-cell morphogenesis,
-- developmental and physical neighbor observations beyond population placement,
-- full connected-component and morphology reductions on GPU,
+- sustained self-development into the measured morphology from one organizer,
 - 30,000-tick homeostasis and 50,000-tick regeneration acceptance,
 - adaptive fine-to-coarse aggregation,
 - cross-domain material and abstract-network proofs.

@@ -326,12 +326,12 @@ pub fn build_neighborhoods(
                         + u64::from(cell.radius_q16.min(other.radius_q16)) / 4;
                     if distance_squared as u64 <= contact * contact {
                         physical.push(other.stable_id);
-                        sectors |= 1 << angular_sector(dx, dy);
                     }
                     if distance_squared as u64
                         <= u64::from(perception_radius_q16) * u64::from(perception_radius_q16)
                     {
                         perception.push(other.stable_id);
+                        sectors |= 1 << angular_sector(dx, dy);
                     }
                 }
             }
@@ -356,9 +356,20 @@ pub fn build_neighborhoods(
 }
 
 fn angular_sector(dx: i64, dy: i64) -> u8 {
-    let angle = (dy as f64).atan2(dx as f64);
-    let normalized = (angle + std::f64::consts::PI) / (2.0 * std::f64::consts::PI);
-    ((normalized * 8.0).floor() as u8).min(7)
+    let ax = dx.unsigned_abs();
+    let ay = dy.unsigned_abs();
+    if ax >= ay.saturating_mul(2) {
+        if dx >= 0 { 0 } else { 4 }
+    } else if ay >= ax.saturating_mul(2) {
+        if dy >= 0 { 2 } else { 6 }
+    } else {
+        match (dx >= 0, dy >= 0) {
+            (true, true) => 1,
+            (false, true) => 3,
+            (false, false) => 5,
+            (true, false) => 7,
+        }
+    }
 }
 
 pub fn connected_components(cells: &[QuantizedCell]) -> usize {
@@ -758,6 +769,24 @@ mod tests {
         );
         assert_eq!(connected_components(&cells), 1);
         assert_eq!(connected_components(&permuted), 1);
+    }
+
+    #[test]
+    fn dense_neighborhoods_report_physical_and_perception_overflow() {
+        let cells = (1..=130)
+            .map(|stable_id| QuantizedCell {
+                stable_id,
+                x_q16: 0,
+                y_q16: 0,
+                radius_q16: Q16_SCALE,
+            })
+            .collect::<Vec<_>>();
+        let neighborhoods = build_neighborhoods(&cells, 3 * Q16_SCALE as i32, Q16_SCALE);
+        let first = &neighborhoods[&1];
+        assert_eq!(first.physical.len(), PHYSICAL_NEIGHBOR_LIMIT);
+        assert_eq!(first.physical_overflow, 1);
+        assert_eq!(first.perception.len(), PERCEPTION_NEIGHBOR_LIMIT);
+        assert_eq!(first.perception_truncation, 65);
     }
 
     #[test]
