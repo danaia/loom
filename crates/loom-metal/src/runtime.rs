@@ -1,16 +1,23 @@
 use std::{
     collections::BTreeMap,
     process::Command,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+        mpsc::{self, Receiver, Sender},
+    },
     time::{Duration, Instant},
 };
 
+use block::ConcreteBlock;
 use core_graphics_types::geometry::CGSize;
 use loom_core::{
-    DataType, DispatchDomain, Literal, PassId, ResourceId, ScalarType, ScheduleItemId,
-    StreamLength, ValueKind, ViewId,
+    DataType, DispatchDomain, Literal, PassId, ResourceId, ScalarType, ScheduleItemId, StreamId,
+    StreamLength, ValueId, ValueKind, ViewId,
 };
 use loom_validator::{
-    CompletionRequirement, ExecutionSchedule, PlannedPass, PlannedView, ValidatedModuleGraph,
+    CompletionEnforcement, CompletionRequirement, ExecutionSchedule, PlannedPass, PlannedView,
+    ValidatedModuleGraph,
 };
 use metal::{
     Buffer, CommandQueue, CompileOptions, ComputePipelineState, Device, MTLClearColor,
@@ -28,8 +35,9 @@ use winit::{
 };
 
 use crate::{
-    BenchmarkConfig, BenchmarkMode, BenchmarkResult, PipelineIdentity, RuntimeDiagnostic,
-    RuntimeDiagnosticCode, RuntimeFingerprint, ShaderIdentity, ViewportSize, sha256, summarize,
+    BenchmarkConfig, BenchmarkMode, BenchmarkResult, BenchmarkRunner, PipelineIdentity,
+    ResourceMetrics, RuntimeDiagnostic, RuntimeDiagnosticCode, RuntimeFingerprint, ShaderIdentity,
+    ViewportSize, sha256, summarize,
 };
 
 const INTEGRATE_SOURCE: &str = include_str!("../../../kernels/euler_integrate.metal");
@@ -117,7 +125,7 @@ impl MetalRuntime {
         validated: ValidatedModuleGraph,
         config: BenchmarkConfig,
     ) -> Result<BenchmarkResult, RuntimeDiagnostic> {
-        if config.sample_ticks == 0 {
+        if config.sample_ticks == 0 && config.sample_seconds.is_none() {
             return Err(RuntimeDiagnostic::new(
                 RuntimeDiagnosticCode::UnsupportedGraph,
                 "benchmark sample count must be positive",
@@ -137,16 +145,82 @@ impl MetalRuntime {
     }
 }
 
+struct DirectMetalEncoding {
+    fall: PassId,
+    bounce: PassId,
+    viewport: ViewId,
+    position: StreamId,
+    velocity: StreamId,
+    radius: StreamId,
+    restitution: StreamId,
+    friction: StreamId,
+    color: StreamId,
+    gravity: ValueId,
+    fixed_dt: ValueId,
+    ground_height: ValueId,
+}
+
+impl DirectMetalEncoding {
+    fn resolve(graph: &loom_core::ModuleGraph) -> Option<Self> {
+        let pass = |name: &str| {
+            graph
+                .passes
+                .iter()
+                .find(|item| item.name == name)
+                .map(|item| item.id)
+        };
+        let view = |name: &str| {
+            graph
+                .views
+                .iter()
+                .find(|item| item.name == name)
+                .map(|item| item.id)
+        };
+        let stream = |name: &str| {
+            graph
+                .resources
+                .streams
+                .iter()
+                .find(|item| item.name == name)
+                .map(|item| item.id)
+        };
+        let value = |name: &str| {
+            graph
+                .resources
+                .values
+                .iter()
+                .find(|item| item.name == name)
+                .map(|item| item.id)
+        };
+        Some(Self {
+            fall: pass("fall")?,
+            bounce: pass("bounce")?,
+            viewport: view("viewport")?,
+            position: stream("particles.position")?,
+            velocity: stream("particles.velocity")?,
+            radius: stream("particles.radius")?,
+            restitution: stream("particles.restitution")?,
+            friction: stream("particles.friction")?,
+            color: stream("particles.color")?,
+            gravity: value("world.gravity")?,
+            fixed_dt: value("simulation.fixed_dt")?,
+            ground_height: value("ground.height")?,
+        })
+    }
+}
+
 struct RuntimeState {
     validated: ValidatedModuleGraph,
     queue: CommandQueue,
     layer: MetalLayer,
     stream_buffers: Vec<Vec<Buffer>>,
-    value_bytes: Vec<Vec<u8>>,
+    value_buffers: Vec<Buffer>,
     compute_pipelines: BTreeMap<PassId, ComputePipelineState>,
     render_pipelines: BTreeMap<ViewId, RenderPipelineState>,
     rate_hz: u32,
     fingerprint: RuntimeFingerprint,
+    max_in_flight_command_buffers: u32,
+    direct_metal: Option<DirectMetalEncoding>,
 }
 
 impl RuntimeState {
@@ -173,9 +247,14 @@ impl RuntimeState {
             ));
         }
 
-        let queue = device.new_command_queue();
+        let max_in_flight_command_buffers = schedule
+            .requested_ticks
+            .max(schedule.requested_render_frames)
+            .max(1);
+        let queue = device
+            .new_command_queue_with_max_command_buffer_count(max_in_flight_command_buffers as u64);
         let stream_buffers = allocate_streams(&validated, &device, &queue)?;
-        let value_bytes = encode_values(&validated)?;
+        let value_buffers = allocate_values(&validated, &device)?;
         let (compute_pipelines, render_pipelines, shader_identities, pipeline_identities) =
             build_pipelines(&validated, &device)?;
         let rate_hz = match validated.graph().schedules[0].timing {
@@ -183,17 +262,20 @@ impl RuntimeState {
         };
         let fingerprint =
             make_fingerprint(&validated, &device, shader_identities, pipeline_identities);
+        let direct_metal = DirectMetalEncoding::resolve(validated.graph());
 
         Ok(Self {
             validated,
             queue,
             layer,
             stream_buffers,
-            value_bytes,
+            value_buffers,
             compute_pipelines,
             render_pipelines,
             rate_hz,
             fingerprint,
+            max_in_flight_command_buffers,
+            direct_metal,
         })
     }
 
@@ -259,102 +341,185 @@ impl RuntimeState {
             device.new_texture(&descriptor)
         });
 
-        for _ in 0..config.warmup_ticks {
-            self.benchmark_tick(render_target.as_deref())?;
-        }
+        let (warmup_receiver, warmup_ticks) = self.submit_benchmark_phase(
+            render_target.as_deref(),
+            config.warmup_ticks,
+            config.warmup_seconds,
+            config.runner,
+        )?;
+        self.drain_benchmark_ticks(warmup_receiver, warmup_ticks)?;
 
-        let mut gpu_ms = Vec::with_capacity(config.sample_ticks as usize);
-        let mut cpu_ms = Vec::with_capacity(config.sample_ticks as usize);
-        for _ in 0..config.sample_ticks {
-            let timing = self.benchmark_tick(render_target.as_deref())?;
-            gpu_ms.push(timing.gpu_ms);
-            cpu_ms.push(timing.cpu_orchestration_ms);
-        }
+        let sample_start = Instant::now();
+        let (sample_receiver, sample_ticks) = self.submit_benchmark_phase(
+            render_target.as_deref(),
+            config.sample_ticks,
+            config.sample_seconds,
+            config.runner,
+        )?;
+        let timings = self.drain_benchmark_ticks(sample_receiver, sample_ticks)?;
+        let sample_wall_time_seconds = sample_start.elapsed().as_secs_f64();
+        let gpu_samples = timings
+            .iter()
+            .map(|timing| timing.gpu_ms)
+            .collect::<Vec<_>>();
+        let cpu_samples = timings
+            .iter()
+            .map(|timing| timing.cpu_orchestration_ms)
+            .collect::<Vec<_>>();
+        let latency_samples = timings
+            .iter()
+            .map(|timing| timing.end_to_end_tick_ms)
+            .collect::<Vec<_>>();
 
-        let gpu_ms = summarize(&gpu_ms);
-        let cpu_orchestration_ms = summarize(&cpu_ms);
-        let particle_count = self
-            .validated
-            .graph()
-            .resources
-            .streams
-            .first()
-            .map(|stream| match stream.length {
-                StreamLength::Fixed(length) => length,
-                StreamLength::Dynamic(_) => stream.capacity,
-            })
-            .unwrap_or(0);
+        let gpu_ms = summarize(&gpu_samples);
+        let cpu_orchestration_ms = summarize(&cpu_samples);
+        let end_to_end_tick_ms = summarize(&latency_samples);
+        let particle_count = benchmark_dispatch_count(
+            self.validated.graph(),
+            &self.validated.execution_plan().schedules[0],
+        )?;
         Ok(BenchmarkResult {
             experiment: self.validated.graph().name.clone(),
             particle_count,
             mode: config.mode,
+            runner: config.runner,
             viewport: (config.mode == BenchmarkMode::Rendered).then_some(ViewportSize {
                 width: config.viewport_width,
                 height: config.viewport_height,
             }),
-            warmup_ticks: config.warmup_ticks,
-            sample_ticks: config.sample_ticks,
+            warmup_ticks,
+            sample_ticks,
+            requested_warmup_seconds: config.warmup_seconds,
+            requested_sample_seconds: config.sample_seconds,
             gpu_p95_below_8_33_ms: gpu_ms.p95 < 8.33,
             gpu_ms,
             cpu_orchestration_ms,
-            synchronized_each_tick: true,
+            end_to_end_tick_ms,
+            sample_wall_time_seconds,
+            submitted_ticks_per_second: sample_ticks as f64 / sample_wall_time_seconds,
+            synchronized_each_tick: false,
+            max_in_flight_command_buffers: self.max_in_flight_command_buffers,
+            resources: self.resource_metrics(),
             runtime: self.fingerprint.clone(),
         })
     }
 
-    fn benchmark_tick(
+    fn submit_benchmark_phase(
         &self,
         render_target: Option<&metal::TextureRef>,
-    ) -> Result<TickTiming, RuntimeDiagnostic> {
+        ticks: u32,
+        seconds: Option<u32>,
+        runner: BenchmarkRunner,
+    ) -> Result<(Receiver<RawTickTiming>, u32), RuntimeDiagnostic> {
+        let (sender, receiver) = mpsc::channel();
+        let mut submitted = 0_u32;
+        let phase_start = Instant::now();
+        loop {
+            if let Some(seconds) = seconds {
+                if submitted > 0 && phase_start.elapsed() >= Duration::from_secs(seconds as u64) {
+                    break;
+                }
+            } else if submitted >= ticks {
+                break;
+            }
+            self.submit_benchmark_tick(render_target, sender.clone(), runner)?;
+            submitted = submitted.checked_add(1).ok_or_else(|| {
+                RuntimeDiagnostic::new(
+                    RuntimeDiagnosticCode::UnsupportedGraph,
+                    "benchmark phase submitted more ticks than can be reported",
+                )
+            })?;
+        }
+        drop(sender);
+        Ok((receiver, submitted))
+    }
+
+    fn submit_benchmark_tick(
+        &self,
+        render_target: Option<&metal::TextureRef>,
+        sender: Sender<RawTickTiming>,
+        runner: BenchmarkRunner,
+    ) -> Result<(), RuntimeDiagnostic> {
         let schedule = &self.validated.execution_plan().schedules[0];
         let cpu_start = Instant::now();
         let command_buffer = self.queue.new_command_buffer();
         command_buffer.set_label("loom.benchmark.tick");
 
-        for item in &schedule.order {
-            match item {
-                ScheduleItemId::Pass(pass_id) => {
-                    let pass = schedule
-                        .passes
-                        .iter()
-                        .find(|pass| pass.pass == *pass_id)
-                        .expect("validated plan pass");
-                    self.encode_compute(command_buffer, pass)?;
-                }
-                ScheduleItemId::View(view_id) => {
-                    if let Some(texture) = render_target {
-                        let view = schedule
-                            .views
-                            .iter()
-                            .find(|view| view.view == *view_id)
-                            .expect("validated plan view");
-                        self.encode_render(command_buffer, view, texture)?;
+        match runner {
+            BenchmarkRunner::LoomPlan => {
+                for item in &schedule.order {
+                    match item {
+                        ScheduleItemId::Pass(pass_id) => {
+                            let pass = schedule
+                                .passes
+                                .iter()
+                                .find(|pass| pass.pass == *pass_id)
+                                .expect("validated plan pass");
+                            self.encode_compute(command_buffer, pass)?;
+                        }
+                        ScheduleItemId::View(view_id) => {
+                            if let Some(texture) = render_target {
+                                let view = schedule
+                                    .views
+                                    .iter()
+                                    .find(|view| view.view == *view_id)
+                                    .expect("validated plan view");
+                                self.encode_render(command_buffer, view, texture)?;
+                            }
+                        }
                     }
                 }
             }
+            BenchmarkRunner::DirectMetalEncoding => {
+                self.encode_direct_metal(command_buffer, render_target)?;
+            }
         }
 
+        let cpu_orchestration_bits = Arc::new(AtomicU64::new(u64::MAX));
+        let callback_cpu_bits = Arc::clone(&cpu_orchestration_bits);
+        let callback_start = cpu_start;
+        let handler = ConcreteBlock::new(move |completed: &metal::CommandBufferRef| {
+            let gpu_start: f64 = unsafe { msg_send![completed, GPUStartTime] };
+            let gpu_end: f64 = unsafe { msg_send![completed, GPUEndTime] };
+            let mut cpu_bits = callback_cpu_bits.load(Ordering::Acquire);
+            while cpu_bits == u64::MAX {
+                std::hint::spin_loop();
+                cpu_bits = callback_cpu_bits.load(Ordering::Acquire);
+            }
+            let _ = sender.send(RawTickTiming {
+                status: completed.status(),
+                gpu_start,
+                gpu_end,
+                cpu_orchestration_ms: f64::from_bits(cpu_bits),
+                end_to_end_tick_ms: callback_start.elapsed().as_secs_f64() * 1_000.0,
+            });
+        })
+        .copy();
+        command_buffer.add_completed_handler(&handler);
         command_buffer.commit();
         let cpu_orchestration_ms = cpu_start.elapsed().as_secs_f64() * 1_000.0;
-        command_buffer.wait_until_completed();
-        if command_buffer.status() == MTLCommandBufferStatus::Error {
-            return Err(RuntimeDiagnostic::new(
-                RuntimeDiagnosticCode::CommandBufferFailed,
-                "Metal reported a benchmark command-buffer error",
-            ));
-        }
-        let gpu_start: f64 = unsafe { msg_send![command_buffer, GPUStartTime] };
-        let gpu_end: f64 = unsafe { msg_send![command_buffer, GPUEndTime] };
-        if gpu_start <= 0.0 || gpu_end < gpu_start {
-            return Err(RuntimeDiagnostic::new(
-                RuntimeDiagnosticCode::CommandBufferFailed,
-                "Metal did not provide valid command-buffer GPU timestamps",
-            ));
-        }
-        Ok(TickTiming {
-            gpu_ms: (gpu_end - gpu_start) * 1_000.0,
-            cpu_orchestration_ms,
-        })
+        cpu_orchestration_bits.store(cpu_orchestration_ms.to_bits(), Ordering::Release);
+        Ok(())
+    }
+
+    fn drain_benchmark_ticks(
+        &self,
+        receiver: Receiver<RawTickTiming>,
+        count: u32,
+    ) -> Result<Vec<TickTiming>, RuntimeDiagnostic> {
+        (0..count)
+            .map(|_| {
+                receiver
+                    .recv()
+                    .map_err(|_| {
+                        RuntimeDiagnostic::new(
+                            RuntimeDiagnosticCode::CommandBufferFailed,
+                            "Metal stopped asynchronous benchmark timestamp delivery",
+                        )
+                    })?
+                    .finish()
+            })
+            .collect()
     }
 
     fn encode_compute(
@@ -380,8 +545,11 @@ impl RuntimeState {
                     );
                 }
                 ResourceId::Value(value) => {
-                    let bytes = &self.value_bytes[value.0 as usize];
-                    encoder.set_bytes(index as u64, bytes.len() as u64, bytes.as_ptr().cast());
+                    encoder.set_buffer(
+                        index as u64,
+                        Some(&self.value_buffers[value.0 as usize]),
+                        0,
+                    );
                 }
             }
         }
@@ -422,11 +590,161 @@ impl RuntimeState {
         encoder.end_encoding();
         Ok(())
     }
+
+    fn encode_direct_metal(
+        &self,
+        command_buffer: &metal::CommandBufferRef,
+        render_target: Option<&metal::TextureRef>,
+    ) -> Result<(), RuntimeDiagnostic> {
+        let direct = self.direct_metal.as_ref().ok_or_else(|| {
+            RuntimeDiagnostic::new(
+                RuntimeDiagnosticCode::UnsupportedGraph,
+                "direct-Metal encoding is available only for the Hello Batch resource layout",
+            )
+        })?;
+        let count = dispatch_count(
+            self.validated.graph(),
+            &DispatchDomain::OverStream(direct.position),
+        )?;
+
+        let fall_pipeline = &self.compute_pipelines[&direct.fall];
+        let fall = command_buffer.new_compute_command_encoder();
+        fall.set_compute_pipeline_state(fall_pipeline);
+        fall.set_buffer(
+            0,
+            Some(&self.stream_buffers[direct.position.0 as usize][0]),
+            0,
+        );
+        fall.set_buffer(
+            1,
+            Some(&self.stream_buffers[direct.velocity.0 as usize][0]),
+            0,
+        );
+        fall.set_buffer(2, Some(&self.value_buffers[direct.gravity.0 as usize]), 0);
+        fall.set_buffer(3, Some(&self.value_buffers[direct.fixed_dt.0 as usize]), 0);
+        let width = fall_pipeline
+            .thread_execution_width()
+            .min(fall_pipeline.max_total_threads_per_threadgroup())
+            .max(1);
+        fall.dispatch_threads(MTLSize::new(count, 1, 1), MTLSize::new(width, 1, 1));
+        fall.end_encoding();
+
+        let bounce_pipeline = &self.compute_pipelines[&direct.bounce];
+        let bounce = command_buffer.new_compute_command_encoder();
+        bounce.set_compute_pipeline_state(bounce_pipeline);
+        for (index, stream) in [
+            direct.position,
+            direct.velocity,
+            direct.radius,
+            direct.restitution,
+            direct.friction,
+        ]
+        .iter()
+        .enumerate()
+        {
+            bounce.set_buffer(
+                index as u64,
+                Some(&self.stream_buffers[stream.0 as usize][0]),
+                0,
+            );
+        }
+        bounce.set_buffer(
+            5,
+            Some(&self.value_buffers[direct.ground_height.0 as usize]),
+            0,
+        );
+        let width = bounce_pipeline
+            .thread_execution_width()
+            .min(bounce_pipeline.max_total_threads_per_threadgroup())
+            .max(1);
+        bounce.dispatch_threads(MTLSize::new(count, 1, 1), MTLSize::new(width, 1, 1));
+        bounce.end_encoding();
+
+        if let Some(texture) = render_target {
+            let descriptor = RenderPassDescriptor::new();
+            let attachment = descriptor.color_attachments().object_at(0).unwrap();
+            attachment.set_texture(Some(texture));
+            attachment.set_load_action(MTLLoadAction::Clear);
+            attachment.set_clear_color(MTLClearColor::new(0.025, 0.03, 0.055, 1.0));
+            attachment.set_store_action(MTLStoreAction::Store);
+            let render = command_buffer.new_render_command_encoder(descriptor);
+            render.set_render_pipeline_state(&self.render_pipelines[&direct.viewport]);
+            for (index, stream) in [direct.color, direct.position, direct.radius]
+                .iter()
+                .enumerate()
+            {
+                render.set_vertex_buffer(
+                    index as u64,
+                    Some(&self.stream_buffers[stream.0 as usize][0]),
+                    0,
+                );
+            }
+            render.draw_primitives_instanced(MTLPrimitiveType::Triangle, 0, 6, count);
+            render.end_encoding();
+        }
+        Ok(())
+    }
+
+    fn resource_metrics(&self) -> ResourceMetrics {
+        ResourceMetrics {
+            gpu_stream_buffer_bytes: self
+                .stream_buffers
+                .iter()
+                .flatten()
+                .map(|buffer| buffer.length())
+                .sum(),
+            gpu_value_buffer_bytes: self
+                .value_buffers
+                .iter()
+                .map(|buffer| buffer.length())
+                .sum(),
+            initialization_application_blits: self
+                .stream_buffers
+                .iter()
+                .map(|versions| versions.len() as u64)
+                .sum(),
+            steady_state_application_copies_per_tick: 0,
+            steady_state_application_blits_per_tick: 0,
+            steady_state_heap_allocations_per_tick: None,
+            peak_resident_set_bytes: peak_resident_set_bytes(),
+        }
+    }
 }
 
 struct TickTiming {
     gpu_ms: f64,
     cpu_orchestration_ms: f64,
+    end_to_end_tick_ms: f64,
+}
+
+struct RawTickTiming {
+    status: MTLCommandBufferStatus,
+    gpu_start: f64,
+    gpu_end: f64,
+    cpu_orchestration_ms: f64,
+    end_to_end_tick_ms: f64,
+}
+
+impl RawTickTiming {
+    fn finish(self) -> Result<TickTiming, RuntimeDiagnostic> {
+        if self.status == MTLCommandBufferStatus::Error {
+            return Err(RuntimeDiagnostic::new(
+                RuntimeDiagnosticCode::CommandBufferFailed,
+                "Metal reported a benchmark command-buffer error",
+            ));
+        }
+        if self.gpu_start <= 0.0 || self.gpu_end < self.gpu_start {
+            return Err(RuntimeDiagnostic::new(
+                RuntimeDiagnosticCode::CommandBufferFailed,
+                "Metal did not provide valid command-buffer GPU timestamps",
+            ));
+        }
+        Ok(TickTiming {
+            gpu_ms: (self.gpu_end - self.gpu_start) * 1_000.0,
+            cpu_orchestration_ms: self.cpu_orchestration_ms,
+            end_to_end_tick_ms: self.end_to_end_tick_ms,
+        })
+    }
 }
 
 fn display_name(module_name: &str) -> String {
@@ -441,6 +759,12 @@ fn display_name(module_name: &str) -> String {
         })
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+fn peak_resident_set_bytes() -> Option<u64> {
+    let mut usage = std::mem::MaybeUninit::<libc::rusage>::zeroed();
+    let status = unsafe { libc::getrusage(libc::RUSAGE_SELF, usage.as_mut_ptr()) };
+    (status == 0).then(|| unsafe { usage.assume_init().ru_maxrss as u64 })
 }
 
 fn view_instance_count(
@@ -474,7 +798,11 @@ fn requires_wait_after(schedule: &ExecutionSchedule, submitted: ScheduleItemId) 
     schedule.completion_requirements.iter().any(|requirement| {
         matches!(
             requirement,
-            CompletionRequirement::BeforeNextTick { after, .. } if *after == submitted
+            CompletionRequirement::BeforeNextTick {
+                after,
+                enforcement: CompletionEnforcement::HostWait,
+                ..
+            } if *after == submitted
         )
     })
 }
@@ -544,8 +872,11 @@ fn allocate_streams(
     Ok(result)
 }
 
-fn encode_values(validated: &ValidatedModuleGraph) -> Result<Vec<Vec<u8>>, RuntimeDiagnostic> {
-    validated
+fn allocate_values(
+    validated: &ValidatedModuleGraph,
+    device: &Device,
+) -> Result<Vec<Buffer>, RuntimeDiagnostic> {
+    let bytes = validated
         .graph()
         .resources
         .values
@@ -560,7 +891,17 @@ fn encode_values(validated: &ValidatedModuleGraph) -> Result<Vec<Vec<u8>>, Runti
             }
             ValueKind::DynamicCounter => Ok(0_u32.to_le_bytes().to_vec()),
         })
-        .collect()
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(bytes
+        .iter()
+        .map(|bytes| {
+            device.new_buffer_with_data(
+                bytes.as_ptr().cast(),
+                bytes.len() as u64,
+                MTLResourceOptions::StorageModeShared,
+            )
+        })
+        .collect())
 }
 
 fn encode_stream_initial(stream: &loom_core::StreamNode) -> Result<Vec<u8>, RuntimeDiagnostic> {
@@ -767,6 +1108,24 @@ fn dispatch_count(
     }
 }
 
+fn benchmark_dispatch_count(
+    graph: &loom_core::ModuleGraph,
+    schedule: &ExecutionSchedule,
+) -> Result<u32, RuntimeDiagnostic> {
+    let pass = schedule.passes.first().ok_or_else(|| {
+        RuntimeDiagnostic::new(
+            RuntimeDiagnosticCode::UnsupportedGraph,
+            "benchmark schedule has no compute dispatch domain",
+        )
+    })?;
+    u32::try_from(dispatch_count(graph, &pass.dispatch)?).map_err(|_| {
+        RuntimeDiagnostic::new(
+            RuntimeDiagnosticCode::UnsupportedGraph,
+            "benchmark dispatch domain exceeds the supported count",
+        )
+    })
+}
+
 fn make_fingerprint(
     validated: &ValidatedModuleGraph,
     device: &Device,
@@ -779,28 +1138,50 @@ fn make_fingerprint(
         device: &'a str,
         operating_system: &'a str,
         host_profile: &'a str,
+        host_executable_sha256: &'a str,
+        source_revision: &'a str,
+        source_dirty: Option<bool>,
+        rust_compiler: &'a str,
+        metal_sdk: &'a str,
         shader_hashes: &'a [ShaderIdentity],
         pipelines: &'a [PipelineIdentity],
     }
 
     let device_name = device.name().to_owned();
-    let operating_system = Command::new("sw_vers")
-        .arg("-productVersion")
-        .output()
-        .ok()
-        .filter(|output| output.status.success())
-        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_owned())
+    let operating_system = command_output("sw_vers", &["-productVersion"])
         .unwrap_or_else(|| "macOS unknown".to_owned());
     let host_profile = if cfg!(debug_assertions) {
         "debug".to_owned()
     } else {
         "release".to_owned()
     };
+    let host_executable_sha256 = std::env::current_exe()
+        .ok()
+        .and_then(|path| std::fs::read(path).ok())
+        .map(sha256)
+        .unwrap_or_else(|| "unknown".to_owned());
+    let source_revision =
+        command_output("git", &["rev-parse", "HEAD"]).unwrap_or_else(|| "unknown".to_owned());
+    let source_dirty = Command::new("git")
+        .args(["status", "--porcelain"])
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| !output.stdout.is_empty());
+    let rust_compiler =
+        command_output("rustc", &["--version"]).unwrap_or_else(|| "unknown".to_owned());
+    let metal_sdk = command_output("xcrun", &["--sdk", "macosx", "--show-sdk-version"])
+        .unwrap_or_else(|| "unknown".to_owned());
     let identity = Identity {
         artifact: validated.artifact_fingerprint(),
         device: &device_name,
         operating_system: &operating_system,
         host_profile: &host_profile,
+        host_executable_sha256: &host_executable_sha256,
+        source_revision: &source_revision,
+        source_dirty,
+        rust_compiler: &rust_compiler,
+        metal_sdk: &metal_sdk,
         shader_hashes: &shader_hashes,
         pipelines: &pipelines,
     };
@@ -810,8 +1191,23 @@ fn make_fingerprint(
         device: device_name,
         operating_system,
         host_profile,
+        host_executable_sha256,
+        source_revision,
+        source_dirty,
+        rust_compiler,
+        metal_sdk,
         shader_hashes,
         pipelines,
         fingerprint: sha256(bytes),
     }
+}
+
+fn command_output(program: &str, arguments: &[&str]) -> Option<String> {
+    Command::new(program)
+        .args(arguments)
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_owned())
+        .filter(|output| !output.is_empty())
 }

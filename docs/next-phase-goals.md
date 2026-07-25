@@ -39,6 +39,17 @@ Benchmark every particle count in two modes:
 particles without a per-tick CPU wait. One million particles at 120 Hz is a target,
 not a guaranteed outcome.
 
+Current status: asynchronous CPU submission is plan-proven and running with four
+bounded command buffers. Timestamp collection is completion-handler based, and
+wall-time warm-up/sampling plus p99/end-to-end latency are available. The remaining
+Hello Batch work is the full sustained count sweep, presented mode, resource/host
+metrics, and longer interleaved direct-Metal trials.
+
+The 1M smoke test remains below the GPU budget in both headless and offscreen-rendered
+modes. It also exposed expanded initial literals as a roughly 3 GB host-memory cost.
+Design a compact initializer only after specifying its deterministic semantics and
+trust boundary; do not hide initialization in backend code.
+
 ## 2. Hello Field
 
 - Add a simple GPU attraction or vector field.
@@ -132,32 +143,35 @@ Loom earns the claim through:
 
 ### Correctness
 
-- [ ] The graph validates before backend lowering.
+- [x] The graph validates before backend lowering.
 - [ ] Scenarios cover expected physical behavior.
-- [ ] Hazards and cross-tick lifetimes are proven.
-- [ ] Render dropping cannot corrupt simulation state.
+- [x] Hazards and cross-tick lifetimes are proven.
+- [x] Render dropping cannot corrupt simulation state.
 - [ ] Swarm contracts use tolerance-based physical determinism.
 - [ ] Compaction preserves stable IDs, not storage order.
-- [ ] Invalid graphs never receive executable fingerprints.
+- [x] Invalid graphs never receive executable fingerprints.
 
 ### Metal
 
-- [ ] Resources and bindings come only from `ExecutionPlan`.
-- [ ] Threadgroup sizes use compiled pipeline properties.
-- [ ] Particle state stays GPU-resident.
-- [ ] No unnecessary per-tick CPU/GPU wait.
-- [ ] Sequential tick dependencies remain explicit during asynchronous submission.
+- [x] Resources and bindings come only from `ExecutionPlan`.
+- [x] Threadgroup sizes use compiled pipeline properties.
+- [x] Particle state stays GPU-resident.
+- [x] No unnecessary per-tick CPU/GPU wait.
+- [x] Sequential tick dependencies remain explicit during asynchronous submission.
 - [ ] Dense-cell overflow is counted and diagnosed.
 - [ ] Metal failures produce structured diagnostics.
 
 ### Performance
 
-- [ ] Record device, OS, artifact, shaders, pipelines, and workload.
-- [ ] Measure GPU time, working set, allocations, copies, and blits.
-- [ ] Benchmark headless and fixed-resolution rendered modes.
-- [ ] Hold all direct-Metal comparison controls constant.
-- [ ] Measure GPU execution and CPU orchestration separately.
-- [ ] Report p95 against the 8.33 ms budget without assuming success.
+- [x] Record device, OS, artifact, host executable, source state, toolchain, shaders,
+      pipelines, and workload.
+- [ ] Measure GPU time, working set, allocations, copies, and blits. GPU time,
+      peak resident set, buffer bytes, copies, and blits are reported; allocator
+      instrumentation remains open.
+- [x] Benchmark headless and fixed-resolution offscreen-rendered modes.
+- [x] Hold all in-process direct-Metal encoding controls constant.
+- [x] Measure GPU execution, CPU submission, and end-to-end latency separately.
+- [x] Report p95/p99 against the 8.33 ms budget without assuming success.
 - [ ] Test 1K, 10K, 100K, and 1M particles.
 - [ ] Publish results that are reproducible from a runtime fingerprint.
 

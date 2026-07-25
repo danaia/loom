@@ -515,7 +515,9 @@ dependencies = [
 name = "loom-metal"
 version = "0.1.0"
 dependencies = [
+ "block",
  "core-graphics-types",
+ "libc",
  "loom-core",
  "loom-validator",
  "metal",

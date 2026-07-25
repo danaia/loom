@@ -1,0 +1,98 @@
+{
+  "experiment": "hello_batch",
+  "particle_count": 10000,
+  "mode": "Headless",
+  "runner": "LoomPlan",
+  "viewport": null,
+  "warmup_ticks": 1053812,
+  "sample_ticks": 2103159,
+  "requested_warmup_seconds": 30,
+  "requested_sample_seconds": 60,
+  "gpu_ms": {
+    "minimum": 0.0044166663428768516,
+    "mean": 0.009139642263207374,
+    "p50": 0.009583331120666116,
+    "p95": 0.017458332877140492,
+    "p99": 0.018666665710043162,
+    "maximum": 0.26500000240048394
+  },
+  "cpu_orchestration_ms": {
+    "minimum": 0.002542,
+    "mean": 0.028450362609291617,
+    "p50": 0.027875,
+    "p95": 0.057584,
+    "p99": 0.06645899999999999,
+    "maximum": 1.8490419999999999
+  },
+  "end_to_end_tick_ms": {
+    "minimum": 0.07145800000000001,
+    "mean": 0.13121309869628672,
+    "p50": 0.130791,
+    "p95": 0.162375,
+    "p99": 0.243958,
+    "maximum": 2.0352080000000004
+  },
+  "sample_wall_time_seconds": 60.028385833,
+  "submitted_ticks_per_second": 35036.07453065662,
+  "gpu_p95_below_8_33_ms": true,
+  "synchronized_each_tick": false,
+  "max_in_flight_command_buffers": 4,
+  "resources": {
+    "gpu_stream_buffer_bytes": 520000,
+    "gpu_value_buffer_bytes": 20,
+    "initialization_application_blits": 6,
+    "steady_state_application_copies_per_tick": 0,
+    "steady_state_application_blits_per_tick": 0,
+    "steady_state_heap_allocations_per_tick": null,
+    "peak_resident_set_bytes": 6387367936
+  },
+  "runtime": {
+    "artifact": "635cfa8bed41679645724bba18efa945b1a212b8bb37fb63a031e506eab6e634",
+    "device": "Apple M4 Pro",
+    "operating_system": "26.6",
+    "host_profile": "release",
+    "host_executable_sha256": "ffc552f9a031b42650114cf7528eeb588a2bb7cb6857c9a5e8487f922657b818",
+    "source_revision": "40043357aeafabc5252404bf53855b7035ca92f5",
+    "source_dirty": true,
+    "rust_compiler": "rustc 1.88.0 (6b00bc388 2025-06-23) (Homebrew)",
+    "metal_sdk": "26.0",
+    "shader_hashes": [
+      {
+        "source_path": "kernels/euler_integrate.metal",
+        "sha256": "014acd9e2b2e25240c5a03549099915644b00b836527479510c9b56beb6d874b"
+      },
+      {
+        "source_path": "kernels/ground_contact.metal",
+        "sha256": "5c4dd506f0ebe396e23fceac26dfad09c56dc5c17226802490125eccb39c609c"
+      },
+      {
+        "source_path": "shaders/particle.metal",
+        "sha256": "53fcbbf6c898b5b7a969ee81ee76bf5a277bc40190a7a1b6d1d22acfcfba4d15"
+      }
+    ],
+    "pipelines": [
+      {
+        "entry": "ground_contact_main",
+        "kind": "compute",
+        "source_sha256": "5c4dd506f0ebe396e23fceac26dfad09c56dc5c17226802490125eccb39c609c",
+        "thread_execution_width": 32,
+        "max_threads_per_threadgroup": 1024
+      },
+      {
+        "entry": "integrate_main",
+        "kind": "compute",
+        "source_sha256": "014acd9e2b2e25240c5a03549099915644b00b836527479510c9b56beb6d874b",
+        "thread_execution_width": 32,
+        "max_threads_per_threadgroup": 1024
+      },
+      {
+        "entry": "particle_pipeline",
+        "kind": "render",
+        "source_sha256": "53fcbbf6c898b5b7a969ee81ee76bf5a277bc40190a7a1b6d1d22acfcfba4d15",
+        "thread_execution_width": null,
+        "max_threads_per_threadgroup": null
+      }
+    ],
+    "fingerprint": "0ca25be23e487389fbefd71bb6ba41b0bc2044d2c5e13e9fc5668cb09c24c291"
+  }
+}

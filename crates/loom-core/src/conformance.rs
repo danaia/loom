@@ -47,6 +47,9 @@ pub fn hello_batch_builder(particle_count: u32) -> ModuleBuilder {
     hello_particle_builder(HelloParticleConfig {
         module_name: "hello_batch",
         particle_count,
+        tick_overlap: TickOverlapPolicy::QueueOrderedReuse,
+        presentation_lifetime: PresentationLifetimePolicy::QueueOrderedReuse,
+        queue_model: QueueModel::SingleSerialQueue,
         ..HelloParticleConfig::default()
     })
 }

@@ -69,17 +69,40 @@ Run bounded benchmarks without opening a window:
 ./scripts/run-hello-particle.sh batch 10k --bench headless
 ./scripts/run-hello-particle.sh batch 10k --bench rendered
 ./scripts/run-hello-particle.sh batch 100k --bench rendered --warmup 120 --samples 600
+./scripts/run-hello-particle.sh batch 100k --bench rendered \
+  --runner direct-metal --warmup 120 --samples 600
+./scripts/run-hello-particle.sh batch 100k --bench headless \
+  --warmup-seconds 30 --duration-seconds 60
+./scripts/benchmark-hello-batch.sh 30 60
 ```
 
 Benchmark commands build and run the optimized Rust release profile automatically.
 Headless measures compute only. Rendered adds the plan-driven view into a private
 960×720 target. Results report Metal command-buffer GPU timing, CPU encoding and
-commit time, p50/p95, the 8.33 ms gate, and the runtime fingerprint.
+queue-admission time, end-to-end tick latency, p50/p95/p99, throughput, the
+8.33 ms gate, GPU buffer bytes, initialization blits, scoped steady-state
+copy/blit counts, peak resident set, and the runtime fingerprint. Heap-allocation
+counting remains explicitly `null` until allocator instrumentation is added.
 
-The benchmark currently synchronizes after every sampled tick to collect completed
-GPU timestamps and reports this explicitly as `synchronized_each_tick: true`.
-Removing the runtime’s per-tick wait remains the Hello Batch performance gate.
+Hello Batch uses a validator-proven serial queue with four bounded in-flight command
+buffers. Metal completion handlers collect timestamps asynchronously, and the host
+drains results only after each warm-up or sampling phase. Results report this as
+`synchronized_each_tick: false`.
+
+`--runner loom` is the default plan-driven encoder. `--runner direct-metal` uses the
+same initialized buffers, MSL, pipeline states, threadgroup sizing, dispatch, command
+buffer grouping, and render target while replacing plan traversal and typed binding
+lookup with fixed Metal encoding. This isolates steady-state orchestration overhead;
+it is not an independently implemented resource loader.
+
+Tick counts remain convenient for short regression runs. `--warmup-seconds` and
+`--duration-seconds` select sustained wall-time phases; the result records both the
+requested duration and the number of ticks actually executed. Rendered mode remains
+offscreen and does not include drawable acquisition, presentation, or compositor cost.
+The sweep script runs 1K, 10K, 100K, and 1M in both modes and writes one JSON result
+per workload under `benchmark-results/hello-batch` by default.
 
 Recorded baselines:
 
 - [`benchmarks/hello-batch-100k-m4-pro.md`](benchmarks/hello-batch-100k-m4-pro.md)
+- [`benchmarks/hello-batch-100k-async-m4-pro.md`](benchmarks/hello-batch-100k-async-m4-pro.md)

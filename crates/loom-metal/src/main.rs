@@ -1,5 +1,5 @@
 use loom_core::conformance::{HelloParticleConfig, hello_batch_builder, hello_particle_builder};
-use loom_metal::{BenchmarkConfig, BenchmarkMode, MetalRuntime};
+use loom_metal::{BenchmarkConfig, BenchmarkMode, BenchmarkRunner, MetalRuntime};
 use loom_validator::Validator;
 
 fn main() {
@@ -106,9 +106,38 @@ fn parse_batch_arguments(
                     .sample_ticks = value;
                 index += 1;
             }
+            "--warmup-seconds" => {
+                let value = parse_positive_option(arguments, index, "--warmup-seconds")?;
+                benchmark
+                    .get_or_insert_with(BenchmarkConfig::default)
+                    .warmup_seconds = Some(value);
+                index += 1;
+            }
+            "--duration-seconds" => {
+                let value = parse_positive_option(arguments, index, "--duration-seconds")?;
+                benchmark
+                    .get_or_insert_with(BenchmarkConfig::default)
+                    .sample_seconds = Some(value);
+                index += 1;
+            }
+            "--runner" => {
+                let runner = match arguments.get(index + 1).map(String::as_str) {
+                    Some("loom") => BenchmarkRunner::LoomPlan,
+                    Some("direct-metal") => BenchmarkRunner::DirectMetalEncoding,
+                    _ => {
+                        return Err(argument_error(
+                            "--runner requires `loom` or `direct-metal`".to_owned(),
+                        ));
+                    }
+                };
+                benchmark
+                    .get_or_insert_with(BenchmarkConfig::default)
+                    .runner = runner;
+                index += 1;
+            }
             other => {
                 return Err(argument_error(format!(
-                    "unknown batch option `{other}`; use `--bench [headless|rendered]`, `--warmup N`, or `--samples N`"
+                    "unknown batch option `{other}`; use `--bench [headless|rendered]`, `--runner [loom|direct-metal]`, `--warmup N`, `--samples N`, `--warmup-seconds N`, or `--duration-seconds N`"
                 )));
             }
         }
@@ -161,7 +190,7 @@ fn argument_error(message: String) -> loom_metal::RuntimeDiagnostic {
 #[cfg(test)]
 mod tests {
     use super::{parse_batch_arguments, parse_count};
-    use loom_metal::BenchmarkMode;
+    use loom_metal::{BenchmarkMode, BenchmarkRunner};
 
     #[test]
     fn parses_batch_count_suffixes() {
@@ -181,6 +210,12 @@ mod tests {
             "10",
             "--samples",
             "20",
+            "--warmup-seconds",
+            "1",
+            "--duration-seconds",
+            "2",
+            "--runner",
+            "direct-metal",
         ]
         .map(str::to_owned);
         let (count, benchmark) = parse_batch_arguments(&arguments).unwrap();
@@ -189,5 +224,8 @@ mod tests {
         assert_eq!(benchmark.mode, BenchmarkMode::Rendered);
         assert_eq!(benchmark.warmup_ticks, 10);
         assert_eq!(benchmark.sample_ticks, 20);
+        assert_eq!(benchmark.warmup_seconds, Some(1));
+        assert_eq!(benchmark.sample_seconds, Some(2));
+        assert_eq!(benchmark.runner, BenchmarkRunner::DirectMetalEncoding);
     }
 }

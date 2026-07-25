@@ -8,11 +8,20 @@ pub enum BenchmarkMode {
     Rendered,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum BenchmarkRunner {
+    LoomPlan,
+    DirectMetalEncoding,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BenchmarkConfig {
     pub mode: BenchmarkMode,
+    pub runner: BenchmarkRunner,
     pub warmup_ticks: u32,
     pub sample_ticks: u32,
+    pub warmup_seconds: Option<u32>,
+    pub sample_seconds: Option<u32>,
     pub viewport_width: u32,
     pub viewport_height: u32,
 }
@@ -21,8 +30,11 @@ impl Default for BenchmarkConfig {
     fn default() -> Self {
         Self {
             mode: BenchmarkMode::Headless,
+            runner: BenchmarkRunner::LoomPlan,
             warmup_ticks: 60,
             sample_ticks: 240,
+            warmup_seconds: None,
+            sample_seconds: None,
             viewport_width: 960,
             viewport_height: 720,
         }
@@ -34,14 +46,33 @@ pub struct BenchmarkResult {
     pub experiment: String,
     pub particle_count: u32,
     pub mode: BenchmarkMode,
+    pub runner: BenchmarkRunner,
     pub viewport: Option<ViewportSize>,
     pub warmup_ticks: u32,
     pub sample_ticks: u32,
+    pub requested_warmup_seconds: Option<u32>,
+    pub requested_sample_seconds: Option<u32>,
     pub gpu_ms: TimingSummary,
     pub cpu_orchestration_ms: TimingSummary,
+    pub end_to_end_tick_ms: TimingSummary,
+    pub sample_wall_time_seconds: f64,
+    pub submitted_ticks_per_second: f64,
     pub gpu_p95_below_8_33_ms: bool,
     pub synchronized_each_tick: bool,
+    pub max_in_flight_command_buffers: u32,
+    pub resources: ResourceMetrics,
     pub runtime: RuntimeFingerprint,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResourceMetrics {
+    pub gpu_stream_buffer_bytes: u64,
+    pub gpu_value_buffer_bytes: u64,
+    pub initialization_application_blits: u64,
+    pub steady_state_application_copies_per_tick: u64,
+    pub steady_state_application_blits_per_tick: u64,
+    pub steady_state_heap_allocations_per_tick: Option<u64>,
+    pub peak_resident_set_bytes: Option<u64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -56,6 +87,7 @@ pub struct TimingSummary {
     pub mean: f64,
     pub p50: f64,
     pub p95: f64,
+    pub p99: f64,
     pub maximum: f64,
 }
 
@@ -68,6 +100,7 @@ pub(crate) fn summarize(samples: &[f64]) -> TimingSummary {
         mean,
         p50: percentile(&ordered, 0.50),
         p95: percentile(&ordered, 0.95),
+        p99: percentile(&ordered, 0.99),
         maximum: ordered[ordered.len() - 1],
     }
 }
@@ -89,6 +122,7 @@ mod tests {
         assert_eq!(result.minimum, 1.0);
         assert_eq!(result.p50, 3.0);
         assert_eq!(result.p95, 5.0);
+        assert_eq!(result.p99, 5.0);
         assert_eq!(result.maximum, 5.0);
         assert_eq!(result.mean, 3.0);
     }

@@ -132,7 +132,14 @@ pub enum CompletionRequirement {
     BeforeNextTick {
         after: ScheduleItemId,
         streams: Vec<StreamId>,
+        enforcement: CompletionEnforcement,
     },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CompletionEnforcement {
+    HostWait,
+    SerialQueueOrder,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -2116,6 +2123,11 @@ fn build_execution_plan(
                 schedule.tick_overlap,
                 TickOverlapPolicy::SerializeConflictingTicks | TickOverlapPolicy::QueueOrderedReuse
             ) {
+                let enforcement = match schedule.tick_overlap {
+                    TickOverlapPolicy::SerializeConflictingTicks => CompletionEnforcement::HostWait,
+                    TickOverlapPolicy::QueueOrderedReuse => CompletionEnforcement::SerialQueueOrder,
+                    TickOverlapPolicy::RequireResourceVersions => unreachable!(),
+                };
                 let schedule_accesses = accesses
                     .iter()
                     .map(|access| (access.item, access.stream, access.writes))
@@ -2135,7 +2147,11 @@ fn build_execution_plan(
                 }
                 completion_requirements.extend(by_item.into_iter().map(|(after, mut streams)| {
                     streams.sort();
-                    CompletionRequirement::BeforeNextTick { after, streams }
+                    CompletionRequirement::BeforeNextTick {
+                        after,
+                        streams,
+                        enforcement,
+                    }
                 }));
             }
 
@@ -2144,6 +2160,15 @@ fn build_execution_plan(
                 PresentationLifetimePolicy::BlockNextTickUntilViewsComplete
                     | PresentationLifetimePolicy::QueueOrderedReuse
             ) {
+                let enforcement = match schedule.presentation_lifetime {
+                    PresentationLifetimePolicy::BlockNextTickUntilViewsComplete => {
+                        CompletionEnforcement::HostWait
+                    }
+                    PresentationLifetimePolicy::QueueOrderedReuse => {
+                        CompletionEnforcement::SerialQueueOrder
+                    }
+                    PresentationLifetimePolicy::RequireResourceVersions => unreachable!(),
+                };
                 completion_requirements.extend(views.iter().filter_map(|view| {
                     let mut streams = view
                         .reads
@@ -2160,6 +2185,7 @@ fn build_execution_plan(
                     (!streams.is_empty()).then_some(CompletionRequirement::BeforeNextTick {
                         after: ScheduleItemId::View(view.view),
                         streams,
+                        enforcement,
                     })
                 }));
             }
@@ -2184,7 +2210,7 @@ fn build_execution_plan(
         })
         .collect();
     ExecutionPlan {
-        schema_version: 2,
+        schema_version: 3,
         schedules,
     }
 }

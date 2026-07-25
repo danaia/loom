@@ -181,6 +181,21 @@ fn hello_batch_uses_the_same_language_path_at_one_thousand_particles() {
                 if graph.stream(stream).unwrap().capacity == 1_000
         )
     }));
+    assert_eq!(schedule.requested_ticks, 4);
+    assert_eq!(schedule.effective_ticks, 4);
+    assert!(
+        schedule
+            .completion_requirements
+            .iter()
+            .filter_map(|requirement| match requirement {
+                loom_validator::CompletionRequirement::BeforeNextTick { enforcement, .. } =>
+                    Some(enforcement),
+                loom_validator::CompletionRequirement::WithinTick { .. } => None,
+            })
+            .all(|enforcement| {
+                *enforcement == loom_validator::CompletionEnforcement::SerialQueueOrder
+            })
+    );
 }
 
 #[test]
@@ -644,6 +659,7 @@ fn only_validated_graphs_receive_execution_plans_and_artifact_fingerprints() {
             loom_validator::CompletionRequirement::BeforeNextTick {
                 after: loom_core::ScheduleItemId::View(_),
                 streams,
+                enforcement: loom_validator::CompletionEnforcement::HostWait,
             } if !streams.is_empty()
         )
     }));
