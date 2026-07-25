@@ -34,9 +34,13 @@ Every stream has:
 Length is either:
 
 - a fixed integer no greater than capacity, or
-- a dimensionless `u32` counter resource.
+- a readable, mutable, one-element dimensionless `u32` stream.
 
 `dispatch over particles.position` dispatches over the active length, not capacity. Every stream indexed by that dispatch must have a validator-proven compatible logical domain.
+
+For dynamic lengths, the Metal backend constructs bounded indirect dispatch and
+draw arguments on the GPU. The declared stream capacity is the hard dispatch
+ceiling even if a faulty kernel writes a larger count.
 
 ## Tick Overlap and Resource Reuse
 

@@ -26,6 +26,8 @@ pub fn canonicalize(graph: &ModuleGraph) -> CanonicalGraph {
     }
     for pass in &mut normalized.passes.nodes {
         pass.bindings.sort_by_key(|binding| binding.slot);
+        pass.capabilities.sort();
+        pass.capabilities.dedup();
     }
     for view in &mut normalized.views {
         view.reads
@@ -52,6 +54,17 @@ pub fn canonicalize(graph: &ModuleGraph) -> CanonicalGraph {
         sort_serializable(&mut contract.clauses);
     }
     for scenario in &mut normalized.scenarios {
+        for intervention in &mut scenario.interventions {
+            intervention
+                .value_overrides
+                .sort_by_key(|override_| override_.value);
+            intervention
+                .value_overrides
+                .dedup_by_key(|override_| override_.value);
+        }
+        scenario
+            .interventions
+            .sort_by_key(|intervention| (intervention.tick, intervention.pass));
         for expectation in &mut scenario.expectations {
             normalize_predicate(&mut expectation.predicate);
         }
@@ -63,9 +76,15 @@ pub fn canonicalize(graph: &ModuleGraph) -> CanonicalGraph {
     }
     for capability in &mut normalized.capabilities {
         match &mut capability.kind {
-            CapabilityKind::Inspect { streams, .. } | CapabilityKind::HostMutate { streams } => {
+            CapabilityKind::Inspect { streams, .. }
+            | CapabilityKind::HostMutate { streams }
+            | CapabilityKind::StateMutate { streams } => {
                 streams.sort();
                 streams.dedup();
+            }
+            CapabilityKind::MembershipMutate { members, .. } => {
+                members.sort();
+                members.dedup();
             }
             CapabilityKind::External { .. } => {}
         }

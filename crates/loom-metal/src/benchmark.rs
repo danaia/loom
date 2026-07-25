@@ -101,6 +101,7 @@ pub struct PacingResult {
 pub struct ResourceMetrics {
     pub gpu_stream_buffer_bytes: u64,
     pub gpu_value_buffer_bytes: u64,
+    pub gpu_indirect_buffer_bytes: u64,
     pub initialization_application_blits: u64,
     pub steady_state_application_copies_per_tick: u64,
     pub steady_state_application_blits_per_tick: u64,

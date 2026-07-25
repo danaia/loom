@@ -239,7 +239,6 @@ pub struct ValueNode {
 pub enum ValueKind {
     Constant(Literal),
     ScheduleFixedDt { schedule: ScheduleId },
-    DynamicCounter,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -253,6 +252,7 @@ pub struct StreamNode {
     pub buffering: u32,
     pub storage: StorageClass,
     pub access: ResourceAccess,
+    pub write_authority: Option<CapabilityId>,
     pub initial: Option<StreamInitializer>,
 }
 
@@ -280,7 +280,7 @@ pub enum StreamInitializer {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum StreamLength {
     Fixed(u32),
-    Dynamic(ValueId),
+    Dynamic(StreamId),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -330,6 +330,13 @@ pub struct SlotNode {
     pub name: String,
     pub resource_type: SlotResourceType,
     pub access: SlotAccess,
+    pub indexing: StreamIndexing,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum StreamIndexing {
+    PerInvocation,
+    WholeResource,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -386,6 +393,7 @@ pub struct BackendImplementation {
     pub backend: Backend,
     pub source: String,
     pub entry: String,
+    pub source_text: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -400,6 +408,7 @@ pub struct PassNode {
     pub kernel: KernelId,
     pub bindings: Vec<Binding>,
     pub dispatch: DispatchDomain,
+    pub capabilities: Vec<CapabilityId>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -636,7 +645,21 @@ pub struct ScenarioNode {
     pub name: String,
     pub schedule: ScheduleId,
     pub duration: ScenarioDuration,
+    pub interventions: Vec<ScenarioIntervention>,
     pub expectations: Vec<ScenarioExpectation>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScenarioIntervention {
+    pub tick: u64,
+    pub pass: PassId,
+    pub value_overrides: Vec<ScenarioValueOverride>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScenarioValueOverride {
+    pub value: ValueId,
+    pub literal: Literal,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -676,6 +699,13 @@ pub enum CapabilityKind {
     },
     HostMutate {
         streams: Vec<StreamId>,
+    },
+    StateMutate {
+        streams: Vec<StreamId>,
+    },
+    MembershipMutate {
+        count: StreamId,
+        members: Vec<StreamId>,
     },
     External {
         name: String,

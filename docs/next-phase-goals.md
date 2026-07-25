@@ -1,8 +1,10 @@
-# Next Phase: Hello Swarm
+# Next Phase: Emergent Systems
 
 ## Goal
 
-Make Hello Swarm Loom’s second conformance specimen and first performance benchmark.
+Advance the implemented Hello Population, Hello Field, and Hello Organism
+correctness specimens into optimized neighborhoods, sustained morphogenesis,
+regeneration, and adaptive hierarchy.
 
 Build evidence that Loom is a scalable, precise, agent-native systems language.
 
@@ -61,6 +63,10 @@ longer interleaved Loom/direct-Metal trials are recorded from a clean tree.
 
 **Gate:** Multiple plan-driven passes and GPU reductions.
 
+Current status: the 256×256 reflective field specimen now executes packaged
+Metal clear, deposit, diffuse, and commit passes. GPU reductions and saturation
+diagnostics remain open.
+
 ## 3. Hello Swarm
 
 ```text
@@ -87,6 +93,12 @@ hash
 **Gate:** Bounded neighbor work using spatial hashing, with measurable overflow
 behavior and no silent truncation.
 
+Current status: backend-neutral reference semantics now cover stable
+`(grid key, stable ID)` ordering, separate physical and perception bounds,
+quantized contact connectivity, stable compaction, isolated-daughter rejection,
+and stable-ID birth ordering. Parallel radix-sort, prefix-scan, and reduction
+passes remain the next GPU gate.
+
 ### Swarm determinism
 
 Hello Swarm uses tolerance-based physical determinism. Parallel insertion,
@@ -99,6 +111,40 @@ metrics explicitly rather than inheriting Hello Particle’s exact tier.
 The active swarm collection is semantically unordered. Particles retain stable IDs
 for inspection and external references, but compaction is not required to preserve
 storage order.
+
+## 4. Hello Organism
+
+The initial coupled correctness specimen is implemented:
+
+```text
+sample and quantize fields
+→ decide typed intents
+→ resolve protected developmental state
+→ deposit signals
+→ diffuse and commit fields
+→ resolve population membership
+→ render
+```
+
+It uses count-backed indirect execution, packaged Metal kernels, immutable
+transition rules, derived behavior, and explicit state/field/membership
+capabilities. A 300-tick GPU test proves that the organizer produces a daughter.
+
+The full acceptance gate remains:
+
+- GPU neighborhood construction and surface exposure,
+- exact overflow and transition reductions,
+- a stable pre-lesion envelope before tick 30,000,
+- recorded injury and recovery by tick 50,000,
+- 500 consecutive ticks inside the recovery envelope.
+
+## 5. Adaptive Hierarchy
+
+- Promote fine groups into explicit coarse stream domains.
+- Declare child-to-parent mappings and upward/downward kernels.
+- Preserve mass, energy, bounds, provenance, and approximation error.
+- Begin with frozen resident fine state and exact re-expansion.
+- Add eviction and procedural reconstruction only after error contracts pass.
 
 ## Direct-Metal Comparison
 

@@ -9,8 +9,8 @@ use loom_core::{
     AliasingRule, Backend, CanonicalGraph, ContractClause, DataType, DeterminismScope,
     DeterminismTier, Diagnostic, DiagnosticCode, DispatchDomain, GraphEdit, KernelNode, Literal,
     ModuleGraph, ObservationPoint, Predicate, PresentationLifetimePolicy, QueueModel,
-    RenderOverloadPolicy, ReplayOverloadPolicy, ResourceId, ScenarioTimePolicy, ScheduleId,
-    ScheduleItemId, SemanticPath, SlotAccess, SlotResourceType, StreamId, StreamLength,
+    RenderOverloadPolicy, ReplayOverloadPolicy, ResourceId, ScenarioDuration, ScenarioTimePolicy,
+    ScheduleId, ScheduleItemId, SemanticPath, SlotAccess, SlotResourceType, StreamId, StreamLength,
     TickOverlapPolicy, Unit, ValueKind, ViewState, canonicalize,
 };
 use serde::{Deserialize, Serialize};
@@ -70,6 +70,7 @@ pub enum PresentationConcurrencyBasis {
 pub struct ExecutionPlan {
     pub schema_version: u32,
     pub schedules: Vec<ExecutionSchedule>,
+    pub intervention_passes: Vec<PlannedPass>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -468,12 +469,21 @@ fn validate_structure(graph: &ModuleGraph, diagnostics: &mut Vec<Diagnostic>) {
         }
     }
     for stream in &graph.resources.streams {
-        if let StreamLength::Dynamic(value) = stream.length {
+        if let StreamLength::Dynamic(count) = stream.length {
             check_reference(
-                value.0,
-                graph.resources.values.len(),
+                count.0,
+                graph.resources.streams.len(),
                 path("streams", &stream.name).child("length"),
-                "value",
+                "stream",
+                diagnostics,
+            );
+        }
+        if let Some(capability) = stream.write_authority {
+            check_reference(
+                capability.0,
+                graph.capabilities.len(),
+                path("streams", &stream.name).child("write_authority"),
+                "capability",
                 diagnostics,
             );
         }
@@ -535,6 +545,15 @@ fn validate_structure(graph: &ModuleGraph, diagnostics: &mut Vec<Diagnostic>) {
                 binding.resource,
                 graph,
                 pass_path.child("bindings.resource"),
+                diagnostics,
+            );
+        }
+        for capability in &pass.capabilities {
+            check_reference(
+                capability.0,
+                graph.capabilities.len(),
+                pass_path.child("capabilities"),
+                "capability",
                 diagnostics,
             );
         }
@@ -659,6 +678,24 @@ fn validate_structure(graph: &ModuleGraph, diagnostics: &mut Vec<Diagnostic>) {
             check_observation_references(&expectation.observation, graph, &owner, diagnostics);
             check_predicate_references(&expectation.predicate, graph, &owner, diagnostics);
         }
+        for intervention in &scenario.interventions {
+            check_reference(
+                intervention.pass.0,
+                graph.passes.len(),
+                owner.child("interventions.pass"),
+                "pass",
+                diagnostics,
+            );
+            for override_ in &intervention.value_overrides {
+                check_reference(
+                    override_.value.0,
+                    graph.resources.values.len(),
+                    owner.child("interventions.value_overrides"),
+                    "value",
+                    diagnostics,
+                );
+            }
+        }
     }
     for benchmark in &graph.benchmarks {
         check_reference(
@@ -672,10 +709,16 @@ fn validate_structure(graph: &ModuleGraph, diagnostics: &mut Vec<Diagnostic>) {
     for capability in &graph.capabilities {
         let streams = match &capability.kind {
             loom_core::CapabilityKind::Inspect { streams, .. }
-            | loom_core::CapabilityKind::HostMutate { streams } => streams.as_slice(),
-            loom_core::CapabilityKind::External { .. } => &[],
+            | loom_core::CapabilityKind::HostMutate { streams }
+            | loom_core::CapabilityKind::StateMutate { streams } => streams.clone(),
+            loom_core::CapabilityKind::MembershipMutate { count, members } => {
+                std::iter::once(*count)
+                    .chain(members.iter().copied())
+                    .collect()
+            }
+            loom_core::CapabilityKind::External { .. } => Vec::new(),
         };
-        for stream in streams {
+        for stream in &streams {
             check_reference(
                 stream.0,
                 graph.resources.streams.len(),
@@ -1079,6 +1122,74 @@ fn validate_types_shapes_units(graph: CheckedGraph<'_>, diagnostics: &mut Vec<Di
                 );
             }
         }
+        let ScenarioDuration::SimulationTicks(duration_ticks) = scenario.duration;
+        for intervention in &scenario.interventions {
+            if intervention.tick >= duration_ticks {
+                diagnostics.push(Diagnostic::error(
+                    DiagnosticCode::InvalidIntervention,
+                    format!(
+                        "intervention tick {} is outside the scenario duration of {duration_ticks} ticks",
+                        intervention.tick
+                    ),
+                    path("scenarios", &scenario.name).child("interventions.tick"),
+                ));
+            }
+            if graph
+                .schedule(scenario.schedule)
+                .execution_passes
+                .contains(&intervention.pass)
+            {
+                diagnostics.push(Diagnostic::error(
+                    DiagnosticCode::InvalidIntervention,
+                    "an intervention pass must be scenario-only, not part of the regular schedule",
+                    path("scenarios", &scenario.name).child("interventions.pass"),
+                ));
+            }
+            if has_duplicates(
+                &intervention
+                    .value_overrides
+                    .iter()
+                    .map(|override_| override_.value)
+                    .collect::<Vec<_>>(),
+            ) {
+                diagnostics.push(Diagnostic::error(
+                    DiagnosticCode::InvalidIntervention,
+                    "intervention value overrides must be unique",
+                    path("scenarios", &scenario.name).child("interventions.value_overrides"),
+                ));
+            }
+            for override_ in &intervention.value_overrides {
+                let value = graph.value(override_.value);
+                if !matches!(value.kind, ValueKind::Constant(_))
+                    || !literal_matches_type(&override_.literal, &value.data_type)
+                {
+                    diagnostics.push(Diagnostic::error(
+                        DiagnosticCode::InvalidIntervention,
+                        format!(
+                            "override for `{}` must match the type of an immutable constant",
+                            value.name
+                        ),
+                        path("scenarios", &scenario.name).child("interventions.value_overrides"),
+                    ));
+                }
+            }
+        }
+    }
+
+    for view in &graph.views {
+        let Some(first) = view.reads.first() else {
+            continue;
+        };
+        let domain = &graph.stream(first.stream).length;
+        for read in view.reads.iter().skip(1) {
+            if !compatible_lengths(domain, &graph.stream(read.stream).length) {
+                diagnostics.push(Diagnostic::error(
+                    DiagnosticCode::InvalidLogicalLength,
+                    "all streams read by a view must share one logical domain",
+                    path("views", &view.name).child("reads"),
+                ));
+            }
+        }
     }
 }
 
@@ -1252,9 +1363,35 @@ fn validate_resource_access(graph: CheckedGraph<'_>, diagnostics: &mut Vec<Diagn
                             )),
                         ));
                     }
+                    if slot.access.writes()
+                        && resource
+                            .write_authority
+                            .is_some_and(|required| !pass.capabilities.contains(&required))
+                    {
+                        diagnostics.push(Diagnostic::error(
+                            DiagnosticCode::MissingWriteAuthority,
+                            format!(
+                                "slot `{}` writes protected stream `{}` without its required capability",
+                                slot.name, resource.name
+                            ),
+                            SemanticPath::new(format!(
+                                "passes.{}.bindings.{}",
+                                pass.name, slot.name
+                            )),
+                        ));
+                    }
                 }
                 _ => {}
             }
+        }
+    }
+    for pass in &graph.passes {
+        if has_duplicates(&pass.capabilities) {
+            diagnostics.push(Diagnostic::error(
+                DiagnosticCode::InvalidCapability,
+                "pass capability grants must be unique",
+                path("passes", &pass.name).child("capabilities"),
+            ));
         }
     }
     for capability in &graph.capabilities {
@@ -1282,6 +1419,43 @@ fn validate_resource_access(graph: CheckedGraph<'_>, diagnostics: &mut Vec<Diagn
                     ));
                 }
             }
+            loom_core::CapabilityKind::StateMutate { streams } => {
+                let valid = !streams.is_empty()
+                    && !has_duplicates(streams)
+                    && streams.iter().all(|stream| {
+                        let stream = graph.stream(*stream);
+                        stream.access.allows_write()
+                            && stream.write_authority == Some(capability.id)
+                    });
+                if !valid {
+                    diagnostics.push(Diagnostic::error(
+                        DiagnosticCode::InvalidCapability,
+                        "state mutation requires unique writable streams protected by this capability",
+                        path("capabilities", &capability.name).child("streams"),
+                    ));
+                }
+            }
+            loom_core::CapabilityKind::MembershipMutate { count, members } => {
+                let count_stream = graph.stream(*count);
+                let valid_count = count_stream.element_type == DataType::u32()
+                    && count_stream.unit == Unit::DIMENSIONLESS
+                    && count_stream.capacity == 1
+                    && count_stream.length == StreamLength::Fixed(1)
+                    && count_stream.access.allows_write();
+                let valid_members = !members.is_empty()
+                    && !has_duplicates(members)
+                    && !members.contains(count)
+                    && members.iter().all(|member| {
+                        graph.stream(*member).length == StreamLength::Dynamic(*count)
+                    });
+                if !valid_count || !valid_members {
+                    diagnostics.push(Diagnostic::error(
+                        DiagnosticCode::InvalidMembershipAuthority,
+                        "membership mutation requires one writable dimensionless u32 count stream and a nonempty unique set of streams using that count",
+                        path("capabilities", &capability.name),
+                    ));
+                }
+            }
             loom_core::CapabilityKind::External { name } if name.trim().is_empty() => {
                 diagnostics.push(Diagnostic::error(
                     DiagnosticCode::InvalidCapability,
@@ -1290,6 +1464,26 @@ fn validate_resource_access(graph: CheckedGraph<'_>, diagnostics: &mut Vec<Diagn
                 ));
             }
             loom_core::CapabilityKind::External { .. } => {}
+        }
+    }
+
+    for stream in &graph.resources.streams {
+        let Some(authority) = stream.write_authority else {
+            continue;
+        };
+        let capability = &graph.capabilities[authority.0 as usize];
+        if let loom_core::CapabilityKind::MembershipMutate { count, members } = &capability.kind
+            && stream.id != *count
+            && !members.contains(&stream.id)
+        {
+            diagnostics.push(Diagnostic::error(
+                DiagnosticCode::InvalidMembershipAuthority,
+                format!(
+                    "stream `{}` requires membership capability `{}` but is not in its protected set",
+                    stream.name, capability.name
+                ),
+                path("streams", &stream.name).child("write_authority"),
+            ));
         }
     }
 }
@@ -1319,15 +1513,17 @@ fn validate_capacity_length_dispatch(graph: CheckedGraph<'_>, diagnostics: &mut 
                     path("streams", &stream.name).child("length"),
                 ));
             }
-            StreamLength::Dynamic(value) => {
-                let count = graph.value(value);
-                if count.data_type != DataType::u32()
+            StreamLength::Dynamic(count) => {
+                let count = graph.stream(count);
+                if count.element_type != DataType::u32()
                     || count.unit != Unit::DIMENSIONLESS
-                    || !matches!(count.kind, ValueKind::DynamicCounter)
+                    || count.capacity != 1
+                    || count.length != StreamLength::Fixed(1)
+                    || !count.access.allows_read()
                 {
                     diagnostics.push(Diagnostic::error(
                         DiagnosticCode::InvalidLogicalLength,
-                        "dynamic stream length must use a dimensionless u32 counter resource",
+                        "dynamic stream length must use a readable, fixed-length, one-element dimensionless u32 stream",
                         path("streams", &stream.name).child("length"),
                     ));
                 }
@@ -1366,10 +1562,14 @@ fn validate_capacity_length_dispatch(graph: CheckedGraph<'_>, diagnostics: &mut 
             continue;
         };
         let domain = graph.stream(domain);
+        let kernel = graph.kernel(pass.kernel);
         for binding in &pass.bindings {
             let ResourceId::Stream(stream) = binding.resource else {
                 continue;
             };
+            if kernel.slot(binding.slot).indexing == loom_core::StreamIndexing::WholeResource {
+                continue;
+            }
             let stream = graph.stream(stream);
             if !compatible_lengths(&domain.length, &stream.length) {
                 diagnostics.push(Diagnostic::error(
@@ -1866,6 +2066,17 @@ fn validate_buffer_versions(
 
 fn validate_backend_abi(graph: CheckedGraph<'_>, diagnostics: &mut Vec<Diagnostic>) {
     for kernel in &graph.kernels {
+        for slot in &kernel.slots {
+            if matches!(slot.resource_type, SlotResourceType::Value { .. })
+                && slot.indexing != loom_core::StreamIndexing::WholeResource
+            {
+                diagnostics.push(Diagnostic::error(
+                    DiagnosticCode::InvalidKernelAbi,
+                    "value slots must use whole-resource indexing",
+                    path("kernels", &kernel.name).child(format!("slots.{}", slot.name)),
+                ));
+            }
+        }
         let expected = kernel
             .slots
             .iter()
@@ -1898,6 +2109,10 @@ fn validate_backend_abi(graph: CheckedGraph<'_>, diagnostics: &mut Vec<Diagnosti
                 implementation.backend == Backend::Metal
                     && !implementation.source.is_empty()
                     && !implementation.entry.is_empty()
+                    && implementation
+                        .source_text
+                        .as_ref()
+                        .is_none_or(|source| !source.trim().is_empty())
             }),
         };
         if !has_backend {
@@ -1915,6 +2130,10 @@ fn validate_backend_abi(graph: CheckedGraph<'_>, diagnostics: &mut Vec<Diagnosti
                 implementation.backend == Backend::Metal
                     && !implementation.source.trim().is_empty()
                     && !implementation.entry.trim().is_empty()
+                    && implementation
+                        .source_text
+                        .as_ref()
+                        .is_none_or(|source| !source.trim().is_empty())
             }
         };
         if !complete {
@@ -2097,29 +2316,7 @@ fn build_execution_plan(
             pass_ids.dedup();
             let passes = pass_ids
                 .iter()
-                .map(|pass_id| {
-                    let pass = graph.pass(*pass_id);
-                    let kernel = graph.kernel(pass.kernel);
-                    let implementation = kernel
-                        .implementations
-                        .iter()
-                        .filter(|implementation| implementation.backend == Backend::Metal)
-                        .min_by(|left, right| {
-                            (&left.source, &left.entry).cmp(&(&right.source, &right.entry))
-                        })
-                        .expect("validated Metal kernel implementation")
-                        .clone();
-                    let mut bindings = pass.bindings.clone();
-                    bindings.sort_by_key(|binding| binding.slot);
-                    PlannedPass {
-                        pass: pass.id,
-                        kernel: kernel.id,
-                        bindings,
-                        dispatch: pass.dispatch.clone(),
-                        abi: kernel.abi.clone(),
-                        implementation,
-                    }
-                })
+                .map(|pass_id| plan_pass(graph, *pass_id))
                 .collect::<Vec<_>>();
             let mut view_ids = schedule.presentation_views.clone();
             view_ids.sort();
@@ -2256,9 +2453,48 @@ fn build_execution_plan(
             })
         })
         .collect();
+    let mut intervention_ids = graph
+        .scenarios
+        .iter()
+        .flat_map(|scenario| {
+            scenario
+                .interventions
+                .iter()
+                .map(|intervention| intervention.pass)
+        })
+        .collect::<Vec<_>>();
+    intervention_ids.sort();
+    intervention_ids.dedup();
+    let intervention_passes = intervention_ids
+        .into_iter()
+        .map(|pass| plan_pass(graph, pass))
+        .collect();
     ExecutionPlan {
-        schema_version: 3,
+        schema_version: 4,
         schedules,
+        intervention_passes,
+    }
+}
+
+fn plan_pass(graph: CheckedGraph<'_>, pass_id: loom_core::PassId) -> PlannedPass {
+    let pass = graph.pass(pass_id);
+    let kernel = graph.kernel(pass.kernel);
+    let implementation = kernel
+        .implementations
+        .iter()
+        .filter(|implementation| implementation.backend == Backend::Metal)
+        .min_by(|left, right| (&left.source, &left.entry).cmp(&(&right.source, &right.entry)))
+        .expect("validated Metal kernel implementation")
+        .clone();
+    let mut bindings = pass.bindings.clone();
+    bindings.sort_by_key(|binding| binding.slot);
+    PlannedPass {
+        pass: pass.id,
+        kernel: kernel.id,
+        bindings,
+        dispatch: pass.dispatch.clone(),
+        abi: kernel.abi.clone(),
+        implementation,
     }
 }
 
@@ -2272,7 +2508,7 @@ fn artifact_fingerprint(graph: &ModuleGraph, plan: &ExecutionPlan) -> String {
 
     let canonical_graph = canonicalize(graph);
     let bytes = serde_json::to_vec(&ArtifactIdentity {
-        validator_schema_version: 1,
+        validator_schema_version: 2,
         canonical_graph: &canonical_graph.bytes,
         execution_plan: plan,
     })

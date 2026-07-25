@@ -83,6 +83,22 @@ buffering 3
 
 They are never interchangeable.
 
+### Dynamic populations and write authority
+
+A dynamic population shares a readable, mutable, one-element dimensionless
+`u32` count stream. Mutable counts are streams because values remain immutable.
+Dispatch and rendering over a count-backed stream lower to bounded indirect GPU
+execution.
+
+A stream may require a named capability for writes. Any pass binding a writable
+slot to that stream must grant the capability explicitly. Membership capabilities
+name the count and aligned streams whose active set may change.
+
+Stream slots also declare indexing reach. `PerInvocation` means the invocation
+accesses its corresponding element. `WholeResource` permits declared random or
+aggregate access to a differently sized resource such as a field grid, counter,
+or reduction. Reach is never inferred from a length mismatch.
+
 ### Values
 
 Values are immutable and may be scalar, vector, matrix, struct, handle, or compile-time expression:

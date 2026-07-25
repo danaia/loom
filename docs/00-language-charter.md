@@ -13,6 +13,13 @@ validation, and orchestration. Kernel arithmetic remains in external backend cod
 initially Metal. A native kernel-body language is a later evolutionary boundary,
 not part of Loom v0.
 
+Its longer-term thesis is emergent computation: explicit stateful entities and
+distributed fields cooperating through typed intents and authoritative
+resolution. This does not make the particle a universal language primitive.
+Streams, kernels, passes, schedules, contracts, and capabilities remain
+fundamental; particles, cells, fields, organisms, and hierarchical aggregates
+are schemas composed from them.
+
 It should feel like arranging a precise experiment:
 
 ```text

@@ -1,0 +1,214 @@
+use loom_core::{
+    CapabilityDraft, DataType, DiagnosticCode, KernelAbiDraft, KernelDraft, Literal, ModuleBuilder,
+    PassDraft, ScenarioDraft, ScheduleDraft, SlotAccess, SlotDraft, StreamDraft, Unit, ValueDraft,
+    packaged_metal_implementation,
+};
+use loom_validator::Validator;
+
+const UPDATE_SOURCE: &str = r#"
+#include <metal_stdlib>
+using namespace metal;
+kernel void update_state(device uint* state [[buffer(0)]],
+                         uint gid [[thread_position_in_grid]]) {
+    state[gid] += 1;
+}
+"#;
+
+fn dynamic_population_builder(grant_authority: bool) -> ModuleBuilder {
+    let pass = PassDraft::new("update", "update_state")
+        .bind("state", "cells.state")
+        .dispatch_over("cells.state");
+    let pass = if grant_authority {
+        pass.grant("mutate_cells")
+    } else {
+        pass
+    };
+
+    ModuleBuilder::new("dynamic_population")
+        .stream(
+            StreamDraft::new("cells.active_count", DataType::u32(), Unit::DIMENSIONLESS)
+                .capacity(1)
+                .length(1)
+                .write_authority("mutate_cells")
+                .initial(Literal::Array(vec![Literal::U32(1)])),
+        )
+        .stream(
+            StreamDraft::new("cells.state", DataType::u32(), Unit::DIMENSIONLESS)
+                .capacity(1024)
+                .dynamic_length("cells.active_count")
+                .write_authority("mutate_cells")
+                .initial_repeat(Literal::U32(0), 1),
+        )
+        .kernel(
+            KernelDraft::new("update_state")
+                .slot(SlotDraft::stream(
+                    "state",
+                    DataType::u32(),
+                    Unit::DIMENSIONLESS,
+                    SlotAccess::ReadWrite,
+                ))
+                .abi(KernelAbiDraft::new(["state"]))
+                .implementation(packaged_metal_implementation(
+                    "tests/update_state.metal",
+                    "update_state",
+                    UPDATE_SOURCE,
+                )),
+        )
+        .pass(pass)
+        .schedule(ScheduleDraft::fixed("simulation", 120).run("update"))
+        .capability(CapabilityDraft::membership_mutate(
+            "mutate_cells",
+            "cells.active_count",
+            ["cells.state"],
+        ))
+}
+
+#[test]
+fn dynamic_population_uses_a_mutable_count_stream_and_explicit_authority() {
+    let graph = dynamic_population_builder(true).build().unwrap();
+    let report = Validator::validate(&graph);
+
+    assert!(
+        report.is_valid(),
+        "unexpected diagnostics: {:#?}",
+        report.diagnostics
+    );
+    assert_eq!(graph.schema_version, 2);
+    assert!(matches!(
+        graph.resources.streams[1].length,
+        loom_core::StreamLength::Dynamic(_)
+    ));
+    assert_eq!(graph.passes[0].capabilities.len(), 1);
+}
+
+#[test]
+fn protected_stream_rejects_an_unprivileged_writer() {
+    let graph = dynamic_population_builder(false).build().unwrap();
+    let report = Validator::validate(&graph);
+
+    assert!(!report.is_valid());
+    assert!(
+        report
+            .diagnostics
+            .iter()
+            .any(|diagnostic| { diagnostic.code == DiagnosticCode::MissingWriteAuthority })
+    );
+}
+
+#[test]
+fn membership_capability_rejects_a_non_count_stream() {
+    let mut graph = dynamic_population_builder(true).build().unwrap();
+    let capability = &mut graph.capabilities[0];
+    let loom_core::CapabilityKind::MembershipMutate { count, .. } = &mut capability.kind else {
+        panic!("expected membership capability");
+    };
+    *count = graph.resources.streams[1].id;
+
+    let report = Validator::validate(&graph);
+    assert!(!report.is_valid());
+    assert!(
+        report
+            .diagnostics
+            .iter()
+            .any(|diagnostic| { diagnostic.code == DiagnosticCode::InvalidMembershipAuthority })
+    );
+}
+
+#[test]
+fn field_specimen_declares_whole_resource_reach_and_explicit_commit_order() {
+    let graph = loom_core::conformance::hello_field_builder()
+        .build()
+        .unwrap();
+    let report = Validator::validate(&graph);
+    assert!(
+        report.is_valid(),
+        "unexpected diagnostics: {:#?}",
+        report.diagnostics
+    );
+
+    let validated = report.validated.unwrap();
+    let schedule = &validated.execution_plan().schedules[0];
+    let ordered_names = schedule
+        .order
+        .iter()
+        .filter_map(|item| match item {
+            loom_core::ScheduleItemId::Pass(id) => Some(&graph.pass(*id).unwrap().name),
+            loom_core::ScheduleItemId::View(_) => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        ordered_names,
+        vec!["clear_deposits", "seed", "diffuse", "commit"]
+    );
+}
+
+#[test]
+fn organism_specimen_separates_decision_state_field_and_membership_authority() {
+    let graph = loom_core::hello_organism_builder(16_384).build().unwrap();
+    let report = Validator::validate(&graph);
+    assert!(
+        report.is_valid(),
+        "unexpected diagnostics: {:#?}",
+        report.diagnostics
+    );
+
+    let decide = graph
+        .passes
+        .iter()
+        .find(|pass| pass.name == "decide")
+        .unwrap();
+    assert!(decide.capabilities.is_empty());
+    let resolve_state = graph
+        .passes
+        .iter()
+        .find(|pass| pass.name == "resolve_state")
+        .unwrap();
+    assert_eq!(resolve_state.capabilities.len(), 1);
+    let resolve_population = graph
+        .passes
+        .iter()
+        .find(|pass| pass.name == "resolve_population")
+        .unwrap();
+    assert_eq!(resolve_population.capabilities.len(), 2);
+}
+
+#[test]
+fn scenario_interventions_are_tick_addressed_and_canonical() {
+    let graph = dynamic_population_builder(true)
+        .value(ValueDraft::constant(
+            "lesion.radius",
+            DataType::u32(),
+            Unit::DIMENSIONLESS,
+            Literal::U32(1),
+        ))
+        .pass(
+            PassDraft::new("lesion", "update_state")
+                .bind("state", "cells.state")
+                .dispatch_over("cells.state")
+                .grant("mutate_cells"),
+        )
+        .scenario(ScenarioDraft::new("injury", "simulation", 100).intervene(
+            10,
+            "lesion",
+            [("lesion.radius", Literal::U32(4))],
+        ))
+        .build()
+        .unwrap();
+    let report = Validator::validate(&graph);
+    assert!(
+        report.is_valid(),
+        "unexpected diagnostics: {:#?}",
+        report.diagnostics
+    );
+    assert_eq!(graph.scenarios[0].interventions[0].tick, 10);
+
+    let mut invalid = graph;
+    invalid.scenarios[0].interventions[0].tick = 100;
+    let report = Validator::validate(&invalid);
+    assert!(
+        report
+            .diagnostics
+            .iter()
+            .any(|diagnostic| { diagnostic.code == DiagnosticCode::InvalidIntervention })
+    );
+}

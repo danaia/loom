@@ -9,6 +9,8 @@ The language documents are read in this order:
 5. [`../examples/hello-particle/hello-particle.loom`](../examples/hello-particle/hello-particle.loom) — first conformance specimen.
 6. [`04-execution-scheduling.md`](04-execution-scheduling.md) — completion, overlap, observation, view, inspection, ABI, determinism, and overload rules.
 7. [`06-canonical-representation.md`](06-canonical-representation.md) — untrusted graphs, validation, atomic repairs, execution plans, and artifact identity.
+8. [`decisions/0003-emergent-systems-substrate.md`](decisions/0003-emergent-systems-substrate.md) — emergent-computation positioning and authority rules.
+9. [`07-emergent-systems.md`](07-emergent-systems.md) — implemented dynamic populations, fields, and Hello Organism boundary.
 
 Planned specifications:
 
@@ -56,6 +58,10 @@ Select the conformance experiment through the same launcher:
 ./scripts/run-hello-particle.sh particle
 ./scripts/run-hello-particle.sh batch
 ./scripts/run-hello-particle.sh batch 10k
+./scripts/run-hello-particle.sh population 16k --bench headless --samples 300
+./scripts/run-hello-particle.sh field --bench headless --samples 300
+./scripts/run-hello-particle.sh organism 16384
+./scripts/run-hello-particle.sh organism 16384 --bench headless --samples 300
 ```
 
 `batch` defaults to 1,000 particles. Counts accept exact positive integers plus

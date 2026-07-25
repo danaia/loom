@@ -1,4 +1,5 @@
 use std::{
+    borrow::Cow,
     collections::BTreeMap,
     process::Command,
     sync::{
@@ -45,8 +46,54 @@ use crate::{
 const INTEGRATE_SOURCE: &str = include_str!("../../../kernels/euler_integrate.metal");
 const CONTACT_SOURCE: &str = include_str!("../../../kernels/ground_contact.metal");
 const PARTICLE_SOURCE: &str = include_str!("../../../shaders/particle.metal");
+const INDIRECT_ARGUMENT_SOURCE: &str = r#"
+#include <metal_stdlib>
+using namespace metal;
+
+kernel void loom_prepare_compute_dispatch(
+    device const uint* active_count [[buffer(0)]],
+    device uint* arguments [[buffer(1)]],
+    constant uint& threadgroup_width [[buffer(2)]],
+    constant uint& maximum_count [[buffer(3)]],
+    uint gid [[thread_position_in_grid]])
+{
+    if (gid != 0) return;
+    const uint count = min(active_count[0], maximum_count);
+    arguments[0] = (count + threadgroup_width - 1) / threadgroup_width;
+    arguments[1] = 1;
+    arguments[2] = 1;
+}
+
+kernel void loom_prepare_draw(
+    device const uint* active_count [[buffer(0)]],
+    device uint* arguments [[buffer(1)]],
+    constant uint& maximum_count [[buffer(2)]],
+    uint gid [[thread_position_in_grid]])
+{
+    if (gid != 0) return;
+    arguments[0] = 6;
+    arguments[1] = min(active_count[0], maximum_count);
+    arguments[2] = 0;
+    arguments[3] = 0;
+}
+"#;
 
 pub struct MetalRuntime;
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ScenarioEventRecord {
+    pub tick: u64,
+    pub pass: String,
+    pub value_overrides: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ScenarioRunResult {
+    pub scenario: String,
+    pub executed_ticks: u64,
+    pub events: Vec<ScenarioEventRecord>,
+    pub runtime_fingerprint: String,
+}
 
 impl MetalRuntime {
     pub fn run(validated: ValidatedModuleGraph) -> Result<(), RuntimeDiagnostic> {
@@ -185,6 +232,42 @@ impl MetalRuntime {
         let mut state = RuntimeState::new(validated, device.clone(), layer)?;
         state.run_benchmark(&device, config)
     }
+
+    pub fn run_scenario(
+        validated: ValidatedModuleGraph,
+        scenario_name: &str,
+    ) -> Result<ScenarioRunResult, RuntimeDiagnostic> {
+        let scenario = validated
+            .graph()
+            .scenarios
+            .iter()
+            .find(|scenario| scenario.name == scenario_name)
+            .cloned()
+            .ok_or_else(|| {
+                RuntimeDiagnostic::new(
+                    RuntimeDiagnosticCode::UnsupportedGraph,
+                    format!("unknown scenario `{scenario_name}`"),
+                )
+            })?;
+        let loom_core::ScenarioDuration::SimulationTicks(ticks) = scenario.duration;
+        let device = Device::system_default().ok_or_else(|| {
+            RuntimeDiagnostic::new(
+                RuntimeDiagnosticCode::DeviceUnavailable,
+                "Metal has no system-default device",
+            )
+        })?;
+        let layer = MetalLayer::new();
+        layer.set_device(&device);
+        layer.set_pixel_format(MTLPixelFormat::BGRA8Unorm);
+        let mut state = RuntimeState::new(validated, device.clone(), layer)?;
+        let events = state.execute_scenario(&device, &scenario, ticks)?;
+        Ok(ScenarioRunResult {
+            scenario: scenario.name,
+            executed_ticks: ticks,
+            events,
+            runtime_fingerprint: state.fingerprint.fingerprint.clone(),
+        })
+    }
 }
 
 struct DirectMetalEncoding {
@@ -259,10 +342,18 @@ struct RuntimeState {
     value_buffers: Vec<Buffer>,
     compute_pipelines: BTreeMap<PassId, ComputePipelineState>,
     render_pipelines: BTreeMap<ViewId, RenderPipelineState>,
+    indirect: Option<IndirectSupport>,
     rate_hz: u32,
     fingerprint: RuntimeFingerprint,
     max_in_flight_command_buffers: u32,
     direct_metal: Option<DirectMetalEncoding>,
+}
+
+struct IndirectSupport {
+    prepare_compute: ComputePipelineState,
+    prepare_draw: ComputePipelineState,
+    compute_arguments: BTreeMap<PassId, Buffer>,
+    draw_arguments: BTreeMap<ViewId, Buffer>,
 }
 
 impl RuntimeState {
@@ -297,7 +388,7 @@ impl RuntimeState {
             .new_command_queue_with_max_command_buffer_count(max_in_flight_command_buffers as u64);
         let stream_buffers = allocate_streams(&validated, &device, &queue)?;
         let value_buffers = allocate_values(&validated, &device)?;
-        let (compute_pipelines, render_pipelines, shader_identities, pipeline_identities) =
+        let (compute_pipelines, render_pipelines, indirect, shader_identities, pipeline_identities) =
             build_pipelines(&validated, &device)?;
         let rate_hz = match validated.graph().schedules[0].timing {
             loom_core::ScheduleTiming::Fixed { rate_hz, .. } => rate_hz,
@@ -314,6 +405,7 @@ impl RuntimeState {
             value_buffers,
             compute_pipelines,
             render_pipelines,
+            indirect,
             rate_hz,
             fingerprint,
             max_in_flight_command_buffers,
@@ -366,6 +458,87 @@ impl RuntimeState {
             }
         }
         Ok(())
+    }
+
+    fn execute_scenario(
+        &mut self,
+        device: &Device,
+        scenario: &loom_core::ScenarioNode,
+        ticks: u64,
+    ) -> Result<Vec<ScenarioEventRecord>, RuntimeDiagnostic> {
+        let schedule = &self.validated.execution_plan().schedules[0];
+        if schedule.schedule != scenario.schedule {
+            return Err(RuntimeDiagnostic::new(
+                RuntimeDiagnosticCode::UnsupportedGraph,
+                "scenario schedule is not the runtime schedule",
+            ));
+        }
+        let mut records = Vec::new();
+        for tick in 0..ticks {
+            let command_buffer = self.queue.new_command_buffer();
+            command_buffer.set_label("loom.scenario.tick");
+            let mut override_buffers = Vec::<BTreeMap<ValueId, Buffer>>::new();
+            for intervention in scenario
+                .interventions
+                .iter()
+                .filter(|intervention| intervention.tick == tick)
+            {
+                let pass = self
+                    .validated
+                    .execution_plan()
+                    .intervention_passes
+                    .iter()
+                    .find(|pass| pass.pass == intervention.pass)
+                    .expect("validated intervention pass");
+                let mut overrides = BTreeMap::new();
+                let mut override_names = Vec::new();
+                for override_ in &intervention.value_overrides {
+                    let value = self.validated.graph().value(override_.value).unwrap();
+                    let bytes = encode_literal(&value.data_type, &override_.literal)?;
+                    let buffer = device.new_buffer_with_data(
+                        bytes.as_ptr().cast(),
+                        bytes.len() as u64,
+                        MTLResourceOptions::StorageModeShared,
+                    );
+                    overrides.insert(override_.value, buffer);
+                    override_names.push(value.name.clone());
+                }
+                override_names.sort();
+                override_buffers.push(overrides);
+                let current = override_buffers.last().expect("just inserted");
+                self.encode_compute_with_overrides(command_buffer, pass, Some(current))?;
+                records.push(ScenarioEventRecord {
+                    tick,
+                    pass: self
+                        .validated
+                        .graph()
+                        .pass(intervention.pass)
+                        .unwrap()
+                        .name
+                        .clone(),
+                    value_overrides: override_names,
+                });
+            }
+            for item in &schedule.order {
+                if let ScheduleItemId::Pass(pass_id) = item {
+                    let pass = schedule
+                        .passes
+                        .iter()
+                        .find(|pass| pass.pass == *pass_id)
+                        .expect("validated schedule pass");
+                    self.encode_compute(command_buffer, pass)?;
+                }
+            }
+            command_buffer.commit();
+            command_buffer.wait_until_completed();
+            if command_buffer.status() == MTLCommandBufferStatus::Error {
+                return Err(RuntimeDiagnostic::new(
+                    RuntimeDiagnosticCode::CommandBufferFailed,
+                    format!("scenario tick {tick} failed"),
+                ));
+            }
+        }
+        Ok(records)
     }
 
     fn run_benchmark(
@@ -879,7 +1052,62 @@ impl RuntimeState {
         command_buffer: &metal::CommandBufferRef,
         pass: &PlannedPass,
     ) -> Result<(), RuntimeDiagnostic> {
+        self.encode_compute_with_overrides(command_buffer, pass, None)
+    }
+
+    fn encode_compute_with_overrides(
+        &self,
+        command_buffer: &metal::CommandBufferRef,
+        pass: &PlannedPass,
+        value_overrides: Option<&BTreeMap<ValueId, Buffer>>,
+    ) -> Result<(), RuntimeDiagnostic> {
         let pipeline = &self.compute_pipelines[&pass.pass];
+        let dynamic_count = match pass.dispatch {
+            DispatchDomain::OverStream(stream) => {
+                match self.validated.graph().stream(stream).unwrap().length {
+                    StreamLength::Dynamic(count) => Some(count),
+                    StreamLength::Fixed(_) => None,
+                }
+            }
+            DispatchDomain::Fixed(_) => None,
+        };
+        let width = pipeline
+            .thread_execution_width()
+            .min(pipeline.max_total_threads_per_threadgroup())
+            .max(1);
+        if let Some(count) = dynamic_count {
+            let indirect = self.indirect.as_ref().ok_or_else(|| {
+                RuntimeDiagnostic::new(
+                    RuntimeDiagnosticCode::UnsupportedGraph,
+                    "dynamic dispatch has no indirect lowering support",
+                )
+            })?;
+            let arguments = &indirect.compute_arguments[&pass.pass];
+            let prepare = command_buffer.new_compute_command_encoder();
+            prepare.set_compute_pipeline_state(&indirect.prepare_compute);
+            prepare.set_buffer(0, Some(&self.stream_buffers[count.0 as usize][0]), 0);
+            prepare.set_buffer(1, Some(arguments), 0);
+            let width_u32 = width as u32;
+            prepare.set_bytes(
+                2,
+                std::mem::size_of::<u32>() as u64,
+                (&width_u32 as *const u32).cast(),
+            );
+            let maximum_count = match pass.dispatch {
+                DispatchDomain::OverStream(stream) => {
+                    self.validated.graph().stream(stream).unwrap().capacity
+                }
+                DispatchDomain::Fixed(_) => unreachable!(),
+            };
+            prepare.set_bytes(
+                3,
+                std::mem::size_of::<u32>() as u64,
+                (&maximum_count as *const u32).cast(),
+            );
+            prepare.dispatch_threads(MTLSize::new(1, 1, 1), MTLSize::new(1, 1, 1));
+            prepare.end_encoding();
+        }
+
         let encoder = command_buffer.new_compute_command_encoder();
         encoder.set_compute_pipeline_state(pipeline);
         for (index, slot) in pass.abi.binding_order.iter().enumerate() {
@@ -897,20 +1125,24 @@ impl RuntimeState {
                     );
                 }
                 ResourceId::Value(value) => {
-                    encoder.set_buffer(
-                        index as u64,
-                        Some(&self.value_buffers[value.0 as usize]),
-                        0,
-                    );
+                    let buffer = value_overrides
+                        .and_then(|overrides| overrides.get(&value))
+                        .unwrap_or(&self.value_buffers[value.0 as usize]);
+                    encoder.set_buffer(index as u64, Some(buffer), 0);
                 }
             }
         }
-        let count = dispatch_count(self.validated.graph(), &pass.dispatch)?;
-        let width = pipeline
-            .thread_execution_width()
-            .min(pipeline.max_total_threads_per_threadgroup())
-            .max(1);
-        encoder.dispatch_threads(MTLSize::new(count, 1, 1), MTLSize::new(width, 1, 1));
+        if dynamic_count.is_some() {
+            let arguments = &self
+                .indirect
+                .as_ref()
+                .expect("dynamic dispatch support")
+                .compute_arguments[&pass.pass];
+            encoder.dispatch_thread_groups_indirect(arguments, 0, MTLSize::new(width, 1, 1));
+        } else {
+            let count = dispatch_count(self.validated.graph(), &pass.dispatch)?;
+            encoder.dispatch_threads(MTLSize::new(count, 1, 1), MTLSize::new(width, 1, 1));
+        }
         encoder.end_encoding();
         Ok(())
     }
@@ -921,6 +1153,33 @@ impl RuntimeState {
         view: &PlannedView,
         texture: &metal::TextureRef,
     ) -> Result<(), RuntimeDiagnostic> {
+        let dynamic_count = dynamic_count_for_view(self.validated.graph(), view)?;
+        if let Some(count) = dynamic_count {
+            let indirect = self.indirect.as_ref().ok_or_else(|| {
+                RuntimeDiagnostic::new(
+                    RuntimeDiagnosticCode::UnsupportedGraph,
+                    "dynamic rendering has no indirect lowering support",
+                )
+            })?;
+            let arguments = &indirect.draw_arguments[&view.view];
+            let prepare = command_buffer.new_compute_command_encoder();
+            prepare.set_compute_pipeline_state(&indirect.prepare_draw);
+            prepare.set_buffer(0, Some(&self.stream_buffers[count.0 as usize][0]), 0);
+            prepare.set_buffer(1, Some(arguments), 0);
+            let maximum_count = view
+                .reads
+                .first()
+                .map(|read| self.validated.graph().stream(read.stream).unwrap().capacity)
+                .unwrap_or(0);
+            prepare.set_bytes(
+                2,
+                std::mem::size_of::<u32>() as u64,
+                (&maximum_count as *const u32).cast(),
+            );
+            prepare.dispatch_threads(MTLSize::new(1, 1, 1), MTLSize::new(1, 1, 1));
+            prepare.end_encoding();
+        }
+
         let descriptor = RenderPassDescriptor::new();
         let attachment = descriptor.color_attachments().object_at(0).unwrap();
         attachment.set_texture(Some(texture));
@@ -937,8 +1196,17 @@ impl RuntimeState {
                 0,
             );
         }
-        let instances = view_instance_count(self.validated.graph(), view)?;
-        encoder.draw_primitives_instanced(MTLPrimitiveType::Triangle, 0, 6, instances);
+        if dynamic_count.is_some() {
+            let arguments = &self
+                .indirect
+                .as_ref()
+                .expect("dynamic rendering support")
+                .draw_arguments[&view.view];
+            encoder.draw_primitives_indirect(MTLPrimitiveType::Triangle, arguments, 0);
+        } else {
+            let instances = view_instance_count(self.validated.graph(), view)?;
+            encoder.draw_primitives_instanced(MTLPrimitiveType::Triangle, 0, 6, instances);
+        }
         encoder.end_encoding();
         Ok(())
     }
@@ -1088,6 +1356,14 @@ impl RuntimeState {
                 .iter()
                 .map(|buffer| buffer.length())
                 .sum(),
+            gpu_indirect_buffer_bytes: self.indirect.as_ref().map_or(0, |indirect| {
+                indirect
+                    .compute_arguments
+                    .values()
+                    .chain(indirect.draw_arguments.values())
+                    .map(|buffer| buffer.length())
+                    .sum()
+            }),
             initialization_application_blits: self
                 .stream_buffers
                 .iter()
@@ -1312,6 +1588,42 @@ fn view_instance_count(
     Ok(count.unwrap_or(0) as u64)
 }
 
+fn dynamic_count_for_view(
+    graph: &loom_core::ModuleGraph,
+    view: &PlannedView,
+) -> Result<Option<StreamId>, RuntimeDiagnostic> {
+    let mut dynamic_count = None;
+    let mut fixed_length = None;
+    for read in &view.reads {
+        match graph.stream(read.stream).unwrap().length {
+            StreamLength::Fixed(length) => {
+                if dynamic_count.is_some()
+                    || fixed_length.is_some_and(|expected| expected != length)
+                {
+                    return Err(RuntimeDiagnostic::new(
+                        RuntimeDiagnosticCode::UnsupportedGraph,
+                        "view streams have incompatible logical lengths",
+                    )
+                    .at(format!("views.{}", view.view.0)));
+                }
+                fixed_length = Some(length);
+            }
+            StreamLength::Dynamic(count) => {
+                if fixed_length.is_some() || dynamic_count.is_some_and(|expected| expected != count)
+                {
+                    return Err(RuntimeDiagnostic::new(
+                        RuntimeDiagnosticCode::UnsupportedGraph,
+                        "view streams have incompatible dynamic count domains",
+                    )
+                    .at(format!("views.{}", view.view.0)));
+                }
+                dynamic_count = Some(count);
+            }
+        }
+    }
+    Ok(dynamic_count)
+}
+
 fn requires_wait_after(schedule: &ExecutionSchedule, submitted: ScheduleItemId) -> bool {
     schedule.completion_requirements.iter().any(|requirement| {
         matches!(
@@ -1423,7 +1735,6 @@ fn allocate_values(
                 };
                 Ok((1.0_f32 / rate_hz as f32).to_le_bytes().to_vec())
             }
-            ValueKind::DynamicCounter => Ok(0_u32.to_le_bytes().to_vec()),
         })
         .collect::<Result<Vec<_>, _>>()?;
     Ok(bytes
@@ -1593,6 +1904,7 @@ fn element_size(data_type: &DataType) -> Result<usize, RuntimeDiagnostic> {
 type Pipelines = (
     BTreeMap<PassId, ComputePipelineState>,
     BTreeMap<ViewId, RenderPipelineState>,
+    Option<IndirectSupport>,
     Vec<ShaderIdentity>,
     Vec<PipelineIdentity>,
 );
@@ -1608,10 +1920,14 @@ fn build_pipelines(
     let mut shaders = BTreeMap::<String, String>::new();
     let mut pipeline_identities = Vec::new();
 
-    for pass in &schedule.passes {
-        let source = shader_source(&pass.implementation.source)?;
+    for pass in schedule
+        .passes
+        .iter()
+        .chain(validated.execution_plan().intervention_passes.iter())
+    {
+        let source = shader_source(&pass.implementation)?;
         let library = device
-            .new_library_with_source(source, &options)
+            .new_library_with_source(source.as_ref(), &options)
             .map_err(|error| {
                 RuntimeDiagnostic::new(RuntimeDiagnosticCode::ShaderCompilationFailed, error)
                     .at(format!("passes.{}", pass.pass.0))
@@ -1643,9 +1959,9 @@ fn build_pipelines(
     }
 
     for view in &schedule.views {
-        let source = shader_source(&view.implementation.source)?;
+        let source = shader_source(&view.implementation)?;
         let library = device
-            .new_library_with_source(source, &options)
+            .new_library_with_source(source.as_ref(), &options)
             .map_err(|error| {
                 RuntimeDiagnostic::new(RuntimeDiagnosticCode::ShaderCompilationFailed, error)
                     .at(format!("views.{}", view.view.0))
@@ -1690,6 +2006,116 @@ fn build_pipelines(
         render.insert(view.view, pipeline);
     }
 
+    let dynamic_passes = schedule
+        .passes
+        .iter()
+        .chain(validated.execution_plan().intervention_passes.iter())
+        .filter_map(|pass| match pass.dispatch {
+            DispatchDomain::OverStream(stream)
+                if matches!(
+                    validated.graph().stream(stream).unwrap().length,
+                    StreamLength::Dynamic(_)
+                ) =>
+            {
+                Some(pass.pass)
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let dynamic_views = schedule
+        .views
+        .iter()
+        .filter_map(|view| {
+            dynamic_count_for_view(validated.graph(), view)
+                .ok()
+                .flatten()
+                .map(|_| view.view)
+        })
+        .collect::<Vec<_>>();
+    let indirect = if dynamic_passes.is_empty() && dynamic_views.is_empty() {
+        None
+    } else {
+        let library = device
+            .new_library_with_source(INDIRECT_ARGUMENT_SOURCE, &options)
+            .map_err(|error| {
+                RuntimeDiagnostic::new(RuntimeDiagnosticCode::ShaderCompilationFailed, error)
+                    .at("runtime.indirect_arguments")
+            })?;
+        let compute_function = library
+            .get_function("loom_prepare_compute_dispatch", None)
+            .map_err(|error| {
+                RuntimeDiagnostic::new(RuntimeDiagnosticCode::PipelineCreationFailed, error)
+                    .at("runtime.indirect_arguments.compute")
+            })?;
+        let draw_function = library
+            .get_function("loom_prepare_draw", None)
+            .map_err(|error| {
+                RuntimeDiagnostic::new(RuntimeDiagnosticCode::PipelineCreationFailed, error)
+                    .at("runtime.indirect_arguments.draw")
+            })?;
+        let prepare_compute = device
+            .new_compute_pipeline_state_with_function(&compute_function)
+            .map_err(|error| {
+                RuntimeDiagnostic::new(RuntimeDiagnosticCode::PipelineCreationFailed, error)
+                    .at("runtime.indirect_arguments.compute")
+            })?;
+        let prepare_draw = device
+            .new_compute_pipeline_state_with_function(&draw_function)
+            .map_err(|error| {
+                RuntimeDiagnostic::new(RuntimeDiagnosticCode::PipelineCreationFailed, error)
+                    .at("runtime.indirect_arguments.draw")
+            })?;
+        let compute_arguments = dynamic_passes
+            .into_iter()
+            .map(|pass| {
+                (
+                    pass,
+                    device.new_buffer(
+                        (3 * std::mem::size_of::<u32>()) as u64,
+                        MTLResourceOptions::StorageModePrivate,
+                    ),
+                )
+            })
+            .collect();
+        let draw_arguments = dynamic_views
+            .into_iter()
+            .map(|view| {
+                (
+                    view,
+                    device.new_buffer(
+                        (4 * std::mem::size_of::<u32>()) as u64,
+                        MTLResourceOptions::StorageModePrivate,
+                    ),
+                )
+            })
+            .collect();
+        let internal_sha = sha256(INDIRECT_ARGUMENT_SOURCE.as_bytes());
+        shaders.insert(
+            "loom://runtime/indirect_arguments.metal".to_owned(),
+            internal_sha.clone(),
+        );
+        pipeline_identities.push(PipelineIdentity {
+            entry: "loom_prepare_compute_dispatch".to_owned(),
+            kind: "compute-lowering".to_owned(),
+            source_sha256: internal_sha.clone(),
+            thread_execution_width: Some(prepare_compute.thread_execution_width()),
+            max_threads_per_threadgroup: Some(prepare_compute.max_total_threads_per_threadgroup()),
+        });
+        pipeline_identities.push(PipelineIdentity {
+            entry: "loom_prepare_draw".to_owned(),
+            kind: "compute-lowering".to_owned(),
+            source_sha256: internal_sha,
+            thread_execution_width: Some(prepare_draw.thread_execution_width()),
+            max_threads_per_threadgroup: Some(prepare_draw.max_total_threads_per_threadgroup()),
+        });
+        Some(IndirectSupport {
+            prepare_compute,
+            prepare_draw,
+            compute_arguments,
+            draw_arguments,
+        })
+    };
+
     let shaders = shaders
         .into_iter()
         .map(|(source_path, sha256)| ShaderIdentity {
@@ -1699,17 +2125,22 @@ fn build_pipelines(
         .collect();
     pipeline_identities
         .sort_by(|left, right| (&left.kind, &left.entry).cmp(&(&right.kind, &right.entry)));
-    Ok((compute, render, shaders, pipeline_identities))
+    Ok((compute, render, indirect, shaders, pipeline_identities))
 }
 
-fn shader_source(path: &str) -> Result<&'static str, RuntimeDiagnostic> {
-    match path {
-        "kernels/euler_integrate.metal" => Ok(INTEGRATE_SOURCE),
-        "kernels/ground_contact.metal" => Ok(CONTACT_SOURCE),
-        "shaders/particle.metal" => Ok(PARTICLE_SOURCE),
+fn shader_source(
+    implementation: &loom_core::BackendImplementation,
+) -> Result<Cow<'_, str>, RuntimeDiagnostic> {
+    if let Some(source) = implementation.source_text.as_deref() {
+        return Ok(Cow::Borrowed(source));
+    }
+    match implementation.source.as_str() {
+        "kernels/euler_integrate.metal" => Ok(Cow::Borrowed(INTEGRATE_SOURCE)),
+        "kernels/ground_contact.metal" => Ok(Cow::Borrowed(CONTACT_SOURCE)),
+        "shaders/particle.metal" => Ok(Cow::Borrowed(PARTICLE_SOURCE)),
         _ => Err(RuntimeDiagnostic::new(
             RuntimeDiagnosticCode::UnsupportedGraph,
-            format!("no packaged Metal source for `{path}`"),
+            format!("no packaged Metal source for `{}`", implementation.source),
         )),
     }
 }
@@ -1724,7 +2155,7 @@ fn dispatch_count(
             StreamLength::Fixed(length) => Ok(length as u64),
             StreamLength::Dynamic(_) => Err(RuntimeDiagnostic::new(
                 RuntimeDiagnosticCode::UnsupportedGraph,
-                "dynamic dispatch lengths are not in the first Metal slice",
+                "dynamic dispatch requires GPU indirect encoding",
             )),
         },
     }
@@ -1734,13 +2165,37 @@ fn benchmark_dispatch_count(
     graph: &loom_core::ModuleGraph,
     schedule: &ExecutionSchedule,
 ) -> Result<u32, RuntimeDiagnostic> {
-    let pass = schedule.passes.first().ok_or_else(|| {
-        RuntimeDiagnostic::new(
-            RuntimeDiagnosticCode::UnsupportedGraph,
-            "benchmark schedule has no compute dispatch domain",
-        )
-    })?;
-    u32::try_from(dispatch_count(graph, &pass.dispatch)?).map_err(|_| {
+    let pass = schedule
+        .passes
+        .iter()
+        .find(|pass| {
+            matches!(
+                pass.dispatch,
+                DispatchDomain::OverStream(stream)
+                    if matches!(
+                        graph.stream(stream).unwrap().length,
+                        StreamLength::Dynamic(_)
+                    )
+            )
+        })
+        .or_else(|| schedule.passes.first())
+        .ok_or_else(|| {
+            RuntimeDiagnostic::new(
+                RuntimeDiagnosticCode::UnsupportedGraph,
+                "benchmark schedule has no compute dispatch domain",
+            )
+        })?;
+    let declared_count = match pass.dispatch {
+        DispatchDomain::OverStream(stream) => {
+            let stream = graph.stream(stream).unwrap();
+            match stream.length {
+                StreamLength::Fixed(length) => u64::from(length),
+                StreamLength::Dynamic(_) => u64::from(stream.capacity),
+            }
+        }
+        DispatchDomain::Fixed(count) => u64::from(count),
+    };
+    u32::try_from(declared_count).map_err(|_| {
         RuntimeDiagnostic::new(
             RuntimeDiagnosticCode::UnsupportedGraph,
             "benchmark dispatch domain exceeds the supported count",
@@ -1836,8 +2291,14 @@ fn command_output(program: &str, arguments: &[&str]) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{encode_f32_initializer, pacing_offset};
-    use loom_core::{DataType, Literal};
+    use super::{MetalRuntime, RuntimeState, encode_f32_initializer, pacing_offset};
+    use crate::{BenchmarkConfig, BenchmarkMode, BenchmarkRunner};
+    use loom_core::{
+        DataType, Literal,
+        conformance::{hello_field_builder, hello_population_builder},
+        hello_organism_builder,
+    };
+    use loom_validator::Validator;
     use std::time::Duration;
 
     #[test]
@@ -1879,6 +2340,146 @@ mod tests {
         assert_eq!(
             decode_f32(&bytes),
             vec![10.0, 20.0, 11.0, 20.0, 10.0, 22.0, 11.0, 22.0]
+        );
+    }
+
+    #[test]
+    fn packaged_dynamic_population_executes_through_gpu_indirect_dispatch() {
+        let graph = hello_population_builder(1024, 7).build().unwrap();
+        let validated = Validator::validate(&graph)
+            .validated
+            .expect("dynamic population graph must validate");
+        let result = MetalRuntime::benchmark(
+            validated,
+            BenchmarkConfig {
+                mode: BenchmarkMode::Headless,
+                runner: BenchmarkRunner::LoomPlan,
+                warmup_ticks: 0,
+                sample_ticks: 1,
+                ..BenchmarkConfig::default()
+            },
+        )
+        .expect("dynamic population must execute through Metal");
+
+        assert_eq!(result.sample_ticks, 1);
+        assert_eq!(result.particle_count, 1024);
+        assert!(
+            result
+                .runtime
+                .shader_hashes
+                .iter()
+                .any(|shader| { shader.source_path == "loom://runtime/indirect_arguments.metal" })
+        );
+    }
+
+    #[test]
+    fn scenario_intervention_executes_at_the_recorded_tick() {
+        let graph = hello_population_builder(32, 3).build().unwrap();
+        let validated = Validator::validate(&graph)
+            .validated
+            .expect("population scenario graph must validate");
+        let result = MetalRuntime::run_scenario(validated, "recorded_reset")
+            .expect("recorded intervention must execute");
+
+        assert_eq!(result.executed_ticks, 2);
+        assert_eq!(result.events.len(), 1);
+        assert_eq!(result.events[0].tick, 1);
+        assert_eq!(result.events[0].pass, "reset_population_age");
+        assert_eq!(
+            result.events[0].value_overrides,
+            vec!["population.reset_age"]
+        );
+    }
+
+    #[test]
+    fn packaged_reflective_field_executes_as_ordered_gpu_passes() {
+        let graph = hello_field_builder().build().unwrap();
+        let validated = Validator::validate(&graph)
+            .validated
+            .expect("field graph must validate");
+        let result = MetalRuntime::benchmark(
+            validated,
+            BenchmarkConfig {
+                mode: BenchmarkMode::Headless,
+                runner: BenchmarkRunner::LoomPlan,
+                warmup_ticks: 0,
+                sample_ticks: 2,
+                ..BenchmarkConfig::default()
+            },
+        )
+        .expect("field specimen must execute through Metal");
+
+        assert_eq!(result.sample_ticks, 2);
+        assert!(
+            result
+                .runtime
+                .shader_hashes
+                .iter()
+                .any(|shader| { shader.source_path == "loom://specimens/hello_field.metal" })
+        );
+    }
+
+    #[test]
+    fn packaged_organism_executes_coupled_population_and_field_tick() {
+        let graph = hello_organism_builder(16_384).build().unwrap();
+        let count = graph
+            .resources
+            .streams
+            .iter()
+            .find(|stream| stream.name == "cells.active_count")
+            .unwrap()
+            .id;
+        let validated = Validator::validate(&graph)
+            .validated
+            .expect("organism graph must validate");
+        let device = metal::Device::system_default().expect("Metal device");
+        let layer = metal::MetalLayer::new();
+        layer.set_device(&device);
+        layer.set_pixel_format(metal::MTLPixelFormat::BGRA8Unorm);
+        let mut state = RuntimeState::new(validated, device.clone(), layer).unwrap();
+        let result = state
+            .run_benchmark(
+                &device,
+                BenchmarkConfig {
+                    mode: BenchmarkMode::Headless,
+                    runner: BenchmarkRunner::LoomPlan,
+                    warmup_ticks: 0,
+                    sample_ticks: 300,
+                    ..BenchmarkConfig::default()
+                },
+            )
+            .expect("organism specimen must execute through Metal");
+
+        assert_eq!(result.sample_ticks, 300);
+        assert_eq!(result.particle_count, 16_384);
+        assert!(
+            result
+                .runtime
+                .shader_hashes
+                .iter()
+                .any(|shader| { shader.source_path == "kernels/organism.metal" })
+        );
+
+        let readback = device.new_buffer(
+            std::mem::size_of::<u32>() as u64,
+            metal::MTLResourceOptions::StorageModeShared,
+        );
+        let command_buffer = state.queue.new_command_buffer();
+        let blit = command_buffer.new_blit_command_encoder();
+        blit.copy_from_buffer(
+            &state.stream_buffers[count.0 as usize][0],
+            0,
+            &readback,
+            0,
+            std::mem::size_of::<u32>() as u64,
+        );
+        blit.end_encoding();
+        command_buffer.commit();
+        command_buffer.wait_until_completed();
+        let active_count = unsafe { *(readback.contents().cast::<u32>()) };
+        assert!(
+            active_count > 1,
+            "the organizer should have produced at least one daughter"
         );
     }
 

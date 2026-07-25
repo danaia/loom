@@ -1,4 +1,10 @@
-use loom_core::conformance::{HelloParticleConfig, hello_batch_builder, hello_particle_builder};
+use loom_core::{
+    conformance::{
+        HelloParticleConfig, hello_batch_builder, hello_field_builder, hello_particle_builder,
+        hello_population_builder,
+    },
+    hello_organism_builder,
+};
 use loom_metal::{BenchmarkConfig, BenchmarkMode, BenchmarkRunner, MetalRuntime};
 use loom_validator::Validator;
 
@@ -20,11 +26,23 @@ fn run() -> Result<(), loom_metal::RuntimeDiagnostic> {
             let (count, benchmark) = parse_batch_arguments(&arguments[1..])?;
             (hello_batch_builder(count), benchmark)
         }
+        Some("population") => {
+            let (capacity, benchmark) = parse_experiment_arguments(&arguments[1..], 16_384)?;
+            (hello_population_builder(capacity, 1), benchmark)
+        }
+        Some("field") => {
+            let (_, benchmark) = parse_experiment_arguments(&arguments[1..], 1)?;
+            (hello_field_builder(), benchmark)
+        }
+        Some("organism") => {
+            let (capacity, benchmark) = parse_experiment_arguments(&arguments[1..], 16_384)?;
+            (hello_organism_builder(capacity), benchmark)
+        }
         Some(other) => {
             return Err(loom_metal::RuntimeDiagnostic {
                 code: loom_metal::RuntimeDiagnosticCode::UnsupportedGraph,
                 message: format!(
-                    "unknown experiment `{other}`; expected `particle` or `batch [COUNT]`"
+                    "unknown experiment `{other}`; expected `particle`, `batch [COUNT]`, `population [CAPACITY]`, `field`, or `organism [CAPACITY]`"
                 ),
                 semantic_path: None,
             });
@@ -62,6 +80,13 @@ fn run() -> Result<(), loom_metal::RuntimeDiagnostic> {
 fn parse_batch_arguments(
     arguments: &[String],
 ) -> Result<(u32, Option<BenchmarkConfig>), loom_metal::RuntimeDiagnostic> {
+    parse_experiment_arguments(arguments, 1_000)
+}
+
+fn parse_experiment_arguments(
+    arguments: &[String],
+    default_count: u32,
+) -> Result<(u32, Option<BenchmarkConfig>), loom_metal::RuntimeDiagnostic> {
     let mut index = 0;
     let count = if arguments
         .first()
@@ -70,7 +95,7 @@ fn parse_batch_arguments(
         index += 1;
         parse_count(&arguments[0])?
     } else {
-        1_000
+        default_count
     };
     let mut benchmark: Option<BenchmarkConfig> = None;
     while index < arguments.len() {
@@ -155,7 +180,7 @@ fn parse_batch_arguments(
             }
             other => {
                 return Err(argument_error(format!(
-                    "unknown batch option `{other}`; use `--bench [headless|rendered|presented]`, `--runner [loom|direct-metal]`, `--pace HZ`, `--pace-lead-us N`, `--warmup N`, `--samples N`, `--warmup-seconds N`, or `--duration-seconds N`"
+                    "unknown experiment option `{other}`; use `--bench [headless|rendered|presented]`, `--runner [loom|direct-metal]`, `--pace HZ`, `--pace-lead-us N`, `--warmup N`, `--samples N`, `--warmup-seconds N`, or `--duration-seconds N`"
                 )));
             }
         }
@@ -207,7 +232,7 @@ fn argument_error(message: String) -> loom_metal::RuntimeDiagnostic {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_batch_arguments, parse_count};
+    use super::{parse_batch_arguments, parse_count, parse_experiment_arguments};
     use loom_metal::{BenchmarkMode, BenchmarkRunner};
 
     #[test]
@@ -251,5 +276,13 @@ mod tests {
         assert_eq!(benchmark.runner, BenchmarkRunner::DirectMetalEncoding);
         assert_eq!(benchmark.pacing_hz, Some(120));
         assert_eq!(benchmark.pacing_lead_microseconds, 2_000);
+    }
+
+    #[test]
+    fn emergent_experiments_use_their_declared_default_capacity() {
+        let arguments = ["--bench", "headless", "--samples", "300"].map(str::to_owned);
+        let (capacity, benchmark) = parse_experiment_arguments(&arguments, 16_384).unwrap();
+        assert_eq!(capacity, 16_384);
+        assert_eq!(benchmark.unwrap().sample_ticks, 300);
     }
 }

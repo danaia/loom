@@ -193,7 +193,6 @@ impl ModuleBuilder {
                             resolve(&schedule_ids, schedule, "schedules", &mut diagnostics)?;
                         ValueKind::ScheduleFixedDt { schedule }
                     }
-                    ValueDraftKind::DynamicCounter => ValueKind::DynamicCounter,
                 };
                 Some(ValueNode {
                     id: value_ids[&draft.name],
@@ -211,9 +210,9 @@ impl ModuleBuilder {
             .map(|draft| {
                 let length = match &draft.length {
                     StreamLengthDraft::Fixed(length) => StreamLength::Fixed(*length),
-                    StreamLengthDraft::Dynamic(value) => {
-                        let value = resolve(&value_ids, value, "values", &mut diagnostics)?;
-                        StreamLength::Dynamic(value)
+                    StreamLengthDraft::Dynamic(count) => {
+                        let count = resolve(&stream_ids, count, "streams", &mut diagnostics)?;
+                        StreamLength::Dynamic(count)
                     }
                 };
                 Some(StreamNode {
@@ -226,6 +225,9 @@ impl ModuleBuilder {
                     buffering: draft.buffering,
                     storage: draft.storage.clone(),
                     access: draft.access.clone(),
+                    write_authority: draft.write_authority.as_ref().and_then(|name| {
+                        resolve(&capability_ids, name, "capabilities", &mut diagnostics)
+                    }),
                     initial: draft.initial.clone(),
                 })
             })
@@ -292,6 +294,7 @@ impl ModuleBuilder {
                         name: slot.name,
                         resource_type: slot.resource_type,
                         access: slot.access,
+                        indexing: slot.indexing,
                     })
                     .collect();
                 slot_maps.insert(kernel_id, slot_ids);
@@ -355,6 +358,13 @@ impl ModuleBuilder {
                     kernel,
                     bindings,
                     dispatch,
+                    capabilities: draft
+                        .capabilities
+                        .iter()
+                        .filter_map(|name| {
+                            resolve(&capability_ids, name, "capabilities", &mut diagnostics)
+                        })
+                        .collect(),
                 })
             })
             .collect::<Vec<_>>();
@@ -538,11 +548,42 @@ impl ModuleBuilder {
                     })
                     .collect::<Vec<_>>();
                 sort_serializable(&mut expectations);
+                let mut interventions = draft
+                    .interventions
+                    .iter()
+                    .filter_map(|intervention| {
+                        let pass =
+                            resolve(&pass_ids, &intervention.pass, "passes", &mut diagnostics)?;
+                        let mut value_overrides = intervention
+                            .value_overrides
+                            .iter()
+                            .filter_map(|override_| {
+                                Some(ScenarioValueOverride {
+                                    value: resolve(
+                                        &value_ids,
+                                        &override_.value,
+                                        "values",
+                                        &mut diagnostics,
+                                    )?,
+                                    literal: override_.literal.clone(),
+                                })
+                            })
+                            .collect::<Vec<_>>();
+                        value_overrides.sort_by_key(|override_| override_.value);
+                        Some(ScenarioIntervention {
+                            tick: intervention.tick,
+                            pass,
+                            value_overrides,
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                interventions.sort_by_key(|intervention| (intervention.tick, intervention.pass));
                 Some(ScenarioNode {
                     id: scenario_ids[&draft.name],
                     name: draft.name.clone(),
                     schedule,
                     duration: ScenarioDuration::SimulationTicks(draft.duration_ticks),
+                    interventions,
                     expectations,
                 })
             })
@@ -606,6 +647,30 @@ impl ModuleBuilder {
                         streams.dedup();
                         CapabilityKind::HostMutate { streams }
                     }
+                    CapabilityDraftKind::StateMutate { streams } => {
+                        let mut streams = streams
+                            .iter()
+                            .filter_map(|name| {
+                                resolve(&stream_ids, name, "streams", &mut diagnostics)
+                            })
+                            .collect::<Vec<_>>();
+                        streams.sort();
+                        streams.dedup();
+                        CapabilityKind::StateMutate { streams }
+                    }
+                    CapabilityDraftKind::MembershipMutate { count, members } => {
+                        let count = resolve(&stream_ids, count, "streams", &mut diagnostics)
+                            .unwrap_or(StreamId(u32::MAX));
+                        let mut members = members
+                            .iter()
+                            .filter_map(|name| {
+                                resolve(&stream_ids, name, "streams", &mut diagnostics)
+                            })
+                            .collect::<Vec<_>>();
+                        members.sort();
+                        members.dedup();
+                        CapabilityKind::MembershipMutate { count, members }
+                    }
                     CapabilityDraftKind::External { name } => {
                         CapabilityKind::External { name: name.clone() }
                     }
@@ -624,7 +689,7 @@ impl ModuleBuilder {
         }
 
         Ok(ModuleGraph {
-            schema_version: 1,
+            schema_version: 2,
             name: self.name,
             target: self.target,
             resources: ResourceGraph {
@@ -665,22 +730,12 @@ impl ValueDraft {
             kind: ValueDraftKind::Constant(value),
         }
     }
-
-    pub fn dynamic_counter(name: impl Into<String>) -> Self {
-        Self {
-            name: name.into(),
-            data_type: DataType::u32(),
-            unit: Unit::DIMENSIONLESS,
-            kind: ValueDraftKind::DynamicCounter,
-        }
-    }
 }
 
 #[derive(Clone, Debug)]
 pub enum ValueDraftKind {
     Constant(Literal),
     ScheduleFixedDt(String),
-    DynamicCounter,
 }
 
 #[derive(Clone, Debug)]
@@ -693,6 +748,7 @@ pub struct StreamDraft {
     pub buffering: u32,
     pub storage: StorageClass,
     pub access: ResourceAccess,
+    pub write_authority: Option<String>,
     pub initial: Option<StreamInitializer>,
 }
 
@@ -707,6 +763,7 @@ impl StreamDraft {
             buffering: 1,
             storage: StorageClass::DevicePrivate,
             access: ResourceAccess::DeviceReadWrite,
+            write_authority: None,
             initial: None,
         }
     }
@@ -721,8 +778,8 @@ impl StreamDraft {
         self
     }
 
-    pub fn dynamic_length(mut self, value: impl Into<String>) -> Self {
-        self.length = StreamLengthDraft::Dynamic(value.into());
+    pub fn dynamic_length(mut self, count_stream: impl Into<String>) -> Self {
+        self.length = StreamLengthDraft::Dynamic(count_stream.into());
         self
     }
 
@@ -738,6 +795,11 @@ impl StreamDraft {
 
     pub fn access(mut self, access: ResourceAccess) -> Self {
         self.access = access;
+        self
+    }
+
+    pub fn write_authority(mut self, capability: impl Into<String>) -> Self {
+        self.write_authority = Some(capability.into());
         self
     }
 
@@ -786,6 +848,7 @@ pub struct SlotDraft {
     pub name: String,
     pub resource_type: SlotResourceType,
     pub access: SlotAccess,
+    pub indexing: StreamIndexing,
 }
 
 impl SlotDraft {
@@ -799,6 +862,7 @@ impl SlotDraft {
             name: name.into(),
             resource_type: SlotResourceType::Stream { element_type, unit },
             access,
+            indexing: StreamIndexing::PerInvocation,
         }
     }
 
@@ -807,7 +871,13 @@ impl SlotDraft {
             name: name.into(),
             resource_type: SlotResourceType::Value { data_type, unit },
             access: SlotAccess::Read,
+            indexing: StreamIndexing::WholeResource,
         }
+    }
+
+    pub fn whole_resource(mut self) -> Self {
+        self.indexing = StreamIndexing::WholeResource;
+        self
     }
 }
 
@@ -897,6 +967,20 @@ pub fn metal_implementation(
         backend: Backend::Metal,
         source: source.into(),
         entry: entry.into(),
+        source_text: None,
+    }
+}
+
+pub fn packaged_metal_implementation(
+    source: impl Into<String>,
+    entry: impl Into<String>,
+    source_text: impl Into<String>,
+) -> BackendImplementation {
+    BackendImplementation {
+        backend: Backend::Metal,
+        source: source.into(),
+        entry: entry.into(),
+        source_text: Some(source_text.into()),
     }
 }
 
@@ -906,6 +990,7 @@ pub struct PassDraft {
     pub kernel: String,
     pub bindings: Vec<BindingDraft>,
     pub dispatch: DispatchDraft,
+    pub capabilities: Vec<String>,
 }
 
 impl PassDraft {
@@ -915,6 +1000,7 @@ impl PassDraft {
             kernel: kernel.into(),
             bindings: Vec::new(),
             dispatch: DispatchDraft::Fixed(1),
+            capabilities: Vec::new(),
         }
     }
 
@@ -928,6 +1014,11 @@ impl PassDraft {
 
     pub fn dispatch_over(mut self, stream: impl Into<String>) -> Self {
         self.dispatch = DispatchDraft::OverStream(stream.into());
+        self
+    }
+
+    pub fn grant(mut self, capability: impl Into<String>) -> Self {
+        self.capabilities.push(capability.into());
         self
     }
 }
@@ -1156,6 +1247,7 @@ pub struct ScenarioDraft {
     pub name: String,
     pub schedule: String,
     pub duration_ticks: u64,
+    pub interventions: Vec<ScenarioInterventionDraft>,
     pub expectations: Vec<ScenarioExpectationDraft>,
 }
 
@@ -1165,6 +1257,7 @@ impl ScenarioDraft {
             name: name.into(),
             schedule: schedule.into(),
             duration_ticks,
+            interventions: Vec::new(),
             expectations: Vec::new(),
         }
     }
@@ -1176,6 +1269,39 @@ impl ScenarioDraft {
         });
         self
     }
+
+    pub fn intervene(
+        mut self,
+        tick: u64,
+        pass: impl Into<String>,
+        value_overrides: impl IntoIterator<Item = (impl Into<String>, Literal)>,
+    ) -> Self {
+        self.interventions.push(ScenarioInterventionDraft {
+            tick,
+            pass: pass.into(),
+            value_overrides: value_overrides
+                .into_iter()
+                .map(|(value, literal)| ScenarioValueOverrideDraft {
+                    value: value.into(),
+                    literal,
+                })
+                .collect(),
+        });
+        self
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct ScenarioInterventionDraft {
+    pub tick: u64,
+    pub pass: String,
+    pub value_overrides: Vec<ScenarioValueOverrideDraft>,
+}
+
+#[derive(Clone, Debug)]
+pub struct ScenarioValueOverrideDraft {
+    pub value: String,
+    pub literal: Literal,
 }
 
 #[derive(Clone, Debug)]
@@ -1237,6 +1363,37 @@ impl CapabilityDraft {
             },
         }
     }
+
+    pub fn membership_mutate<I, S>(
+        name: impl Into<String>,
+        count: impl Into<String>,
+        members: I,
+    ) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        Self {
+            name: name.into(),
+            kind: CapabilityDraftKind::MembershipMutate {
+                count: count.into(),
+                members: members.into_iter().map(Into::into).collect(),
+            },
+        }
+    }
+
+    pub fn state_mutate<I, S>(name: impl Into<String>, streams: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        Self {
+            name: name.into(),
+            kind: CapabilityDraftKind::StateMutate {
+                streams: streams.into_iter().map(Into::into).collect(),
+            },
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -1248,6 +1405,13 @@ pub enum CapabilityDraftKind {
     },
     HostMutate {
         streams: Vec<String>,
+    },
+    StateMutate {
+        streams: Vec<String>,
+    },
+    MembershipMutate {
+        count: String,
+        members: Vec<String>,
     },
     External {
         name: String,

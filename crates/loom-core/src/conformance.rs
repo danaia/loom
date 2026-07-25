@@ -373,3 +373,407 @@ pub fn hello_particle_builder(config: HelloParticleConfig) -> ModuleBuilder {
             SnapshotSemantics::NextGpuCompletedTickAfterRequest,
         ))
 }
+
+/// First emergent-systems substrate specimen: a GPU-resident dynamic population
+/// whose active length is a mutable stream and whose committed state is protected
+/// by explicit mutation authority.
+pub fn hello_population_builder(capacity: u32, initial_count: u32) -> ModuleBuilder {
+    assert!(capacity > 0);
+    assert!(initial_count <= capacity);
+    const SOURCE: &str = r#"
+#include <metal_stdlib>
+using namespace metal;
+kernel void population_age(
+    device uint* age [[buffer(0)]],
+    uint index [[thread_position_in_grid]])
+{
+    age[index] += 1;
+}
+
+kernel void population_reset_age(
+    device uint* age [[buffer(0)]],
+    constant uint& reset_age [[buffer(1)]],
+    uint index [[thread_position_in_grid]])
+{
+    age[index] = reset_age;
+}
+"#;
+
+    ModuleBuilder::new("hello_population")
+        .target(Target::Metal)
+        .value(ValueDraft::constant(
+            "population.reset_age",
+            DataType::u32(),
+            Unit::DIMENSIONLESS,
+            Literal::U32(0),
+        ))
+        .stream(
+            StreamDraft::new(
+                "population.active_count",
+                DataType::u32(),
+                Unit::DIMENSIONLESS,
+            )
+            .capacity(1)
+            .length(1)
+            .write_authority("mutate_population_membership")
+            .initial(Literal::Array(vec![Literal::U32(initial_count)])),
+        )
+        .stream(
+            StreamDraft::new("population.age", DataType::u32(), Unit::DIMENSIONLESS)
+                .capacity(capacity)
+                .dynamic_length("population.active_count")
+                .write_authority("mutate_population_state")
+                .initial_repeat(Literal::U32(0), initial_count),
+        )
+        .kernel(
+            KernelDraft::new("population_age")
+                .slot(SlotDraft::stream(
+                    "age",
+                    DataType::u32(),
+                    Unit::DIMENSIONLESS,
+                    SlotAccess::ReadWrite,
+                ))
+                .abi(KernelAbiDraft::new(["age"]))
+                .implementation(packaged_metal_implementation(
+                    "loom://specimens/hello_population.metal",
+                    "population_age",
+                    SOURCE,
+                )),
+        )
+        .kernel(
+            KernelDraft::new("population_reset_age")
+                .slot(SlotDraft::stream(
+                    "age",
+                    DataType::u32(),
+                    Unit::DIMENSIONLESS,
+                    SlotAccess::Write,
+                ))
+                .slot(SlotDraft::value(
+                    "reset_age",
+                    DataType::u32(),
+                    Unit::DIMENSIONLESS,
+                ))
+                .abi(KernelAbiDraft::new(["age", "reset_age"]))
+                .implementation(packaged_metal_implementation(
+                    "loom://specimens/hello_population.metal",
+                    "population_reset_age",
+                    SOURCE,
+                )),
+        )
+        .pass(
+            PassDraft::new("age_population", "population_age")
+                .bind("age", "population.age")
+                .dispatch_over("population.age")
+                .grant("mutate_population_state"),
+        )
+        .pass(
+            PassDraft::new("reset_population_age", "population_reset_age")
+                .bind("age", "population.age")
+                .bind("reset_age", "population.reset_age")
+                .dispatch_over("population.age")
+                .grant("mutate_population_state"),
+        )
+        .schedule(
+            ScheduleDraft::fixed("simulation", 120)
+                .run("age_population")
+                .tick_overlap(TickOverlapPolicy::QueueOrderedReuse)
+                .presentation_lifetime(PresentationLifetimePolicy::QueueOrderedReuse)
+                .queue_model(QueueModel::SingleSerialQueue),
+        )
+        .contract(ContractDraft::new("logical_replay", "simulation").clause(
+            ContractClauseDraft::Determinism(DeterminismContract {
+                tier: DeterminismTier::Tier1,
+                scope: DeterminismScope::ExactExecutionFingerprint,
+            }),
+        ))
+        .scenario(
+            ScenarioDraft::new("recorded_reset", "simulation", 2).intervene(
+                1,
+                "reset_population_age",
+                [("population.reset_age", Literal::U32(42))],
+            ),
+        )
+        .capability(CapabilityDraft::membership_mutate(
+            "mutate_population_membership",
+            "population.active_count",
+            ["population.age"],
+        ))
+        .capability(CapabilityDraft::state_mutate(
+            "mutate_population_state",
+            ["population.age"],
+        ))
+}
+
+/// Independent deterministic field-computation specimen.
+pub fn hello_field_builder() -> ModuleBuilder {
+    const WIDTH: u32 = 256;
+    const CELL_COUNT: u32 = WIDTH * WIDTH;
+    const SOURCE: &str = r#"
+#include <metal_stdlib>
+using namespace metal;
+
+kernel void clear_deposit(
+    device uint* deposit [[buffer(0)]],
+    uint index [[thread_position_in_grid]])
+{
+    deposit[index] = 0;
+}
+
+kernel void seed_deposit(
+    device uint* deposit [[buffer(0)]],
+    constant uint& width [[buffer(1)]],
+    uint index [[thread_position_in_grid]])
+{
+    if (index == 0) {
+        deposit[(width / 2) * width + width / 2] = 65536;
+    }
+}
+
+kernel void diffuse_reflective(
+    const device float* current [[buffer(0)]],
+    const device uint* deposit [[buffer(1)]],
+    device float* next [[buffer(2)]],
+    constant float& alpha [[buffer(3)]],
+    constant float& decay [[buffer(4)]],
+    constant float& maximum [[buffer(5)]],
+    constant uint& width [[buffer(6)]],
+    uint index [[thread_position_in_grid]])
+{
+    const uint x = index % width;
+    const uint y = index / width;
+    const uint left_x = x == 0 ? 0 : x - 1;
+    const uint right_x = x + 1 == width ? x : x + 1;
+    const uint down_y = y == 0 ? 0 : y - 1;
+    const uint up_y = y + 1 == width ? y : y + 1;
+    const float center = current[index];
+    const float laplacian =
+        current[y * width + left_x] +
+        current[y * width + right_x] +
+        current[down_y * width + x] +
+        current[up_y * width + x] -
+        4.0f * center;
+    const float source = float(deposit[index]) / 65536.0f;
+    next[index] = clamp(
+        center + alpha * laplacian - decay * center + source,
+        0.0f,
+        maximum);
+}
+
+kernel void commit_field(
+    device float* current [[buffer(0)]],
+    const device float* next [[buffer(1)]],
+    uint index [[thread_position_in_grid]])
+{
+    current[index] = next[index];
+}
+"#;
+
+    let mut builder = ModuleBuilder::new("hello_field")
+        .target(Target::Metal)
+        .value(ValueDraft::constant(
+            "field.alpha",
+            DataType::f32(),
+            Unit::DIMENSIONLESS,
+            Literal::f32(0.2),
+        ))
+        .value(ValueDraft::constant(
+            "field.decay",
+            DataType::f32(),
+            Unit::DIMENSIONLESS,
+            Literal::f32(0.001),
+        ))
+        .value(ValueDraft::constant(
+            "field.maximum",
+            DataType::f32(),
+            Unit::DIMENSIONLESS,
+            Literal::f32(16.0),
+        ))
+        .value(ValueDraft::constant(
+            "field.width",
+            DataType::u32(),
+            Unit::DIMENSIONLESS,
+            Literal::U32(WIDTH),
+        ));
+    for (name, data_type, protected) in [
+        ("field.activator", DataType::f32(), true),
+        ("field.activator_next", DataType::f32(), true),
+        ("field.deposit_q16", DataType::u32(), false),
+    ] {
+        let mut stream = StreamDraft::new(name, data_type, Unit::DIMENSIONLESS)
+            .capacity(CELL_COUNT)
+            .length(CELL_COUNT)
+            .initial_repeat(
+                if name.ends_with("q16") {
+                    Literal::U32(0)
+                } else {
+                    Literal::f32(0.0)
+                },
+                CELL_COUNT,
+            );
+        if protected {
+            stream = stream.write_authority("mutate_field_state");
+        }
+        builder = builder.stream(stream);
+    }
+    builder
+        .kernel(
+            KernelDraft::new("clear_deposit")
+                .slot(SlotDraft::stream(
+                    "deposit",
+                    DataType::u32(),
+                    Unit::DIMENSIONLESS,
+                    SlotAccess::Write,
+                ))
+                .abi(KernelAbiDraft::new(["deposit"]))
+                .implementation(packaged_metal_implementation(
+                    "loom://specimens/hello_field.metal",
+                    "clear_deposit",
+                    SOURCE,
+                )),
+        )
+        .kernel(
+            KernelDraft::new("seed_deposit")
+                .slot(
+                    SlotDraft::stream(
+                        "deposit",
+                        DataType::u32(),
+                        Unit::DIMENSIONLESS,
+                        SlotAccess::Write,
+                    )
+                    .whole_resource(),
+                )
+                .slot(SlotDraft::value(
+                    "width",
+                    DataType::u32(),
+                    Unit::DIMENSIONLESS,
+                ))
+                .abi(KernelAbiDraft::new(["deposit", "width"]))
+                .implementation(packaged_metal_implementation(
+                    "loom://specimens/hello_field.metal",
+                    "seed_deposit",
+                    SOURCE,
+                )),
+        )
+        .kernel(
+            KernelDraft::new("diffuse_reflective")
+                .slot(SlotDraft::stream(
+                    "current",
+                    DataType::f32(),
+                    Unit::DIMENSIONLESS,
+                    SlotAccess::Read,
+                ))
+                .slot(SlotDraft::stream(
+                    "deposit",
+                    DataType::u32(),
+                    Unit::DIMENSIONLESS,
+                    SlotAccess::Read,
+                ))
+                .slot(SlotDraft::stream(
+                    "next",
+                    DataType::f32(),
+                    Unit::DIMENSIONLESS,
+                    SlotAccess::Write,
+                ))
+                .slot(SlotDraft::value(
+                    "alpha",
+                    DataType::f32(),
+                    Unit::DIMENSIONLESS,
+                ))
+                .slot(SlotDraft::value(
+                    "decay",
+                    DataType::f32(),
+                    Unit::DIMENSIONLESS,
+                ))
+                .slot(SlotDraft::value(
+                    "maximum",
+                    DataType::f32(),
+                    Unit::DIMENSIONLESS,
+                ))
+                .slot(SlotDraft::value(
+                    "width",
+                    DataType::u32(),
+                    Unit::DIMENSIONLESS,
+                ))
+                .abi(KernelAbiDraft::new([
+                    "current", "deposit", "next", "alpha", "decay", "maximum", "width",
+                ]))
+                .implementation(packaged_metal_implementation(
+                    "loom://specimens/hello_field.metal",
+                    "diffuse_reflective",
+                    SOURCE,
+                )),
+        )
+        .kernel(
+            KernelDraft::new("commit_field")
+                .slot(SlotDraft::stream(
+                    "current",
+                    DataType::f32(),
+                    Unit::DIMENSIONLESS,
+                    SlotAccess::Write,
+                ))
+                .slot(SlotDraft::stream(
+                    "next",
+                    DataType::f32(),
+                    Unit::DIMENSIONLESS,
+                    SlotAccess::Read,
+                ))
+                .abi(KernelAbiDraft::new(["current", "next"]))
+                .implementation(packaged_metal_implementation(
+                    "loom://specimens/hello_field.metal",
+                    "commit_field",
+                    SOURCE,
+                )),
+        )
+        .pass(
+            PassDraft::new("clear_deposits", "clear_deposit")
+                .bind("deposit", "field.deposit_q16")
+                .dispatch_over("field.deposit_q16"),
+        )
+        .pass(
+            PassDraft::new("seed", "seed_deposit")
+                .bind("deposit", "field.deposit_q16")
+                .bind("width", "field.width"),
+        )
+        .pass(
+            PassDraft::new("diffuse", "diffuse_reflective")
+                .bind("current", "field.activator")
+                .bind("deposit", "field.deposit_q16")
+                .bind("next", "field.activator_next")
+                .bind("alpha", "field.alpha")
+                .bind("decay", "field.decay")
+                .bind("maximum", "field.maximum")
+                .bind("width", "field.width")
+                .dispatch_over("field.activator")
+                .grant("mutate_field_state"),
+        )
+        .pass(
+            PassDraft::new("commit", "commit_field")
+                .bind("current", "field.activator")
+                .bind("next", "field.activator_next")
+                .dispatch_over("field.activator")
+                .grant("mutate_field_state"),
+        )
+        .schedule(
+            ScheduleDraft::fixed("simulation", 120)
+                .run("clear_deposits")
+                .run_after("seed", "clear_deposits")
+                .run_after("diffuse", "seed")
+                .run_after("commit", "diffuse")
+                .tick_overlap(TickOverlapPolicy::QueueOrderedReuse)
+                .presentation_lifetime(PresentationLifetimePolicy::QueueOrderedReuse)
+                .queue_model(QueueModel::SingleSerialQueue),
+        )
+        .contract(ContractDraft::new("field_finite", "simulation").clause(
+            ContractClauseDraft::Invariant {
+                observation: ObservationDraft::AfterTickExecution("simulation".to_owned()),
+                predicate: PredicateDraft::FiniteStreams(vec![
+                    "field.activator".to_owned(),
+                    "field.activator_next".to_owned(),
+                ]),
+            },
+        ))
+        .capability(CapabilityDraft::state_mutate(
+            "mutate_field_state",
+            ["field.activator", "field.activator_next"],
+        ))
+}
