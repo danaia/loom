@@ -182,6 +182,7 @@ Timing policy belongs to the schedule:
 schedule simulation fixed 120 Hz {
   catch_up at_most 4 ticks
   tick_overlap serialize_conflicting_ticks
+  presentation_lifetime block_next_tick_until_views_complete
   overload {
     preserve fixed_dt
     drop render

@@ -37,13 +37,33 @@ if [[ "${FIX_COUNT}" -ne 2 ]]; then
   exit 1
 fi
 
-FINGERPRINT="$(sed -n 's/^fingerprint: //p' "${RESULT_FILE}")"
-if [[ ! "${FINGERPRINT}" =~ ^[0-9a-f]{64}$ ]]; then
-  echo "Expected a 64-character SHA-256 graph fingerprint." >&2
+SOURCE_HASH="$(sed -n 's/^source_graph_hash: //p' "${RESULT_FILE}")"
+ARTIFACT_BEFORE="$(sed -n 's/^artifact_before_repair: //p' "${RESULT_FILE}")"
+REPAIR_COUNT="$(sed -n 's/^repair_edits: //p' "${RESULT_FILE}")"
+ARTIFACT_FINGERPRINT="$(sed -n 's/^artifact_fingerprint: //p' "${RESULT_FILE}")"
+
+if [[ ! "${SOURCE_HASH}" =~ ^[0-9a-f]{64}$ ]]; then
+  echo "Expected a 64-character normalized source-graph hash." >&2
+  exit 1
+fi
+
+if [[ "${ARTIFACT_BEFORE}" != "none" ]]; then
+  echo "Invalid graphs must not receive executable artifact fingerprints." >&2
+  exit 1
+fi
+
+if [[ "${REPAIR_COUNT}" -ne 2 ]]; then
+  echo "Expected one atomic plan containing two edits." >&2
+  exit 1
+fi
+
+if [[ ! "${ARTIFACT_FINGERPRINT}" =~ ^[0-9a-f]{64}$ ]]; then
+  echo "Expected a validated 64-character artifact fingerprint." >&2
   exit 1
 fi
 
 echo
-echo "Loom language milestone passed."
-echo "Graph fingerprint: ${FINGERPRINT}"
-echo "Verified: unsafe one-buffer/four-tick overlap produced two GraphEdit repairs."
+echo "Loom validator-hardening milestone passed."
+echo "Untrusted source graph: ${SOURCE_HASH}"
+echo "Validated artifact:     ${ARTIFACT_FINGERPRINT}"
+echo "Verified: invalid graphs receive no artifact identity; two edits applied atomically and revalidated."

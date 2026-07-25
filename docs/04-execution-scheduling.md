@@ -50,13 +50,7 @@ Every schedule selects one overlap policy:
 tick_overlap require_resource_versions
 ```
 
-Each stream written by the schedule needs at least:
-
-```text
-max(simulation ticks in flight, render frames in flight)
-```
-
-physical versions. Insufficient buffering is an error with a `SetStreamBuffering` graph edit.
+Each stream written by the schedule needs at least as many physical versions as overlapping simulation ticks. Insufficient buffering is an error with a `SetStreamBuffering` graph edit.
 
 ### Serialize conflicting ticks
 
@@ -75,7 +69,36 @@ tick_overlap queue_ordered_reuse
 queue proof single_serial_queue_completion
 ```
 
-Single-version reuse is legal only when the backend supplies a proof that conflicting commands and their presentation consumers complete in a safe serial order. Declaring queue reuse without the proof is an error.
+Single-version reuse is legal only when the backend supplies a proof that conflicting simulation commands complete in a safe serial order. Declaring queue reuse without the proof is an error.
+
+## Presentation Lifetime
+
+Tick serialization does not prove that a previous render has finished reading a mutable stream. Every schedule therefore selects a separate presentation-lifetime policy.
+
+### Require resource versions
+
+```loom
+presentation_lifetime require_resource_versions
+```
+
+Every mutable stream read by a view needs enough physical versions for the declared render frames in flight.
+
+### Block until presentation completes
+
+```loom
+presentation_lifetime block_next_tick_until_views_complete
+```
+
+The next conflicting simulation tick waits for the previous view's GPU reads to complete. Hello Particle uses this policy with `buffering 1`; its effective render concurrency is one even though two frames may be pending at the host boundary.
+
+### Queue-ordered presentation reuse
+
+```loom
+presentation_lifetime queue_ordered_reuse
+queue proof single_serial_queue_completion
+```
+
+This is legal only when the backend proves that view reads complete before the next conflicting writes on one serial queue.
 
 ## Kernel ABI
 

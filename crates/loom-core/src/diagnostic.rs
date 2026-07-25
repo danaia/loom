@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    ids::{PassId, ScheduleId, StreamId},
+    ids::{ScheduleId, StreamId},
     model::{ScheduleItemId, TickOverlapPolicy},
 };
 
@@ -9,8 +9,12 @@ use crate::{
 pub enum DiagnosticCode {
     DuplicateSymbol,
     UnknownSymbol,
+    InvalidReference,
+    InvalidNodeId,
     TypeMismatch,
     UnitMismatch,
+    InvalidLiteral,
+    InvalidInitialData,
     AccessViolation,
     CapacityExceeded,
     InvalidLogicalLength,
@@ -27,6 +31,9 @@ pub enum DiagnosticCode {
     MissingBackendImplementation,
     InvalidObservationPoint,
     InvalidViewState,
+    UnsafePresentationLifetime,
+    InvalidCapability,
+    InvalidMetricUnit,
     IncompatibleDeterminismScope,
     NondeterministicOverload,
     RenderDependencyAffectsSimulation,
@@ -57,28 +64,24 @@ impl SemanticPath {
 pub enum GraphEdit {
     SetStreamBuffering {
         stream: StreamId,
+        expected: u32,
         versions: u32,
     },
     SetScheduleSimulationTicksInFlight {
         schedule: ScheduleId,
+        expected: u32,
         ticks: u32,
     },
     SetTickOverlapPolicy {
         schedule: ScheduleId,
+        expected: TickOverlapPolicy,
         policy: TickOverlapPolicy,
     },
     AddCompletionDependency {
         schedule: ScheduleId,
         before: ScheduleItemId,
         after: ScheduleItemId,
-    },
-    BindMissingSlot {
-        pass: PassId,
-        slot_name: String,
-    },
-    RenameSymbol {
-        path: SemanticPath,
-        suggested_name: String,
+        expected_absent: bool,
     },
 }
 

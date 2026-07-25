@@ -1,19 +1,24 @@
 //! Independent deterministic validation passes for normalized Loom graphs.
 
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::{
+    collections::{BTreeMap, BTreeSet, VecDeque},
+    ops::Deref,
+};
 
 use loom_core::{
     AliasingRule, Backend, CanonicalGraph, ContractClause, DataType, DeterminismScope,
-    DeterminismTier, Diagnostic, DiagnosticCode, DispatchDomain, GraphEdit, KernelNode,
-    ModuleGraph, ObservationPoint, Predicate, QueueModel, RenderOverloadPolicy,
-    ReplayOverloadPolicy, ResourceId, ScenarioTimePolicy, ScheduleId, ScheduleItemId, SemanticPath,
-    SlotAccess, SlotResourceType, StreamId, StreamLength, TickOverlapPolicy, Unit, ValueKind,
-    ViewState, canonicalize,
+    DeterminismTier, Diagnostic, DiagnosticCode, DispatchDomain, GraphEdit, KernelNode, Literal,
+    ModuleGraph, ObservationPoint, Predicate, PresentationLifetimePolicy, QueueModel,
+    RenderOverloadPolicy, ReplayOverloadPolicy, ResourceId, ScenarioTimePolicy, ScheduleId,
+    ScheduleItemId, SemanticPath, SlotAccess, SlotResourceType, StreamId, StreamLength,
+    TickOverlapPolicy, Unit, ValueKind, ViewState, canonicalize,
 };
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ValidationPass {
-    Symbols,
+    StructuralReferences,
     TypesShapesAndUnits,
     ResourceAccess,
     CapacityLengthAndDispatch,
@@ -24,29 +29,156 @@ pub enum ValidationPass {
     BackendAbi,
     ObservationPoints,
     DeterminismAndOverload,
-    CanonicalFingerprint,
+    ValidatedArtifactFingerprint,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ScheduleOrder {
     pub schedule: ScheduleId,
     pub items: Vec<ScheduleItemId>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EffectiveConcurrency {
     pub schedule: ScheduleId,
     pub requested_ticks: u32,
     pub effective_ticks: u32,
+    pub requested_render_frames: u32,
+    pub effective_render_frames: u32,
     pub basis: ConcurrencyBasis,
+    pub presentation_basis: PresentationConcurrencyBasis,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ConcurrencyBasis {
     ResourceVersions,
     SerializedConflicts,
     ProvenSerialQueue,
     Invalid,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PresentationConcurrencyBasis {
+    ResourceVersions,
+    BlockUntilPresentationCompletes,
+    ProvenSerialQueue,
+    Invalid,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExecutionPlan {
+    pub schema_version: u32,
+    pub schedules: Vec<ExecutionSchedule>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExecutionSchedule {
+    pub schedule: ScheduleId,
+    pub order: Vec<ScheduleItemId>,
+    pub requested_ticks: u32,
+    pub effective_ticks: u32,
+    pub requested_render_frames: u32,
+    pub effective_render_frames: u32,
+}
+
+#[derive(Clone, Debug)]
+pub struct ValidatedModuleGraph {
+    graph: ModuleGraph,
+    execution_plan: ExecutionPlan,
+    artifact_fingerprint: String,
+}
+
+impl ValidatedModuleGraph {
+    pub fn graph(&self) -> &ModuleGraph {
+        &self.graph
+    }
+
+    pub fn execution_plan(&self) -> &ExecutionPlan {
+        &self.execution_plan
+    }
+
+    pub fn artifact_fingerprint(&self) -> &str {
+        &self.artifact_fingerprint
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RepairPlan {
+    pub source_graph_hash: String,
+    pub edits: Vec<GraphEdit>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RepairError {
+    SourceHashMismatch { expected: String, actual: String },
+    ExpectedValueMismatch { target: SemanticPath },
+    InvalidTarget { target: SemanticPath },
+    UnsupportedDependencyShape,
+    RevalidationFailed(Vec<Diagnostic>),
+}
+
+impl RepairPlan {
+    pub fn from_report(report: &ValidationReport) -> Option<Self> {
+        let mut stream_edits = BTreeMap::<StreamId, (u32, u32)>::new();
+        let mut other_edits = Vec::new();
+        for edit in report
+            .diagnostics
+            .iter()
+            .filter_map(|diagnostic| diagnostic.suggested_fix.clone())
+        {
+            match edit {
+                GraphEdit::SetStreamBuffering {
+                    stream,
+                    expected,
+                    versions,
+                } => {
+                    let entry = stream_edits.entry(stream).or_insert((expected, versions));
+                    entry.1 = entry.1.max(versions);
+                }
+                edit => other_edits.push(edit),
+            }
+        }
+        let mut edits = stream_edits
+            .into_iter()
+            .map(
+                |(stream, (expected, versions))| GraphEdit::SetStreamBuffering {
+                    stream,
+                    expected,
+                    versions,
+                },
+            )
+            .chain(other_edits)
+            .collect::<Vec<_>>();
+        edits.sort_by_cached_key(|edit| {
+            serde_json::to_vec(edit).expect("repair edit serialization")
+        });
+        (!edits.is_empty()).then(|| Self {
+            source_graph_hash: report.source_graph.fingerprint.clone(),
+            edits,
+        })
+    }
+
+    pub fn apply_and_validate(
+        &self,
+        graph: &ModuleGraph,
+    ) -> Result<ValidatedModuleGraph, RepairError> {
+        let actual_hash = canonicalize(graph).fingerprint;
+        if actual_hash != self.source_graph_hash {
+            return Err(RepairError::SourceHashMismatch {
+                expected: self.source_graph_hash.clone(),
+                actual: actual_hash,
+            });
+        }
+
+        let mut candidate = graph.clone();
+        for edit in &self.edits {
+            apply_edit(&mut candidate, edit)?;
+        }
+        let report = Validator::validate(&candidate);
+        report
+            .validated
+            .ok_or(RepairError::RevalidationFailed(report.diagnostics))
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -55,15 +187,19 @@ pub struct ValidationReport {
     pub diagnostics: Vec<Diagnostic>,
     pub topological_orders: Vec<ScheduleOrder>,
     pub effective_concurrency: Vec<EffectiveConcurrency>,
-    pub canonical: CanonicalGraph,
+    pub source_graph: CanonicalGraph,
+    pub validated: Option<ValidatedModuleGraph>,
 }
 
 impl ValidationReport {
     pub fn is_valid(&self) -> bool {
-        !self
-            .diagnostics
-            .iter()
-            .any(|diagnostic| diagnostic.severity == loom_core::Severity::Error)
+        self.validated.is_some()
+    }
+
+    pub fn artifact_fingerprint(&self) -> Option<&str> {
+        self.validated
+            .as_ref()
+            .map(ValidatedModuleGraph::artifact_fingerprint)
     }
 }
 
@@ -71,11 +207,27 @@ pub struct Validator;
 
 impl Validator {
     pub fn validate(graph: &ModuleGraph) -> ValidationReport {
+        let source_graph = canonicalize(graph);
         let mut diagnostics = Vec::new();
         let mut completed_passes = Vec::new();
 
-        validate_symbols(graph, &mut diagnostics);
-        completed_passes.push(ValidationPass::Symbols);
+        validate_structure(graph, &mut diagnostics);
+        completed_passes.push(ValidationPass::StructuralReferences);
+
+        if has_errors(&diagnostics) {
+            diagnostics
+                .sort_by_key(|diagnostic| (diagnostic.code.clone(), diagnostic.primary.clone()));
+            return ValidationReport {
+                completed_passes,
+                diagnostics,
+                topological_orders: Vec::new(),
+                effective_concurrency: Vec::new(),
+                source_graph,
+                validated: None,
+            };
+        }
+
+        let graph = CheckedGraph(graph);
 
         validate_types_shapes_units(graph, &mut diagnostics);
         completed_passes.push(ValidationPass::TypesShapesAndUnits);
@@ -107,8 +259,18 @@ impl Validator {
         validate_determinism_overload(graph, &mut diagnostics);
         completed_passes.push(ValidationPass::DeterminismAndOverload);
 
-        let canonical = canonicalize(graph);
-        completed_passes.push(ValidationPass::CanonicalFingerprint);
+        let execution_plan = build_execution_plan(&topological_orders, &effective_concurrency);
+        let validated = if has_errors(&diagnostics) {
+            None
+        } else {
+            let artifact_fingerprint = artifact_fingerprint(graph.0, &execution_plan);
+            Some(ValidatedModuleGraph {
+                graph: graph.0.clone(),
+                execution_plan,
+                artifact_fingerprint,
+            })
+        };
+        completed_passes.push(ValidationPass::ValidatedArtifactFingerprint);
 
         diagnostics.sort_by_key(|diagnostic| (diagnostic.code.clone(), diagnostic.primary.clone()));
 
@@ -117,12 +279,50 @@ impl Validator {
             diagnostics,
             topological_orders,
             effective_concurrency,
-            canonical,
+            source_graph,
+            validated,
         }
     }
 }
 
-fn validate_symbols(graph: &ModuleGraph, diagnostics: &mut Vec<Diagnostic>) {
+#[derive(Clone, Copy)]
+struct CheckedGraph<'a>(&'a ModuleGraph);
+
+impl<'a> CheckedGraph<'a> {
+    fn value(self, id: loom_core::ValueId) -> &'a loom_core::ValueNode {
+        &self.0.resources.values[id.0 as usize]
+    }
+
+    fn stream(self, id: StreamId) -> &'a loom_core::StreamNode {
+        &self.0.resources.streams[id.0 as usize]
+    }
+
+    fn kernel(self, id: loom_core::KernelId) -> &'a KernelNode {
+        &self.0.kernels[id.0 as usize]
+    }
+
+    fn pass(self, id: loom_core::PassId) -> &'a loom_core::PassNode {
+        &self.0.passes[id.0 as usize]
+    }
+
+    fn view(self, id: loom_core::ViewId) -> &'a loom_core::ViewNode {
+        &self.0.views[id.0 as usize]
+    }
+
+    fn schedule(self, id: ScheduleId) -> &'a loom_core::ScheduleNode {
+        &self.0.schedules[id.0 as usize]
+    }
+}
+
+impl Deref for CheckedGraph<'_> {
+    type Target = ModuleGraph;
+
+    fn deref(&self) -> &Self::Target {
+        self.0
+    }
+}
+
+fn validate_structure(graph: &ModuleGraph, diagnostics: &mut Vec<Diagnostic>) {
     check_ids_and_names(
         graph
             .resources
@@ -184,6 +384,362 @@ fn validate_symbols(graph: &ModuleGraph, diagnostics: &mut Vec<Diagnostic>) {
         "capabilities",
         diagnostics,
     );
+
+    for value in &graph.resources.values {
+        if let ValueKind::ScheduleFixedDt { schedule } = value.kind {
+            check_reference(
+                schedule.0,
+                graph.schedules.len(),
+                path("values", &value.name).child("schedule"),
+                "schedule",
+                diagnostics,
+            );
+        }
+    }
+    for stream in &graph.resources.streams {
+        if let StreamLength::Dynamic(value) = stream.length {
+            check_reference(
+                value.0,
+                graph.resources.values.len(),
+                path("streams", &stream.name).child("length"),
+                "value",
+                diagnostics,
+            );
+        }
+    }
+    for kernel in &graph.kernels {
+        check_ids_and_names(
+            kernel.slots.iter().map(|slot| (slot.id.0, &slot.name)),
+            &format!("kernels.{}.slots", kernel.name),
+            diagnostics,
+        );
+        for slot in &kernel.abi.binding_order {
+            check_reference(
+                slot.0,
+                kernel.slots.len(),
+                path("kernels", &kernel.name).child("abi.binding_order"),
+                "slot",
+                diagnostics,
+            );
+        }
+        if let AliasingRule::AllowPairs(pairs) = &kernel.abi.aliasing {
+            for (left, right) in pairs {
+                check_reference(
+                    left.0,
+                    kernel.slots.len(),
+                    path("kernels", &kernel.name).child("abi.aliasing"),
+                    "slot",
+                    diagnostics,
+                );
+                check_reference(
+                    right.0,
+                    kernel.slots.len(),
+                    path("kernels", &kernel.name).child("abi.aliasing"),
+                    "slot",
+                    diagnostics,
+                );
+            }
+        }
+    }
+    for pass in &graph.passes {
+        let pass_path = path("passes", &pass.name);
+        let kernel_valid = check_reference(
+            pass.kernel.0,
+            graph.kernels.len(),
+            pass_path.child("kernel"),
+            "kernel",
+            diagnostics,
+        );
+        for binding in &pass.bindings {
+            if kernel_valid {
+                check_reference(
+                    binding.slot.0,
+                    graph.kernels[pass.kernel.0 as usize].slots.len(),
+                    pass_path.child("bindings.slot"),
+                    "slot",
+                    diagnostics,
+                );
+            }
+            check_resource_reference(
+                binding.resource,
+                graph,
+                pass_path.child("bindings.resource"),
+                diagnostics,
+            );
+        }
+        if let DispatchDomain::OverStream(stream) = pass.dispatch {
+            check_reference(
+                stream.0,
+                graph.resources.streams.len(),
+                pass_path.child("dispatch"),
+                "stream",
+                diagnostics,
+            );
+        }
+    }
+    for view in &graph.views {
+        for read in &view.reads {
+            check_reference(
+                read.stream.0,
+                graph.resources.streams.len(),
+                path("views", &view.name).child(format!("reads.{}", read.name)),
+                "stream",
+                diagnostics,
+            );
+        }
+    }
+    for schedule in &graph.schedules {
+        let schedule_path = path("schedules", &schedule.name);
+        let loom_core::ScheduleTiming::Fixed { fixed_dt, .. } = schedule.timing;
+        check_reference(
+            fixed_dt.0,
+            graph.resources.values.len(),
+            schedule_path.child("fixed_dt"),
+            "value",
+            diagnostics,
+        );
+        for pass in &schedule.execution_passes {
+            check_reference(
+                pass.0,
+                graph.passes.len(),
+                schedule_path.child("execution_passes"),
+                "pass",
+                diagnostics,
+            );
+        }
+        for view in &schedule.presentation_views {
+            check_reference(
+                view.0,
+                graph.views.len(),
+                schedule_path.child("presentation_views"),
+                "view",
+                diagnostics,
+            );
+        }
+        for edge in &schedule.execution_dependencies {
+            check_reference(
+                edge.before.0,
+                graph.passes.len(),
+                schedule_path.child("execution_dependencies.before"),
+                "pass",
+                diagnostics,
+            );
+            check_reference(
+                edge.after.0,
+                graph.passes.len(),
+                schedule_path.child("execution_dependencies.after"),
+                "pass",
+                diagnostics,
+            );
+        }
+        for edge in &schedule.presentation_dependencies {
+            check_reference(
+                edge.producer.0,
+                graph.passes.len(),
+                schedule_path.child("presentation_dependencies.producer"),
+                "pass",
+                diagnostics,
+            );
+            check_reference(
+                edge.consumer.0,
+                graph.views.len(),
+                schedule_path.child("presentation_dependencies.consumer"),
+                "view",
+                diagnostics,
+            );
+        }
+    }
+    for contract in &graph.contracts {
+        let owner = path("contracts", &contract.name);
+        check_reference(
+            contract.schedule.0,
+            graph.schedules.len(),
+            owner.child("schedule"),
+            "schedule",
+            diagnostics,
+        );
+        for clause in &contract.clauses {
+            match clause {
+                ContractClause::Invariant {
+                    observation,
+                    predicate,
+                } => {
+                    check_observation_references(observation, graph, &owner, diagnostics);
+                    check_predicate_references(predicate, graph, &owner, diagnostics);
+                }
+                ContractClause::MetricLimit { observation, .. }
+                | ContractClause::SteadyStateZero { observation, .. } => {
+                    check_observation_references(observation, graph, &owner, diagnostics);
+                }
+                ContractClause::Determinism(_) => {}
+            }
+        }
+    }
+    for scenario in &graph.scenarios {
+        let owner = path("scenarios", &scenario.name);
+        check_reference(
+            scenario.schedule.0,
+            graph.schedules.len(),
+            owner.child("schedule"),
+            "schedule",
+            diagnostics,
+        );
+        for expectation in &scenario.expectations {
+            check_observation_references(&expectation.observation, graph, &owner, diagnostics);
+            check_predicate_references(&expectation.predicate, graph, &owner, diagnostics);
+        }
+    }
+    for benchmark in &graph.benchmarks {
+        check_reference(
+            benchmark.schedule.0,
+            graph.schedules.len(),
+            path("benchmarks", &benchmark.name).child("schedule"),
+            "schedule",
+            diagnostics,
+        );
+    }
+    for capability in &graph.capabilities {
+        let streams = match &capability.kind {
+            loom_core::CapabilityKind::Inspect { streams, .. }
+            | loom_core::CapabilityKind::HostMutate { streams } => streams.as_slice(),
+            loom_core::CapabilityKind::External { .. } => &[],
+        };
+        for stream in streams {
+            check_reference(
+                stream.0,
+                graph.resources.streams.len(),
+                path("capabilities", &capability.name).child("streams"),
+                "stream",
+                diagnostics,
+            );
+        }
+    }
+}
+
+fn check_reference(
+    id: u32,
+    len: usize,
+    primary: SemanticPath,
+    kind: &str,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> bool {
+    if (id as usize) < len {
+        true
+    } else {
+        diagnostics.push(Diagnostic::error(
+            DiagnosticCode::InvalidReference,
+            format!("{kind} ID {id} is outside 0..{len}"),
+            primary,
+        ));
+        false
+    }
+}
+
+fn check_resource_reference(
+    resource: ResourceId,
+    graph: &ModuleGraph,
+    primary: SemanticPath,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    match resource {
+        ResourceId::Value(value) => {
+            check_reference(
+                value.0,
+                graph.resources.values.len(),
+                primary,
+                "value",
+                diagnostics,
+            );
+        }
+        ResourceId::Stream(stream) => {
+            check_reference(
+                stream.0,
+                graph.resources.streams.len(),
+                primary,
+                "stream",
+                diagnostics,
+            );
+        }
+    }
+}
+
+fn check_observation_references(
+    observation: &ObservationPoint,
+    graph: &ModuleGraph,
+    owner: &SemanticPath,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    match observation {
+        ObservationPoint::AfterPassCompletion(pass) => {
+            check_reference(
+                pass.0,
+                graph.passes.len(),
+                owner.child("observation"),
+                "pass",
+                diagnostics,
+            );
+        }
+        ObservationPoint::AfterEveryPassCompletion(schedule)
+        | ObservationPoint::AfterTickExecution(schedule)
+        | ObservationPoint::AfterGpuCompletion(schedule) => {
+            check_reference(
+                schedule.0,
+                graph.schedules.len(),
+                owner.child("observation"),
+                "schedule",
+                diagnostics,
+            );
+        }
+    }
+}
+
+fn check_predicate_references(
+    predicate: &Predicate,
+    graph: &ModuleGraph,
+    owner: &SemanticPath,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    match predicate {
+        Predicate::FiniteStreams(streams) => {
+            for stream in streams {
+                check_reference(
+                    stream.0,
+                    graph.resources.streams.len(),
+                    owner.child("predicate"),
+                    "stream",
+                    diagnostics,
+                );
+            }
+        }
+        Predicate::GroundClearance {
+            position,
+            radius,
+            ground_height,
+            ..
+        } => {
+            check_reference(
+                position.0,
+                graph.resources.streams.len(),
+                owner.child("predicate.position"),
+                "stream",
+                diagnostics,
+            );
+            check_reference(
+                radius.0,
+                graph.resources.streams.len(),
+                owner.child("predicate.radius"),
+                "stream",
+                diagnostics,
+            );
+            check_reference(
+                ground_height.0,
+                graph.resources.values.len(),
+                owner.child("predicate.ground_height"),
+                "value",
+                diagnostics,
+            );
+        }
+    }
 }
 
 fn check_ids_and_names<'a>(
@@ -195,7 +751,7 @@ fn check_ids_and_names<'a>(
     for (expected, (actual, name)) in items.enumerate() {
         if actual != expected as u32 {
             diagnostics.push(Diagnostic::error(
-                DiagnosticCode::UnknownSymbol,
+                DiagnosticCode::InvalidNodeId,
                 format!("non-canonical ID {actual}; expected {expected}"),
                 path(scope, name),
             ));
@@ -210,7 +766,59 @@ fn check_ids_and_names<'a>(
     }
 }
 
-fn validate_types_shapes_units(graph: &ModuleGraph, diagnostics: &mut Vec<Diagnostic>) {
+fn validate_types_shapes_units(graph: CheckedGraph<'_>, diagnostics: &mut Vec<Diagnostic>) {
+    for value in &graph.resources.values {
+        if let ValueKind::Constant(literal) = &value.kind
+            && !literal_matches_type(literal, &value.data_type)
+        {
+            diagnostics.push(Diagnostic::error(
+                DiagnosticCode::InvalidLiteral,
+                format!(
+                    "constant literal does not match declared type {:?}",
+                    value.data_type
+                ),
+                path("values", &value.name).child("literal"),
+            ));
+        }
+    }
+    for stream in &graph.resources.streams {
+        if let Some(initial) = &stream.initial {
+            let Literal::Array(items) = initial else {
+                diagnostics.push(Diagnostic::error(
+                    DiagnosticCode::InvalidInitialData,
+                    "stream initial data must be an array",
+                    path("streams", &stream.name).child("initial"),
+                ));
+                continue;
+            };
+            let valid_length = match stream.length {
+                StreamLength::Fixed(length) => items.len() == length as usize,
+                StreamLength::Dynamic(_) => items.len() <= stream.capacity as usize,
+            };
+            if !valid_length || items.len() > stream.capacity as usize {
+                diagnostics.push(Diagnostic::error(
+                    DiagnosticCode::InvalidInitialData,
+                    format!(
+                        "initial element count {} is incompatible with length and capacity {}",
+                        items.len(),
+                        stream.capacity
+                    ),
+                    path("streams", &stream.name).child("initial"),
+                ));
+            }
+            if items
+                .iter()
+                .any(|literal| !literal_matches_type(literal, &stream.element_type))
+            {
+                diagnostics.push(Diagnostic::error(
+                    DiagnosticCode::InvalidInitialData,
+                    "one or more initial elements do not match the stream element type",
+                    path("streams", &stream.name).child("initial"),
+                ));
+            }
+        }
+    }
+
     for pass in &graph.passes {
         let kernel = graph.kernel(pass.kernel);
         for binding in &pass.bindings {
@@ -289,18 +897,17 @@ fn validate_types_shapes_units(graph: &ModuleGraph, diagnostics: &mut Vec<Diagno
 
     for contract in &graph.contracts {
         for clause in &contract.clauses {
-            if let ContractClause::Invariant {
-                predicate:
-                    Predicate::GroundClearance {
-                        position,
-                        radius,
-                        ground_height,
-                        tolerance,
-                    },
-                ..
-            } = clause
-            {
-                validate_ground_clearance(
+            match clause {
+                ContractClause::Invariant {
+                    predicate:
+                        Predicate::GroundClearance {
+                            position,
+                            radius,
+                            ground_height,
+                            tolerance,
+                        },
+                    ..
+                } => validate_ground_clearance(
                     graph,
                     *position,
                     *radius,
@@ -308,14 +915,130 @@ fn validate_types_shapes_units(graph: &ModuleGraph, diagnostics: &mut Vec<Diagno
                     tolerance.unit,
                     &format!("contracts.{}", contract.name),
                     diagnostics,
+                ),
+                ContractClause::MetricLimit {
+                    metric, maximum, ..
+                } => validate_metric_limit(
+                    metric,
+                    maximum,
+                    &format!("contracts.{}", contract.name),
+                    diagnostics,
+                ),
+                ContractClause::SteadyStateZero { metric, .. } => {
+                    if !matches!(
+                        metric,
+                        loom_core::Metric::HeapAllocationsPerTick
+                            | loom_core::Metric::ApplicationCopiesPerTick
+                            | loom_core::Metric::ApplicationBlitsPerTick
+                            | loom_core::Metric::OverloadEvents
+                    ) {
+                        diagnostics.push(Diagnostic::error(
+                            DiagnosticCode::InvalidMetricUnit,
+                            "this metric requires a typed limit rather than a zero-count clause",
+                            path("contracts", &contract.name).child("metric"),
+                        ));
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    for scenario in &graph.scenarios {
+        for expectation in &scenario.expectations {
+            if let Predicate::GroundClearance {
+                position,
+                radius,
+                ground_height,
+                tolerance,
+            } = &expectation.predicate
+            {
+                validate_ground_clearance(
+                    graph,
+                    *position,
+                    *radius,
+                    *ground_height,
+                    tolerance.unit,
+                    &format!("scenarios.{}", scenario.name),
+                    diagnostics,
                 );
             }
         }
     }
 }
 
+fn literal_matches_type(literal: &Literal, data_type: &DataType) -> bool {
+    match (literal, data_type) {
+        (Literal::Bool(_), DataType::Scalar(loom_core::ScalarType::Bool))
+        | (Literal::I32(_), DataType::Scalar(loom_core::ScalarType::I32))
+        | (Literal::U32(_), DataType::Scalar(loom_core::ScalarType::U32))
+        | (Literal::F16Bits(_), DataType::Scalar(loom_core::ScalarType::F16))
+        | (Literal::F32Bits(_), DataType::Scalar(loom_core::ScalarType::F32)) => true,
+        (Literal::Vector(items), DataType::Vector { scalar, lanes }) => {
+            items.len() == *lanes as usize
+                && items
+                    .iter()
+                    .all(|item| literal_matches_scalar(item, scalar))
+        }
+        (
+            Literal::Vector(items),
+            DataType::Matrix {
+                scalar,
+                rows,
+                columns,
+            },
+        ) => {
+            items.len() == (*rows as usize * *columns as usize)
+                && items
+                    .iter()
+                    .all(|item| literal_matches_scalar(item, scalar))
+        }
+        _ => false,
+    }
+}
+
+fn literal_matches_scalar(literal: &Literal, scalar: &loom_core::ScalarType) -> bool {
+    matches!(
+        (literal, scalar),
+        (Literal::Bool(_), loom_core::ScalarType::Bool)
+            | (Literal::I32(_), loom_core::ScalarType::I32)
+            | (Literal::U32(_), loom_core::ScalarType::U32)
+            | (Literal::F16Bits(_), loom_core::ScalarType::F16)
+            | (Literal::F32Bits(_), loom_core::ScalarType::F32)
+    )
+}
+
+fn validate_metric_limit(
+    metric: &loom_core::Metric,
+    maximum: &loom_core::Quantity,
+    primary: &str,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    let expected_unit = match metric {
+        loom_core::Metric::GpuTimePerTick => Unit::SECOND,
+        loom_core::Metric::HeapAllocationsPerTick
+        | loom_core::Metric::ApplicationCopiesPerTick
+        | loom_core::Metric::ApplicationBlitsPerTick
+        | loom_core::Metric::WorkingSetBytes
+        | loom_core::Metric::OverloadEvents => Unit::DIMENSIONLESS,
+    };
+    let same_dimension = maximum.unit.length == expected_unit.length
+        && maximum.unit.mass == expected_unit.mass
+        && maximum.unit.time == expected_unit.time;
+    let numeric = matches!(
+        maximum.value,
+        Literal::I32(_) | Literal::U32(_) | Literal::F16Bits(_) | Literal::F32Bits(_)
+    );
+    if !same_dimension || !numeric {
+        diagnostics.push(Diagnostic::error(
+            DiagnosticCode::InvalidMetricUnit,
+            format!("metric `{metric:?}` has an incompatible limit value or unit"),
+            SemanticPath::new(primary).child("metric_limit"),
+        ));
+    }
+}
+
 fn validate_ground_clearance(
-    graph: &ModuleGraph,
+    graph: CheckedGraph<'_>,
     position: StreamId,
     radius: StreamId,
     ground_height: loom_core::ValueId,
@@ -372,7 +1095,7 @@ fn mismatch(
     ));
 }
 
-fn validate_resource_access(graph: &ModuleGraph, diagnostics: &mut Vec<Diagnostic>) {
+fn validate_resource_access(graph: CheckedGraph<'_>, diagnostics: &mut Vec<Diagnostic>) {
     for pass in &graph.passes {
         let kernel = graph.kernel(pass.kernel);
         for binding in &pass.bindings {
@@ -407,9 +1130,49 @@ fn validate_resource_access(graph: &ModuleGraph, diagnostics: &mut Vec<Diagnosti
             }
         }
     }
+    for capability in &graph.capabilities {
+        match &capability.kind {
+            loom_core::CapabilityKind::Inspect { streams, .. } => {
+                if streams.is_empty() || has_duplicates(streams) {
+                    diagnostics.push(Diagnostic::error(
+                        DiagnosticCode::InvalidCapability,
+                        "inspection capability requires a nonempty unique stream set",
+                        path("capabilities", &capability.name).child("streams"),
+                    ));
+                }
+            }
+            loom_core::CapabilityKind::HostMutate { streams } => {
+                if streams.is_empty()
+                    || has_duplicates(streams)
+                    || streams.iter().any(|stream| {
+                        graph.stream(*stream).access != loom_core::ResourceAccess::HostReadWrite
+                    })
+                {
+                    diagnostics.push(Diagnostic::error(
+                        DiagnosticCode::InvalidCapability,
+                        "host mutation requires unique HostReadWrite streams",
+                        path("capabilities", &capability.name).child("streams"),
+                    ));
+                }
+            }
+            loom_core::CapabilityKind::External { name } if name.trim().is_empty() => {
+                diagnostics.push(Diagnostic::error(
+                    DiagnosticCode::InvalidCapability,
+                    "external capability name cannot be empty",
+                    path("capabilities", &capability.name).child("name"),
+                ));
+            }
+            loom_core::CapabilityKind::External { .. } => {}
+        }
+    }
 }
 
-fn validate_capacity_length_dispatch(graph: &ModuleGraph, diagnostics: &mut Vec<Diagnostic>) {
+fn has_duplicates<T: Ord + Copy>(items: &[T]) -> bool {
+    let mut seen = BTreeSet::new();
+    items.iter().any(|item| !seen.insert(*item))
+}
+
+fn validate_capacity_length_dispatch(graph: CheckedGraph<'_>, diagnostics: &mut Vec<Diagnostic>) {
     for stream in &graph.resources.streams {
         if stream.capacity == 0 || stream.buffering == 0 {
             diagnostics.push(Diagnostic::error(
@@ -447,6 +1210,14 @@ fn validate_capacity_length_dispatch(graph: &ModuleGraph, diagnostics: &mut Vec<
     }
 
     for schedule in &graph.schedules {
+        let loom_core::ScheduleTiming::Fixed { rate_hz, .. } = schedule.timing;
+        if rate_hz == 0 {
+            diagnostics.push(Diagnostic::error(
+                DiagnosticCode::InvalidOverloadPolicy,
+                "fixed schedule rate must be greater than zero",
+                path("schedules", &schedule.name).child("rate_hz"),
+            ));
+        }
         if schedule.in_flight.simulation_ticks == 0 || schedule.in_flight.render_frames == 0 {
             diagnostics.push(Diagnostic::error(
                 DiagnosticCode::InvalidInFlightPolicy,
@@ -495,7 +1266,7 @@ fn compatible_lengths(left: &StreamLength, right: &StreamLength) -> bool {
     }
 }
 
-fn validate_bindings_aliasing(graph: &ModuleGraph, diagnostics: &mut Vec<Diagnostic>) {
+fn validate_bindings_aliasing(graph: CheckedGraph<'_>, diagnostics: &mut Vec<Diagnostic>) {
     for pass in &graph.passes {
         let kernel = graph.kernel(pass.kernel);
         let mut bound_slots = BTreeMap::<loom_core::SlotId, usize>::new();
@@ -504,17 +1275,11 @@ fn validate_bindings_aliasing(graph: &ModuleGraph, diagnostics: &mut Vec<Diagnos
         }
         for slot in &kernel.slots {
             match bound_slots.get(&slot.id).copied().unwrap_or_default() {
-                0 => diagnostics.push(
-                    Diagnostic::error(
-                        DiagnosticCode::MissingBinding,
-                        format!("required slot `{}` is not bound", slot.name),
-                        path("passes", &pass.name).child("bindings"),
-                    )
-                    .fix(GraphEdit::BindMissingSlot {
-                        pass: pass.id,
-                        slot_name: slot.name.clone(),
-                    }),
-                ),
+                0 => diagnostics.push(Diagnostic::error(
+                    DiagnosticCode::MissingBinding,
+                    format!("required slot `{}` is not bound", slot.name),
+                    path("passes", &pass.name).child("bindings"),
+                )),
                 count if count > 1 => diagnostics.push(Diagnostic::error(
                     DiagnosticCode::DuplicateBinding,
                     format!("slot `{}` is bound {count} times", slot.name),
@@ -566,7 +1331,7 @@ struct Access {
     writes: bool,
 }
 
-fn construct_hazards(graph: &ModuleGraph) -> BTreeMap<ScheduleId, Vec<Access>> {
+fn construct_hazards(graph: CheckedGraph<'_>) -> BTreeMap<ScheduleId, Vec<Access>> {
     graph
         .schedules
         .iter()
@@ -604,7 +1369,7 @@ fn construct_hazards(graph: &ModuleGraph) -> BTreeMap<ScheduleId, Vec<Access>> {
 }
 
 fn validate_schedule_dags(
-    graph: &ModuleGraph,
+    graph: CheckedGraph<'_>,
     accesses: &BTreeMap<ScheduleId, Vec<Access>>,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> Vec<ScheduleOrder> {
@@ -736,7 +1501,7 @@ fn transitive_reachability(
 }
 
 fn validate_unordered_hazards(
-    graph: &ModuleGraph,
+    graph: CheckedGraph<'_>,
     schedule: ScheduleId,
     accesses: &[Access],
     reachability: &BTreeSet<(ScheduleItemId, ScheduleItemId)>,
@@ -769,6 +1534,7 @@ fn validate_unordered_hazards(
                         schedule,
                         before: left.item,
                         after: right.item,
+                        expected_absent: true,
                     }),
                 );
             }
@@ -777,31 +1543,32 @@ fn validate_unordered_hazards(
 }
 
 fn validate_buffer_versions(
-    graph: &ModuleGraph,
+    graph: CheckedGraph<'_>,
     accesses: &BTreeMap<ScheduleId, Vec<Access>>,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> Vec<EffectiveConcurrency> {
     let mut results = Vec::new();
     for schedule in &graph.schedules {
         let requested = schedule.in_flight.simulation_ticks;
-        match schedule.tick_overlap {
+        let requested_render_frames = schedule.in_flight.render_frames;
+        let mutated = accesses[&schedule.id]
+            .iter()
+            .filter(|access| access.writes)
+            .map(|access| access.stream)
+            .collect::<BTreeSet<_>>();
+
+        let (effective_ticks, basis) = match schedule.tick_overlap {
             TickOverlapPolicy::RequireResourceVersions => {
-                let required = requested.max(schedule.in_flight.render_frames);
-                let mutated = accesses[&schedule.id]
-                    .iter()
-                    .filter(|access| access.writes)
-                    .map(|access| access.stream)
-                    .collect::<BTreeSet<_>>();
                 let mut valid = true;
-                for stream_id in mutated {
-                    let stream = graph.stream(stream_id);
-                    if stream.buffering < required {
+                for stream_id in &mutated {
+                    let stream = graph.stream(*stream_id);
+                    if stream.buffering < requested {
                         valid = false;
                         diagnostics.push(
                             Diagnostic::error(
                                 DiagnosticCode::InsufficientBufferVersions,
                                 format!(
-                                    "stream `{}` has {} version(s), but schedule `{}` permits {required} overlapping consumers",
+                                    "stream `{}` has {} version(s), but schedule `{}` permits {requested} overlapping simulation ticks",
                                     stream.name, stream.buffering, schedule.name
                                 ),
                                 path("streams", &stream.name).child("buffering"),
@@ -811,38 +1578,27 @@ fn validate_buffer_versions(
                             )
                             .fix(GraphEdit::SetStreamBuffering {
                                 stream: stream.id,
-                                versions: required,
+                                expected: stream.buffering,
+                                versions: requested,
                             }),
                         );
                     }
                 }
-                results.push(EffectiveConcurrency {
-                    schedule: schedule.id,
-                    requested_ticks: requested,
-                    effective_ticks: if valid { requested } else { 0 },
-                    basis: if valid {
+                (
+                    if valid { requested } else { 0 },
+                    if valid {
                         ConcurrencyBasis::ResourceVersions
                     } else {
                         ConcurrencyBasis::Invalid
                     },
-                });
+                )
             }
             TickOverlapPolicy::SerializeConflictingTicks => {
-                results.push(EffectiveConcurrency {
-                    schedule: schedule.id,
-                    requested_ticks: requested,
-                    effective_ticks: requested.min(1),
-                    basis: ConcurrencyBasis::SerializedConflicts,
-                });
+                (requested.min(1), ConcurrencyBasis::SerializedConflicts)
             }
             TickOverlapPolicy::QueueOrderedReuse => {
                 if schedule.queue_model == QueueModel::SingleSerialQueue {
-                    results.push(EffectiveConcurrency {
-                        schedule: schedule.id,
-                        requested_ticks: requested,
-                        effective_ticks: requested,
-                        basis: ConcurrencyBasis::ProvenSerialQueue,
-                    });
+                    (requested, ConcurrencyBasis::ProvenSerialQueue)
                 } else {
                     diagnostics.push(
                         Diagnostic::error(
@@ -852,18 +1608,83 @@ fn validate_buffer_versions(
                         )
                         .fix(GraphEdit::SetTickOverlapPolicy {
                             schedule: schedule.id,
+                            expected: TickOverlapPolicy::QueueOrderedReuse,
                             policy: TickOverlapPolicy::SerializeConflictingTicks,
                         }),
                     );
-                    results.push(EffectiveConcurrency {
-                        schedule: schedule.id,
-                        requested_ticks: requested,
-                        effective_ticks: 0,
-                        basis: ConcurrencyBasis::Invalid,
-                    });
+                    (0, ConcurrencyBasis::Invalid)
                 }
             }
-        }
+        };
+
+        let presented_mutable = schedule
+            .presentation_views
+            .iter()
+            .flat_map(|view| graph.view(*view).reads.iter())
+            .map(|read| read.stream)
+            .filter(|stream| mutated.contains(stream))
+            .collect::<BTreeSet<_>>();
+
+        let (effective_render_frames, presentation_basis) = match schedule.presentation_lifetime {
+            PresentationLifetimePolicy::RequireResourceVersions => {
+                let mut valid = true;
+                for stream_id in &presented_mutable {
+                    let stream = graph.stream(*stream_id);
+                    if stream.buffering < requested_render_frames {
+                        valid = false;
+                        diagnostics.push(
+                                Diagnostic::error(
+                                    DiagnosticCode::UnsafePresentationLifetime,
+                                    format!(
+                                        "stream `{}` has {} version(s), but {} render frames may still read it",
+                                        stream.name,
+                                        stream.buffering,
+                                        requested_render_frames
+                                    ),
+                                    path("streams", &stream.name).child("buffering"),
+                                )
+                                .related(
+                                    path("schedules", &schedule.name)
+                                        .child("presentation_lifetime"),
+                                )
+                                .fix(GraphEdit::SetStreamBuffering {
+                                    stream: stream.id,
+                                    expected: stream.buffering,
+                                    versions: requested_render_frames,
+                                }),
+                            );
+                    }
+                }
+                (
+                    if valid { requested_render_frames } else { 0 },
+                    if valid {
+                        PresentationConcurrencyBasis::ResourceVersions
+                    } else {
+                        PresentationConcurrencyBasis::Invalid
+                    },
+                )
+            }
+            PresentationLifetimePolicy::BlockNextTickUntilViewsComplete => (
+                requested_render_frames.min(1),
+                PresentationConcurrencyBasis::BlockUntilPresentationCompletes,
+            ),
+            PresentationLifetimePolicy::QueueOrderedReuse => {
+                if schedule.queue_model == QueueModel::SingleSerialQueue {
+                    (
+                        requested_render_frames,
+                        PresentationConcurrencyBasis::ProvenSerialQueue,
+                    )
+                } else {
+                    diagnostics.push(Diagnostic::error(
+                            DiagnosticCode::UnsafePresentationLifetime,
+                            "queue-ordered presentation reuse requires a single serial queue completion proof",
+                            path("schedules", &schedule.name)
+                                .child("presentation_lifetime"),
+                        ));
+                    (0, PresentationConcurrencyBasis::Invalid)
+                }
+            }
+        };
 
         for view_id in &schedule.presentation_views {
             let view = graph.view(*view_id);
@@ -887,17 +1708,28 @@ fn validate_buffer_versions(
                         .related(path("streams", &stream.name).child("buffering"))
                         .fix(GraphEdit::SetStreamBuffering {
                             stream: stream.id,
+                            expected: stream.buffering,
                             versions: required_history,
                         }),
                     );
                 }
             }
         }
+
+        results.push(EffectiveConcurrency {
+            schedule: schedule.id,
+            requested_ticks: requested,
+            effective_ticks,
+            requested_render_frames,
+            effective_render_frames,
+            basis,
+            presentation_basis,
+        });
     }
     results
 }
 
-fn validate_backend_abi(graph: &ModuleGraph, diagnostics: &mut Vec<Diagnostic>) {
+fn validate_backend_abi(graph: CheckedGraph<'_>, diagnostics: &mut Vec<Diagnostic>) {
     for kernel in &graph.kernels {
         let expected = kernel
             .slots
@@ -941,9 +1773,26 @@ fn validate_backend_abi(graph: &ModuleGraph, diagnostics: &mut Vec<Diagnostic>) 
             ));
         }
     }
+    for view in &graph.views {
+        let implementation = &view.implementation;
+        let complete = match graph.target {
+            loom_core::Target::Metal => {
+                implementation.backend == Backend::Metal
+                    && !implementation.source.trim().is_empty()
+                    && !implementation.entry.trim().is_empty()
+            }
+        };
+        if !complete {
+            diagnostics.push(Diagnostic::error(
+                DiagnosticCode::MissingBackendImplementation,
+                "view has no complete implementation for the selected target",
+                path("views", &view.name).child("implementation"),
+            ));
+        }
+    }
 }
 
-fn validate_observation_points(graph: &ModuleGraph, diagnostics: &mut Vec<Diagnostic>) {
+fn validate_observation_points(graph: CheckedGraph<'_>, diagnostics: &mut Vec<Diagnostic>) {
     for view in &graph.views {
         match view.state {
             ViewState::CurrentCompletedTick => {}
@@ -997,7 +1846,7 @@ fn validate_observation_points(graph: &ModuleGraph, diagnostics: &mut Vec<Diagno
 }
 
 fn validate_observation_for_schedule(
-    graph: &ModuleGraph,
+    graph: CheckedGraph<'_>,
     owner_schedule: ScheduleId,
     observation: &ObservationPoint,
     primary: &str,
@@ -1021,7 +1870,7 @@ fn validate_observation_for_schedule(
     }
 }
 
-fn validate_determinism_overload(graph: &ModuleGraph, diagnostics: &mut Vec<Diagnostic>) {
+fn validate_determinism_overload(graph: CheckedGraph<'_>, diagnostics: &mut Vec<Diagnostic>) {
     for contract in &graph.contracts {
         for clause in &contract.clauses {
             let ContractClause::Determinism(determinism) = clause else {
@@ -1087,6 +1936,181 @@ fn validate_determinism_overload(graph: &ModuleGraph, diagnostics: &mut Vec<Diag
             }
         }
     }
+}
+
+fn has_errors(diagnostics: &[Diagnostic]) -> bool {
+    diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.severity == loom_core::Severity::Error)
+}
+
+fn build_execution_plan(
+    orders: &[ScheduleOrder],
+    concurrency: &[EffectiveConcurrency],
+) -> ExecutionPlan {
+    let schedules = orders
+        .iter()
+        .filter_map(|order| {
+            let concurrency = concurrency
+                .iter()
+                .find(|item| item.schedule == order.schedule)?;
+            Some(ExecutionSchedule {
+                schedule: order.schedule,
+                order: order.items.clone(),
+                requested_ticks: concurrency.requested_ticks,
+                effective_ticks: concurrency.effective_ticks,
+                requested_render_frames: concurrency.requested_render_frames,
+                effective_render_frames: concurrency.effective_render_frames,
+            })
+        })
+        .collect();
+    ExecutionPlan {
+        schema_version: 1,
+        schedules,
+    }
+}
+
+fn artifact_fingerprint(graph: &ModuleGraph, plan: &ExecutionPlan) -> String {
+    #[derive(Serialize)]
+    struct ArtifactIdentity<'a> {
+        validator_schema_version: u32,
+        graph: &'a ModuleGraph,
+        execution_plan: &'a ExecutionPlan,
+    }
+
+    let bytes = serde_json::to_vec(&ArtifactIdentity {
+        validator_schema_version: 1,
+        graph,
+        execution_plan: plan,
+    })
+    .expect("validated artifact identity serialization");
+    Sha256::digest(bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+fn apply_edit(graph: &mut ModuleGraph, edit: &GraphEdit) -> Result<(), RepairError> {
+    match edit {
+        GraphEdit::SetStreamBuffering {
+            stream,
+            expected,
+            versions,
+        } => {
+            let target = graph
+                .resources
+                .streams
+                .get_mut(stream.0 as usize)
+                .ok_or_else(|| RepairError::InvalidTarget {
+                    target: SemanticPath::new(format!("streams.{}", stream.0)),
+                })?;
+            if target.buffering != *expected {
+                return Err(RepairError::ExpectedValueMismatch {
+                    target: path("streams", &target.name).child("buffering"),
+                });
+            }
+            target.buffering = *versions;
+        }
+        GraphEdit::SetScheduleSimulationTicksInFlight {
+            schedule,
+            expected,
+            ticks,
+        } => {
+            let target = graph
+                .schedules
+                .nodes
+                .get_mut(schedule.0 as usize)
+                .ok_or_else(|| RepairError::InvalidTarget {
+                    target: SemanticPath::new(format!("schedules.{}", schedule.0)),
+                })?;
+            if target.in_flight.simulation_ticks != *expected {
+                return Err(RepairError::ExpectedValueMismatch {
+                    target: path("schedules", &target.name).child("in_flight.simulation_ticks"),
+                });
+            }
+            target.in_flight.simulation_ticks = *ticks;
+        }
+        GraphEdit::SetTickOverlapPolicy {
+            schedule,
+            expected,
+            policy,
+        } => {
+            let target = graph
+                .schedules
+                .nodes
+                .get_mut(schedule.0 as usize)
+                .ok_or_else(|| RepairError::InvalidTarget {
+                    target: SemanticPath::new(format!("schedules.{}", schedule.0)),
+                })?;
+            if target.tick_overlap != *expected {
+                return Err(RepairError::ExpectedValueMismatch {
+                    target: path("schedules", &target.name).child("tick_overlap"),
+                });
+            }
+            target.tick_overlap = policy.clone();
+        }
+        GraphEdit::AddCompletionDependency {
+            schedule,
+            before,
+            after,
+            expected_absent,
+        } => {
+            let target = graph
+                .schedules
+                .nodes
+                .get_mut(schedule.0 as usize)
+                .ok_or_else(|| RepairError::InvalidTarget {
+                    target: SemanticPath::new(format!("schedules.{}", schedule.0)),
+                })?;
+            match (before, after) {
+                (ScheduleItemId::Pass(before), ScheduleItemId::Pass(after)) => {
+                    let exists = target
+                        .execution_dependencies
+                        .iter()
+                        .any(|edge| edge.before == *before && edge.after == *after);
+                    if exists == *expected_absent {
+                        return Err(RepairError::ExpectedValueMismatch {
+                            target: path("schedules", &target.name).child("execution_dependencies"),
+                        });
+                    }
+                    target
+                        .execution_dependencies
+                        .push(loom_core::ExecutionDependency {
+                            before: *before,
+                            after: *after,
+                            semantics: loom_core::DependencySemantics::Completion,
+                        });
+                    target
+                        .execution_dependencies
+                        .sort_by_key(|edge| (edge.before, edge.after));
+                }
+                (ScheduleItemId::Pass(producer), ScheduleItemId::View(consumer)) => {
+                    let exists = target
+                        .presentation_dependencies
+                        .iter()
+                        .any(|edge| edge.producer == *producer && edge.consumer == *consumer);
+                    if exists == *expected_absent {
+                        return Err(RepairError::ExpectedValueMismatch {
+                            target: path("schedules", &target.name)
+                                .child("presentation_dependencies"),
+                        });
+                    }
+                    target
+                        .presentation_dependencies
+                        .push(loom_core::PresentationDependency {
+                            producer: *producer,
+                            consumer: *consumer,
+                            semantics: loom_core::DependencySemantics::Completion,
+                        });
+                    target
+                        .presentation_dependencies
+                        .sort_by_key(|edge| (edge.producer, edge.consumer));
+                }
+                _ => return Err(RepairError::UnsupportedDependencyShape),
+            }
+        }
+    }
+    Ok(())
 }
 
 fn path(scope: &str, name: &str) -> SemanticPath {

@@ -2,9 +2,10 @@ use crate::{
     builder::*,
     model::{
         DataType, DeterminismContract, DeterminismScope, DeterminismTier, ExcessWallTimePolicy,
-        Literal, Metric, OverloadPolicy, Quantity, QueueModel, RenderOverloadPolicy,
-        ReplayOverloadPolicy, ResourceAccess, ScenarioTimePolicy, SimulationTimePolicy, SlotAccess,
-        SnapshotSemantics, Target, TickOverlapPolicy, Unit, ViewState,
+        Literal, Metric, OverloadPolicy, PresentationLifetimePolicy, Quantity, QueueModel,
+        RenderOverloadPolicy, ReplayOverloadPolicy, ResourceAccess, ScenarioTimePolicy,
+        SimulationTimePolicy, SlotAccess, SnapshotSemantics, Target, TickOverlapPolicy, Unit,
+        ViewState,
     },
 };
 
@@ -13,6 +14,7 @@ pub struct HelloParticleConfig {
     pub particle_buffering: u32,
     pub simulation_ticks_in_flight: u32,
     pub tick_overlap: TickOverlapPolicy,
+    pub presentation_lifetime: PresentationLifetimePolicy,
     pub queue_model: QueueModel,
 }
 
@@ -22,6 +24,7 @@ impl Default for HelloParticleConfig {
             particle_buffering: 1,
             simulation_ticks_in_flight: 4,
             tick_overlap: TickOverlapPolicy::SerializeConflictingTicks,
+            presentation_lifetime: PresentationLifetimePolicy::BlockNextTickUntilViewsComplete,
             queue_model: QueueModel::Unproven,
         }
     }
@@ -228,6 +231,7 @@ pub fn hello_particle_builder(config: HelloParticleConfig) -> ModuleBuilder {
                 .show_after("viewport", "bounce")
                 .in_flight(config.simulation_ticks_in_flight, 2)
                 .tick_overlap(config.tick_overlap)
+                .presentation_lifetime(config.presentation_lifetime)
                 .queue_model(config.queue_model)
                 .overload(overload),
         )

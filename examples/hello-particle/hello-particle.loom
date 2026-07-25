@@ -130,6 +130,7 @@ module hello_particle version "0.1.0" {
       rendering at_most 2 frames
     }
     tick_overlap serialize_conflicting_ticks
+    presentation_lifetime block_next_tick_until_views_complete
 
     overload {
       preserve fixed_dt

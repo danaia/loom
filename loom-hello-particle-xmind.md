@@ -409,6 +409,8 @@
 - `after` is a completion dependency, never submission order alone
 - Execution pass dependencies and terminal presentation dependencies are distinct
 - Mutable stream reuse requires sufficient versions, serialized conflicting ticks, or a queue-order proof
+- Presentation lifetime is validated separately from simulation tick overlap
+- Single-buffer Hello Particle blocks the next conflicting tick until viewport reads complete
 - Contract observations name pass completion, tick execution, or GPU completion
 - Views name current-completed, previous-stable, or interpolated tick state
 - No blocking CPU wait in the normal frame loop

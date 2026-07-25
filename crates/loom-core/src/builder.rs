@@ -466,6 +466,7 @@ impl ModuleBuilder {
                     presentation_dependencies,
                     in_flight: draft.in_flight.clone(),
                     tick_overlap: draft.tick_overlap.clone(),
+                    presentation_lifetime: draft.presentation_lifetime.clone(),
                     queue_model: draft.queue_model.clone(),
                     overload: draft.overload.clone(),
                 }
@@ -963,6 +964,7 @@ pub struct ScheduleDraft {
     pub presentation_dependencies: Vec<PresentationDependencyDraft>,
     pub in_flight: InFlightPolicy,
     pub tick_overlap: TickOverlapPolicy,
+    pub presentation_lifetime: PresentationLifetimePolicy,
     pub queue_model: QueueModel,
     pub overload: OverloadPolicy,
 }
@@ -981,6 +983,7 @@ impl ScheduleDraft {
                 render_frames: 1,
             },
             tick_overlap: TickOverlapPolicy::RequireResourceVersions,
+            presentation_lifetime: PresentationLifetimePolicy::RequireResourceVersions,
             queue_model: QueueModel::Unproven,
             overload: OverloadPolicy {
                 catch_up_limit: 1,
@@ -1029,6 +1032,11 @@ impl ScheduleDraft {
 
     pub fn tick_overlap(mut self, policy: TickOverlapPolicy) -> Self {
         self.tick_overlap = policy;
+        self
+    }
+
+    pub fn presentation_lifetime(mut self, policy: PresentationLifetimePolicy) -> Self {
+        self.presentation_lifetime = policy;
         self
     }
 

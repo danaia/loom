@@ -1,5 +1,5 @@
 use loom_core::conformance::{HelloParticleConfig, hello_particle_builder};
-use loom_validator::Validator;
+use loom_validator::{RepairPlan, Validator};
 
 fn main() {
     let graph = hello_particle_builder(HelloParticleConfig::unsafe_unproven_overlap())
@@ -11,9 +11,20 @@ fn main() {
         "{}",
         serde_json::to_string_pretty(&graph).expect("serialize normalized graph")
     );
-    println!("\nfingerprint: {}", report.canonical.fingerprint);
+    println!("\nsource_graph_hash: {}", report.source_graph.fingerprint);
+    println!(
+        "artifact_before_repair: {}",
+        report.artifact_fingerprint().unwrap_or("none")
+    );
     println!(
         "validation:\n{}",
         serde_json::to_string_pretty(&report.diagnostics).expect("serialize diagnostics")
     );
+
+    let repair = RepairPlan::from_report(&report).expect("mechanical repair plan");
+    let validated = repair
+        .apply_and_validate(&graph)
+        .expect("atomic repair must produce a validated graph");
+    println!("repair_edits: {}", repair.edits.len());
+    println!("artifact_fingerprint: {}", validated.artifact_fingerprint());
 }

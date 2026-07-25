@@ -94,6 +94,7 @@ declare
 - `docs/00-language-charter.md`.
 - `docs/01-semantic-model.md`.
 - `docs/04-execution-scheduling.md`.
+- `docs/06-canonical-representation.md`.
 - `docs/decisions/0001-language-shape.md`.
 - `examples/hello-particle/hello-particle.loom` as the v0 language specimen.
 - `crates/loom-core` with typed graph nodes and a direct builder API.
@@ -106,7 +107,11 @@ declare
 - The graph contains explicit stream effects, pass bindings, schedule dependencies, contract scopes, scenario predicates, views, and inspection capability.
 - Missing bindings, unit mismatches, undeclared writes, unordered hazards, dependency cycles, and illegal capabilities fail with stable diagnostic codes.
 - Unsafe buffer reuse fails unless the graph provides enough versions, serializes conflicting ticks, or carries a valid queue-order proof.
+- Simulation overlap and presentation lifetime are validated independently.
 - Dependencies mean completion; contracts, views, and inspection name exact observation/snapshot semantics.
+- Malformed references stop at structural validation without panicking.
+- Hash-bound repair plans verify old values, apply atomically, and rerun validation.
+- Only `ValidatedModuleGraph` produces an `ExecutionPlan` and executable artifact fingerprint.
 - Constructing the same program twice produces the same canonical graph and hash.
 - The language review identifies punctuation as provisional but treats the semantic patterns as binding.
 
@@ -387,10 +392,8 @@ loom compare  <candidate-a> <candidate-b> --scenario <name>
 
 ## Immediate Next Steps
 
-1. Review and ratify the language charter, semantic nouns, and composition loop.
-2. Turn the Hello Particle specimen into typed graph schemas and a direct builder fixture.
-3. Define stable diagnostics for missing bindings, unit errors, illegal effects, hazards, cycles, and capabilities.
-4. Implement canonical graph ordering, hashing, and `loom explain` data.
-5. Validate the Hello Particle graph without parsing text.
-6. Drive that graph through the native Metal proof.
-7. Freeze the smallest useful `.loom` grammar only after the end-to-end path passes.
+1. Ratify the hardened graph trust boundary and execution semantics.
+2. Define the narrow `ExecutionPlan` → Metal lowering interface.
+3. Drive `ValidatedModuleGraph` through the native `CAMetalLayer` proof.
+4. Capture pipeline-derived dispatch, timing, and determinism evidence.
+5. Freeze the smallest useful `.loom` grammar only after the end-to-end path passes.

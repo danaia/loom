@@ -20,28 +20,28 @@ pub struct ModuleGraph {
 }
 
 impl ModuleGraph {
-    pub fn value(&self, id: ValueId) -> &ValueNode {
-        &self.resources.values[id.0 as usize]
+    pub fn value(&self, id: ValueId) -> Option<&ValueNode> {
+        self.resources.values.get(id.0 as usize)
     }
 
-    pub fn stream(&self, id: StreamId) -> &StreamNode {
-        &self.resources.streams[id.0 as usize]
+    pub fn stream(&self, id: StreamId) -> Option<&StreamNode> {
+        self.resources.streams.get(id.0 as usize)
     }
 
-    pub fn kernel(&self, id: KernelId) -> &KernelNode {
-        &self.kernels[id.0 as usize]
+    pub fn kernel(&self, id: KernelId) -> Option<&KernelNode> {
+        self.kernels.get(id.0 as usize)
     }
 
-    pub fn pass(&self, id: PassId) -> &PassNode {
-        &self.passes[id.0 as usize]
+    pub fn pass(&self, id: PassId) -> Option<&PassNode> {
+        self.passes.get(id.0 as usize)
     }
 
-    pub fn view(&self, id: ViewId) -> &ViewNode {
-        &self.views[id.0 as usize]
+    pub fn view(&self, id: ViewId) -> Option<&ViewNode> {
+        self.views.get(id.0 as usize)
     }
 
-    pub fn schedule(&self, id: ScheduleId) -> &ScheduleNode {
-        &self.schedules[id.0 as usize]
+    pub fn schedule(&self, id: ScheduleId) -> Option<&ScheduleNode> {
+        self.schedules.get(id.0 as usize)
     }
 }
 
@@ -214,6 +214,7 @@ pub enum Literal {
     Bool(bool),
     I32(i32),
     U32(u32),
+    F16Bits(u16),
     F32Bits(u32),
     Vector(Vec<Literal>),
     Array(Vec<Literal>),
@@ -431,6 +432,7 @@ pub struct ScheduleNode {
     pub presentation_dependencies: Vec<PresentationDependency>,
     pub in_flight: InFlightPolicy,
     pub tick_overlap: TickOverlapPolicy,
+    pub presentation_lifetime: PresentationLifetimePolicy,
     pub queue_model: QueueModel,
     pub overload: OverloadPolicy,
 }
@@ -469,6 +471,13 @@ pub struct InFlightPolicy {
 pub enum TickOverlapPolicy {
     RequireResourceVersions,
     SerializeConflictingTicks,
+    QueueOrderedReuse,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PresentationLifetimePolicy {
+    RequireResourceVersions,
+    BlockNextTickUntilViewsComplete,
     QueueOrderedReuse,
 }
 

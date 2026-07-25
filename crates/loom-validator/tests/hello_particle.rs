@@ -1,10 +1,14 @@
 use loom_core::{
-    DataType, DependencySemantics, DiagnosticCode, GraphEdit, Literal, ModuleBuilder, QueueModel,
-    ResourceId, SnapshotSemantics, StreamDraft, TickOverlapPolicy, Unit, ValueDraft, ValueKind,
-    ViewState, canonicalize,
+    CapabilityKind, ContractClause, DataType, DependencySemantics, DiagnosticCode, GraphEdit,
+    KernelId, Literal, ModuleBuilder, PresentationLifetimePolicy, QueueModel, ResourceId,
+    SnapshotSemantics, StreamDraft, TickOverlapPolicy, Unit, ValueDraft, ValueKind, ViewState,
+    canonicalize,
     conformance::{HelloParticleConfig, hello_particle_builder},
 };
-use loom_validator::{ConcurrencyBasis, Validator};
+use loom_validator::{
+    ConcurrencyBasis, PresentationConcurrencyBasis, RepairError, RepairPlan, ValidationPass,
+    Validator,
+};
 
 #[test]
 fn rejects_single_buffer_with_four_unproven_overlapping_ticks() {
@@ -127,8 +131,8 @@ fn topological_order_is_fall_then_bounce_then_viewport() {
         .items
         .iter()
         .map(|item| match item {
-            loom_core::ScheduleItemId::Pass(id) => graph.pass(*id).name.as_str(),
-            loom_core::ScheduleItemId::View(id) => graph.view(*id).name.as_str(),
+            loom_core::ScheduleItemId::Pass(id) => graph.pass(*id).unwrap().name.as_str(),
+            loom_core::ScheduleItemId::View(id) => graph.view(*id).unwrap().name.as_str(),
         })
         .collect::<Vec<_>>();
     assert_eq!(labels, ["fall", "bounce", "viewport"]);
@@ -167,7 +171,7 @@ fn fixed_dt_is_a_typed_builtin_resource_and_is_explicitly_bound() {
         .iter()
         .find(|pass| pass.name == "fall")
         .unwrap();
-    let kernel = graph.kernel(fall.kernel);
+    let kernel = graph.kernel(fall.kernel).unwrap();
     let dt_slot = kernel.slots.iter().find(|slot| slot.name == "dt").unwrap();
     let binding = fall
         .bindings
@@ -209,12 +213,15 @@ fn normalized_graph_fingerprint_is_stable() {
     let second_report = Validator::validate(&second);
 
     assert_diagnostics_empty(&first_report);
-    assert_eq!(first_report.canonical.bytes, second_report.canonical.bytes);
     assert_eq!(
-        first_report.canonical.fingerprint,
-        second_report.canonical.fingerprint
+        first_report.source_graph.bytes,
+        second_report.source_graph.bytes
     );
-    assert_eq!(first_report.canonical.fingerprint.len(), 64);
+    assert_eq!(
+        first_report.artifact_fingerprint(),
+        second_report.artifact_fingerprint()
+    );
+    assert_eq!(first_report.artifact_fingerprint().unwrap().len(), 64);
 }
 
 #[test]
@@ -288,6 +295,234 @@ fn unit_mismatch_is_rejected_without_rebuilding_text() {
             .iter()
             .any(|diagnostic| diagnostic.code == DiagnosticCode::UnitMismatch)
     );
+}
+
+#[test]
+fn malformed_references_stop_before_semantic_validation_without_panicking() {
+    let mut graph = hello_particle_builder(HelloParticleConfig::default())
+        .build()
+        .unwrap();
+    graph.passes.nodes[0].kernel = KernelId(99_999);
+
+    assert!(graph.kernel(KernelId(99_999)).is_none());
+    let result = std::panic::catch_unwind(|| Validator::validate(&graph));
+    let report = result.expect("untrusted graph validation must not panic");
+
+    assert!(!report.is_valid());
+    assert!(report.validated.is_none());
+    assert_eq!(
+        report.completed_passes,
+        [ValidationPass::StructuralReferences]
+    );
+    assert!(
+        report
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == DiagnosticCode::InvalidReference)
+    );
+}
+
+#[test]
+fn unsafe_presentation_reuse_is_rejected_independently_of_tick_serialization() {
+    let graph = hello_particle_builder(HelloParticleConfig {
+        presentation_lifetime: PresentationLifetimePolicy::RequireResourceVersions,
+        ..HelloParticleConfig::default()
+    })
+    .build()
+    .unwrap();
+    let report = Validator::validate(&graph);
+
+    assert!(!report.is_valid());
+    assert!(report.artifact_fingerprint().is_none());
+    assert!(
+        report
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == DiagnosticCode::UnsafePresentationLifetime)
+    );
+    assert_eq!(
+        report.effective_concurrency[0].presentation_basis,
+        PresentationConcurrencyBasis::Invalid
+    );
+}
+
+#[test]
+fn default_presentation_policy_blocks_reuse_until_the_view_finishes() {
+    let graph = hello_particle_builder(HelloParticleConfig::default())
+        .build()
+        .unwrap();
+    let report = Validator::validate(&graph);
+
+    assert_diagnostics_empty(&report);
+    assert_eq!(
+        report.effective_concurrency[0].presentation_basis,
+        PresentationConcurrencyBasis::BlockUntilPresentationCompletes
+    );
+    assert_eq!(report.effective_concurrency[0].effective_render_frames, 1);
+}
+
+#[test]
+fn invalid_literals_and_stream_initial_data_are_diagnosed() {
+    let mut graph = hello_particle_builder(HelloParticleConfig::default())
+        .build()
+        .unwrap();
+    let gravity = graph
+        .resources
+        .values
+        .iter_mut()
+        .find(|value| value.name == "world.gravity")
+        .unwrap();
+    gravity.kind = ValueKind::Constant(Literal::Vector(vec![
+        Literal::f32(0.0),
+        Literal::f32(-9.81),
+    ]));
+    let position = graph
+        .resources
+        .streams
+        .iter_mut()
+        .find(|stream| stream.name == "particles.position")
+        .unwrap();
+    position.initial = Some(Literal::Array(vec![Literal::f32(1.0)]));
+
+    let report = Validator::validate(&graph);
+    assert!(
+        report
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == DiagnosticCode::InvalidLiteral)
+    );
+    assert!(
+        report
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == DiagnosticCode::InvalidInitialData)
+    );
+}
+
+#[test]
+fn zero_rate_incomplete_view_and_bad_metric_units_are_rejected() {
+    let mut graph = hello_particle_builder(HelloParticleConfig::default())
+        .build()
+        .unwrap();
+    let loom_core::ScheduleTiming::Fixed { rate_hz, .. } = &mut graph.schedules.nodes[0].timing;
+    *rate_hz = 0;
+    graph.views[0].implementation.entry.clear();
+    let realtime = graph
+        .contracts
+        .iter_mut()
+        .find(|contract| contract.name == "realtime")
+        .unwrap();
+    let maximum = realtime
+        .clauses
+        .iter_mut()
+        .find_map(|clause| match clause {
+            ContractClause::MetricLimit { maximum, .. } => Some(maximum),
+            _ => None,
+        })
+        .unwrap();
+    maximum.unit = Unit::METER;
+
+    let report = Validator::validate(&graph);
+    for code in [
+        DiagnosticCode::InvalidOverloadPolicy,
+        DiagnosticCode::MissingBackendImplementation,
+        DiagnosticCode::InvalidMetricUnit,
+    ] {
+        assert!(
+            report
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == code),
+            "missing diagnostic {code:?}"
+        );
+    }
+}
+
+#[test]
+fn capability_authority_is_validated() {
+    let mut graph = hello_particle_builder(HelloParticleConfig::default())
+        .build()
+        .unwrap();
+    let position = graph
+        .resources
+        .streams
+        .iter()
+        .find(|stream| stream.name == "particles.position")
+        .unwrap()
+        .id;
+    graph.capabilities[0].kind = CapabilityKind::HostMutate {
+        streams: vec![position],
+    };
+
+    let report = Validator::validate(&graph);
+    assert!(
+        report
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == DiagnosticCode::InvalidCapability)
+    );
+}
+
+#[test]
+fn repair_plan_is_hash_bound_atomic_and_revalidated() {
+    let graph = hello_particle_builder(HelloParticleConfig::unsafe_unproven_overlap())
+        .build()
+        .unwrap();
+    let report = Validator::validate(&graph);
+    assert!(report.artifact_fingerprint().is_none());
+
+    let repair = RepairPlan::from_report(&report).expect("repair plan");
+    assert_eq!(repair.edits.len(), 2);
+    let validated = repair
+        .apply_and_validate(&graph)
+        .expect("atomic repair should validate");
+    assert_eq!(validated.artifact_fingerprint().len(), 64);
+    for stream in &validated.graph().resources.streams {
+        if stream.name == "particles.position" || stream.name == "particles.velocity" {
+            assert_eq!(stream.buffering, 4);
+        }
+    }
+
+    let mut stale = graph.clone();
+    stale.name.push_str("_changed");
+    assert!(matches!(
+        repair.apply_and_validate(&stale),
+        Err(RepairError::SourceHashMismatch { .. })
+    ));
+
+    let mut wrong_old_value = graph.clone();
+    wrong_old_value
+        .resources
+        .streams
+        .iter_mut()
+        .find(|stream| stream.name == "particles.position")
+        .unwrap()
+        .buffering = 2;
+    let mut expected_value_plan = repair.clone();
+    expected_value_plan.source_graph_hash = canonicalize(&wrong_old_value).fingerprint;
+    assert!(matches!(
+        expected_value_plan.apply_and_validate(&wrong_old_value),
+        Err(RepairError::ExpectedValueMismatch { .. })
+    ));
+}
+
+#[test]
+fn only_validated_graphs_receive_execution_plans_and_artifact_fingerprints() {
+    let valid_graph = hello_particle_builder(HelloParticleConfig::default())
+        .build()
+        .unwrap();
+    let valid = Validator::validate(&valid_graph);
+    let validated = valid.validated.as_ref().expect("validated graph");
+    assert_eq!(validated.execution_plan().schedules.len(), 1);
+    assert_eq!(validated.artifact_fingerprint().len(), 64);
+
+    let invalid_graph = hello_particle_builder(HelloParticleConfig::unsafe_unproven_overlap())
+        .build()
+        .unwrap();
+    let invalid = Validator::validate(&invalid_graph);
+    assert!(invalid.validated.is_none());
+    assert!(invalid.artifact_fingerprint().is_none());
+    assert_eq!(invalid.source_graph.fingerprint.len(), 64);
 }
 
 fn assert_diagnostics_empty(report: &loom_validator::ValidationReport) {
