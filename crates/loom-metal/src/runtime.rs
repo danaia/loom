@@ -2,7 +2,7 @@ use std::{
     collections::BTreeMap,
     process::Command,
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicU64, Ordering},
         mpsc::{self, Receiver, Sender},
     },
@@ -36,8 +36,10 @@ use winit::{
 
 use crate::{
     BenchmarkConfig, BenchmarkMode, BenchmarkResult, BenchmarkRunner, PacingResult,
-    PipelineIdentity, ResourceMetrics, RuntimeDiagnostic, RuntimeDiagnosticCode,
-    RuntimeFingerprint, ShaderIdentity, ViewportSize, sha256, summarize,
+    PipelineIdentity, PresentationResult, ResourceMetrics, RuntimeDiagnostic,
+    RuntimeDiagnosticCode, RuntimeFingerprint, ShaderIdentity, ViewportSize,
+    display_link::{DisplayLinkDriver, DisplayUpdate},
+    sha256, summarize,
 };
 
 const INTEGRATE_SOURCE: &str = include_str!("../../../kernels/euler_integrate.metal");
@@ -173,6 +175,7 @@ impl MetalRuntime {
             layer.set_maximum_drawable_count(3);
             attach_layer(&window, &layer);
             resize_layer(&window, &layer);
+            present_benchmark_window(&window);
             let mut state = RuntimeState::new(validated, device.clone(), layer)?;
             return autoreleasepool(|| state.run_benchmark(&device, config));
         }
@@ -379,7 +382,9 @@ impl RuntimeState {
                 ));
             }
         }
-        let presented = config.mode == BenchmarkMode::Presented;
+        if config.mode == BenchmarkMode::Presented {
+            return self.run_presented_benchmark(config);
+        }
         let render_target = (config.mode == BenchmarkMode::Rendered).then(|| {
             let descriptor = TextureDescriptor::new();
             descriptor.set_width(config.viewport_width as u64);
@@ -395,7 +400,6 @@ impl RuntimeState {
             config.warmup_ticks,
             config.warmup_seconds,
             &config,
-            presented,
         )?;
         self.drain_benchmark_ticks(warmup_receiver, warmup_ticks)?;
 
@@ -405,7 +409,6 @@ impl RuntimeState {
             config.sample_ticks,
             config.sample_seconds,
             &config,
-            presented,
         )?;
         let timings = self.drain_benchmark_ticks(sample_receiver, sample_ticks)?;
         let sample_wall_time_seconds = sample_start.elapsed().as_secs_f64();
@@ -468,8 +471,197 @@ impl RuntimeState {
             synchronized_each_tick: false,
             max_in_flight_command_buffers: self.max_in_flight_command_buffers,
             pacing,
+            presentation: None,
             resources: self.resource_metrics(),
             runtime: self.fingerprint.clone(),
+        })
+    }
+
+    fn run_presented_benchmark(
+        &self,
+        config: BenchmarkConfig,
+    ) -> Result<BenchmarkResult, RuntimeDiagnostic> {
+        if config.pacing_hz.is_some_and(|rate| rate != self.rate_hz) {
+            return Err(RuntimeDiagnostic::new(
+                RuntimeDiagnosticCode::UnsupportedGraph,
+                format!(
+                    "presented benchmark simulation rate is fixed by the graph at {} Hz",
+                    self.rate_hz
+                ),
+            ));
+        }
+        let display_link = DisplayLinkDriver::start(&self.layer)?;
+        let warmup = self.submit_presented_phase(
+            &display_link,
+            config.warmup_ticks,
+            config.warmup_seconds,
+            &config,
+        )?;
+        self.drain_benchmark_ticks(warmup.simulation, warmup.simulation_ticks)?;
+        self.drain_benchmark_ticks(warmup.presentation, warmup.presented_frames)?;
+        display_link.discard_pending();
+
+        let sample_start = Instant::now();
+        let sample = self.submit_presented_phase(
+            &display_link,
+            config.sample_ticks,
+            config.sample_seconds,
+            &config,
+        )?;
+        let simulation = self.drain_benchmark_ticks(sample.simulation, sample.simulation_ticks)?;
+        let presentation =
+            self.drain_benchmark_ticks(sample.presentation, sample.presented_frames)?;
+        let sample_wall_time_seconds = sample_start.elapsed().as_secs_f64();
+
+        let gpu_ms = summarize_field(&simulation, |timing| timing.gpu_ms)?;
+        let cpu_orchestration_ms =
+            summarize_field(&simulation, |timing| timing.cpu_orchestration_ms)?;
+        let end_to_end_tick_ms = summarize_field(&simulation, |timing| timing.end_to_end_tick_ms)?;
+        let simulation_deadline_misses = simulation
+            .iter()
+            .filter(|timing| timing.deadline_lateness_ms > 0.0)
+            .count() as u32;
+        let render_gpu_ms = summarize_field(&presentation, |timing| timing.gpu_ms)?;
+        let render_cpu_orchestration_ms =
+            summarize_field(&presentation, |timing| timing.cpu_orchestration_ms)?;
+        let render_end_to_end_ms =
+            summarize_field(&presentation, |timing| timing.end_to_end_tick_ms)?;
+        let display_target_lead_ms =
+            summarize_optional_field(&presentation, |timing| timing.display_target_lead_ms)?;
+        let presentation_lateness_ms =
+            summarize_optional_field(&presentation, |timing| timing.presentation_lateness_ms)?;
+        let gpu_deadline_misses = presentation
+            .iter()
+            .filter(|timing| timing.gpu_deadline_missed)
+            .count() as u32;
+        let presentation_deadline_misses = presentation
+            .iter()
+            .filter(|timing| timing.presentation_deadline_missed)
+            .count() as u32;
+        let skipped_presentations = presentation
+            .iter()
+            .filter(|timing| timing.presentation_skipped)
+            .count() as u32;
+        let particle_count = benchmark_dispatch_count(
+            self.validated.graph(),
+            &self.validated.execution_plan().schedules[0],
+        )?;
+        Ok(BenchmarkResult {
+            experiment: self.validated.graph().name.clone(),
+            particle_count,
+            mode: config.mode,
+            runner: config.runner,
+            viewport: Some(ViewportSize {
+                width: config.viewport_width,
+                height: config.viewport_height,
+            }),
+            warmup_ticks: warmup.simulation_ticks,
+            sample_ticks: sample.simulation_ticks,
+            requested_warmup_seconds: config.warmup_seconds,
+            requested_sample_seconds: config.sample_seconds,
+            gpu_p95_below_8_33_ms: gpu_ms.p95.max(render_gpu_ms.p95) < 8.33,
+            gpu_ms,
+            cpu_orchestration_ms,
+            end_to_end_tick_ms,
+            sample_wall_time_seconds,
+            submitted_ticks_per_second: sample.simulation_ticks as f64 / sample_wall_time_seconds,
+            synchronized_each_tick: false,
+            max_in_flight_command_buffers: self.max_in_flight_command_buffers,
+            pacing: Some(PacingResult {
+                target_hz: self.rate_hz,
+                tick_budget_ms: 1_000.0 / self.rate_hz as f64,
+                submission_lead_ms: config.pacing_lead_microseconds as f64 / 1_000.0,
+                deadline_misses: simulation_deadline_misses,
+                deadline_miss_rate: simulation_deadline_misses as f64
+                    / sample.simulation_ticks as f64,
+                maximum_lateness_ms: simulation
+                    .iter()
+                    .map(|timing| timing.deadline_lateness_ms)
+                    .fold(0.0, f64::max),
+            }),
+            presentation: Some(PresentationResult {
+                display_link_driven: true,
+                presented_frames: sample.presented_frames,
+                drawable_starvation_events: sample.drawable_starvation_events,
+                gpu_deadline_misses,
+                presentation_deadline_misses,
+                skipped_presentations,
+                lateness_tolerance_ms: 0.5,
+                render_gpu_ms,
+                render_cpu_orchestration_ms,
+                render_end_to_end_ms,
+                display_target_lead_ms,
+                presentation_lateness_ms,
+            }),
+            resources: self.resource_metrics(),
+            runtime: self.fingerprint.clone(),
+        })
+    }
+
+    fn submit_presented_phase(
+        &self,
+        display_link: &DisplayLinkDriver,
+        ticks: u32,
+        seconds: Option<u32>,
+        config: &BenchmarkConfig,
+    ) -> Result<PresentedPhase, RuntimeDiagnostic> {
+        let (simulation_sender, simulation) = mpsc::channel();
+        let (presentation_sender, presentation) = mpsc::channel();
+        let mut simulation_ticks = 0_u32;
+        let mut presented_frames = 0_u32;
+        let mut drawable_starvation_events = 0_u32;
+        let mut starvation_active = false;
+        let mut last_display_update = Instant::now();
+        let phase_start = Instant::now();
+        loop {
+            let phase_complete = if let Some(seconds) = seconds {
+                pacing_offset(simulation_ticks, self.rate_hz) >= Duration::from_secs(seconds as u64)
+            } else {
+                simulation_ticks >= ticks
+            };
+            if phase_complete {
+                break;
+            }
+
+            let nominal_admission = phase_start + pacing_offset(simulation_ticks, self.rate_hz);
+            let lead = Duration::from_micros(u64::from(config.pacing_lead_microseconds));
+            let admission = nominal_admission.checked_sub(lead).unwrap_or(phase_start);
+            let now = Instant::now();
+            if now >= admission {
+                let deadline = phase_start + pacing_offset(simulation_ticks + 1, self.rate_hz);
+                self.submit_benchmark_tick(
+                    None,
+                    simulation_sender.clone(),
+                    config.runner,
+                    Some(deadline),
+                )?;
+                simulation_ticks += 1;
+                continue;
+            }
+
+            let timeout = admission
+                .saturating_duration_since(now)
+                .min(Duration::from_millis(20));
+            if let Some(update) = display_link.next(timeout)? {
+                last_display_update = Instant::now();
+                starvation_active = false;
+                self.submit_presented_frame(update, presentation_sender.clone(), config.runner)?;
+                presented_frames += 1;
+            } else if last_display_update.elapsed() > Duration::from_millis(25)
+                && !starvation_active
+            {
+                drawable_starvation_events += 1;
+                starvation_active = true;
+            }
+        }
+        drop(simulation_sender);
+        drop(presentation_sender);
+        Ok(PresentedPhase {
+            simulation,
+            simulation_ticks,
+            presentation,
+            presented_frames,
+            drawable_starvation_events,
         })
     }
 
@@ -479,7 +671,6 @@ impl RuntimeState {
         ticks: u32,
         seconds: Option<u32>,
         config: &BenchmarkConfig,
-        presented: bool,
     ) -> Result<(Receiver<RawTickTiming>, u32), RuntimeDiagnostic> {
         let (sender, receiver) = mpsc::channel();
         let mut submitted = 0_u32;
@@ -504,13 +695,7 @@ impl RuntimeState {
                 wait_until(admission);
                 phase_start + pacing_offset(submitted + 1, hz)
             });
-            self.submit_benchmark_tick(
-                render_target,
-                sender.clone(),
-                config.runner,
-                deadline,
-                presented,
-            )?;
+            self.submit_benchmark_tick(render_target, sender.clone(), config.runner, deadline)?;
             submitted = submitted.checked_add(1).ok_or_else(|| {
                 RuntimeDiagnostic::new(
                     RuntimeDiagnosticCode::UnsupportedGraph,
@@ -528,26 +713,11 @@ impl RuntimeState {
         sender: Sender<RawTickTiming>,
         runner: BenchmarkRunner,
         deadline: Option<Instant>,
-        presented: bool,
     ) -> Result<(), RuntimeDiagnostic> {
         let schedule = &self.validated.execution_plan().schedules[0];
         let cpu_start = Instant::now();
         let command_buffer = self.queue.new_command_buffer();
         command_buffer.set_label("loom.benchmark.tick");
-        let drawable = if presented {
-            Some(self.layer.next_drawable().ok_or_else(|| {
-                RuntimeDiagnostic::new(
-                    RuntimeDiagnosticCode::CommandBufferFailed,
-                    "CAMetalLayer did not provide a drawable",
-                )
-            })?)
-        } else {
-            None
-        };
-        let texture = drawable
-            .as_ref()
-            .map(|drawable| drawable.texture())
-            .or(render_target);
 
         match runner {
             BenchmarkRunner::LoomPlan => {
@@ -562,7 +732,7 @@ impl RuntimeState {
                             self.encode_compute(command_buffer, pass)?;
                         }
                         ScheduleItemId::View(view_id) => {
-                            if let Some(texture) = texture {
+                            if let Some(texture) = render_target {
                                 let view = schedule
                                     .views
                                     .iter()
@@ -575,11 +745,8 @@ impl RuntimeState {
                 }
             }
             BenchmarkRunner::DirectMetalEncoding => {
-                self.encode_direct_metal(command_buffer, texture)?;
+                self.encode_direct_metal(command_buffer, render_target)?;
             }
-        }
-        if let Some(drawable) = &drawable {
-            command_buffer.present_drawable(drawable);
         }
 
         let cpu_orchestration_bits = Arc::new(AtomicU64::new(u64::MAX));
@@ -602,6 +769,81 @@ impl RuntimeState {
                 deadline_lateness_ms: deadline
                     .and_then(|deadline| Instant::now().checked_duration_since(deadline))
                     .map_or(0.0, |lateness| lateness.as_secs_f64() * 1_000.0),
+                presentation: None,
+            });
+        })
+        .copy();
+        command_buffer.add_completed_handler(&handler);
+        command_buffer.commit();
+        let cpu_orchestration_ms = cpu_start.elapsed().as_secs_f64() * 1_000.0;
+        cpu_orchestration_bits.store(cpu_orchestration_ms.to_bits(), Ordering::Release);
+        Ok(())
+    }
+
+    fn submit_presented_frame(
+        &self,
+        update: DisplayUpdate,
+        sender: Sender<RawTickTiming>,
+        runner: BenchmarkRunner,
+    ) -> Result<(), RuntimeDiagnostic> {
+        let schedule = &self.validated.execution_plan().schedules[0];
+        let cpu_start = Instant::now();
+        let command_buffer = self.queue.new_command_buffer();
+        command_buffer.set_label("loom.benchmark.presented-frame");
+        match runner {
+            BenchmarkRunner::LoomPlan => {
+                for item in &schedule.order {
+                    if let ScheduleItemId::View(view_id) = item {
+                        let view = schedule
+                            .views
+                            .iter()
+                            .find(|view| view.view == *view_id)
+                            .expect("validated plan view");
+                        self.encode_render(command_buffer, view, update.drawable.texture())?;
+                    }
+                }
+            }
+            BenchmarkRunner::DirectMetalEncoding => {
+                self.encode_direct_render(command_buffer, update.drawable.texture())?;
+            }
+        }
+
+        let (presented_sender, presented_time) = mpsc::channel();
+        let presented_handler = ConcreteBlock::new(move |drawable: &metal::DrawableRef| {
+            let _ = presented_sender.send(drawable.presented_time());
+        })
+        .copy();
+        update.drawable.add_presented_handler(&presented_handler);
+        command_buffer.present_drawable(&update.drawable);
+
+        let cpu_orchestration_bits = Arc::new(AtomicU64::new(u64::MAX));
+        let callback_cpu_bits = Arc::clone(&cpu_orchestration_bits);
+        let callback_start = cpu_start;
+        let presentation = Arc::new(Mutex::new(Some(PendingPresentation {
+            presented_time,
+            target_timestamp: update.target_timestamp,
+            target_presentation_timestamp: update.target_presentation_timestamp,
+        })));
+        let callback_presentation = Arc::clone(&presentation);
+        let handler = ConcreteBlock::new(move |completed: &metal::CommandBufferRef| {
+            let gpu_start: f64 = unsafe { msg_send![completed, GPUStartTime] };
+            let gpu_end: f64 = unsafe { msg_send![completed, GPUEndTime] };
+            let mut cpu_bits = callback_cpu_bits.load(Ordering::Acquire);
+            while cpu_bits == u64::MAX {
+                std::hint::spin_loop();
+                cpu_bits = callback_cpu_bits.load(Ordering::Acquire);
+            }
+            let _ = sender.send(RawTickTiming {
+                status: completed.status(),
+                gpu_start,
+                gpu_end,
+                cpu_orchestration_ms: f64::from_bits(cpu_bits),
+                end_to_end_tick_ms: callback_start.elapsed().as_secs_f64() * 1_000.0,
+                deadline_lateness_ms: 0.0,
+                presentation: callback_presentation
+                    .lock()
+                    .expect("presentation callback state")
+                    .take(),
             });
         })
         .copy();
@@ -795,6 +1037,44 @@ impl RuntimeState {
         Ok(())
     }
 
+    fn encode_direct_render(
+        &self,
+        command_buffer: &metal::CommandBufferRef,
+        texture: &metal::TextureRef,
+    ) -> Result<(), RuntimeDiagnostic> {
+        let direct = self.direct_metal.as_ref().ok_or_else(|| {
+            RuntimeDiagnostic::new(
+                RuntimeDiagnosticCode::UnsupportedGraph,
+                "direct-Metal encoding is available only for the Hello Batch resource layout",
+            )
+        })?;
+        let count = dispatch_count(
+            self.validated.graph(),
+            &DispatchDomain::OverStream(direct.position),
+        )?;
+        let descriptor = RenderPassDescriptor::new();
+        let attachment = descriptor.color_attachments().object_at(0).unwrap();
+        attachment.set_texture(Some(texture));
+        attachment.set_load_action(MTLLoadAction::Clear);
+        attachment.set_clear_color(MTLClearColor::new(0.025, 0.03, 0.055, 1.0));
+        attachment.set_store_action(MTLStoreAction::Store);
+        let render = command_buffer.new_render_command_encoder(descriptor);
+        render.set_render_pipeline_state(&self.render_pipelines[&direct.viewport]);
+        for (index, stream) in [direct.color, direct.position, direct.radius]
+            .iter()
+            .enumerate()
+        {
+            render.set_vertex_buffer(
+                index as u64,
+                Some(&self.stream_buffers[stream.0 as usize][0]),
+                0,
+            );
+        }
+        render.draw_primitives_instanced(MTLPrimitiveType::Triangle, 0, 6, count);
+        render.end_encoding();
+        Ok(())
+    }
+
     fn resource_metrics(&self) -> ResourceMetrics {
         ResourceMetrics {
             gpu_stream_buffer_bytes: self
@@ -821,11 +1101,51 @@ impl RuntimeState {
     }
 }
 
+struct PresentedPhase {
+    simulation: Receiver<RawTickTiming>,
+    simulation_ticks: u32,
+    presentation: Receiver<RawTickTiming>,
+    presented_frames: u32,
+    drawable_starvation_events: u32,
+}
+
 struct TickTiming {
     gpu_ms: f64,
     cpu_orchestration_ms: f64,
     end_to_end_tick_ms: f64,
     deadline_lateness_ms: f64,
+    gpu_deadline_missed: bool,
+    presentation_lateness_ms: Option<f64>,
+    presentation_deadline_missed: bool,
+    presentation_skipped: bool,
+    display_target_lead_ms: Option<f64>,
+}
+
+fn summarize_field(
+    timings: &[TickTiming],
+    field: impl Fn(&TickTiming) -> f64,
+) -> Result<crate::TimingSummary, RuntimeDiagnostic> {
+    if timings.is_empty() {
+        return Err(RuntimeDiagnostic::new(
+            RuntimeDiagnosticCode::CommandBufferFailed,
+            "benchmark phase produced no timing samples",
+        ));
+    }
+    Ok(summarize(&timings.iter().map(field).collect::<Vec<_>>()))
+}
+
+fn summarize_optional_field(
+    timings: &[TickTiming],
+    field: impl Fn(&TickTiming) -> Option<f64>,
+) -> Result<crate::TimingSummary, RuntimeDiagnostic> {
+    let samples = timings.iter().filter_map(field).collect::<Vec<_>>();
+    if samples.is_empty() {
+        return Err(RuntimeDiagnostic::new(
+            RuntimeDiagnosticCode::CommandBufferFailed,
+            "presented benchmark produced no presentation timing samples",
+        ));
+    }
+    Ok(summarize(&samples))
 }
 
 struct RawTickTiming {
@@ -835,6 +1155,13 @@ struct RawTickTiming {
     cpu_orchestration_ms: f64,
     end_to_end_tick_ms: f64,
     deadline_lateness_ms: f64,
+    presentation: Option<PendingPresentation>,
+}
+
+struct PendingPresentation {
+    presented_time: Receiver<f64>,
+    target_timestamp: f64,
+    target_presentation_timestamp: f64,
 }
 
 impl RawTickTiming {
@@ -851,11 +1178,42 @@ impl RawTickTiming {
                 "Metal did not provide valid command-buffer GPU timestamps",
             ));
         }
+        let gpu_deadline_missed = self
+            .presentation
+            .as_ref()
+            .is_some_and(|presentation| self.gpu_end > presentation.target_presentation_timestamp);
+        let display_target_lead_ms = self.presentation.as_ref().map(|presentation| {
+            (presentation.target_presentation_timestamp - presentation.target_timestamp) * 1_000.0
+        });
+        let (presentation_lateness_ms, presentation_deadline_missed, presentation_skipped) =
+            if let Some(presentation) = self.presentation {
+                let presented_time = presentation
+                    .presented_time
+                    .recv_timeout(Duration::from_millis(250))
+                    .map_err(|_| {
+                        RuntimeDiagnostic::new(
+                            RuntimeDiagnosticCode::CommandBufferFailed,
+                            "drawable presented handler did not report a presentation",
+                        )
+                    })?;
+                let skipped = presented_time <= 0.0;
+                let lateness = ((presented_time - presentation.target_presentation_timestamp)
+                    * 1_000.0)
+                    .max(0.0);
+                (Some(lateness), skipped || lateness > 0.5, skipped)
+            } else {
+                (None, false, false)
+            };
         Ok(TickTiming {
             gpu_ms: (self.gpu_end - self.gpu_start) * 1_000.0,
             cpu_orchestration_ms: self.cpu_orchestration_ms,
             end_to_end_tick_ms: self.end_to_end_tick_ms,
             deadline_lateness_ms: self.deadline_lateness_ms,
+            gpu_deadline_missed,
+            presentation_lateness_ms,
+            presentation_deadline_missed,
+            presentation_skipped,
+            display_target_lead_ms,
         })
     }
 }
@@ -974,6 +1332,22 @@ fn attach_layer(window: &winit::window::Window, layer: &MetalLayer) {
         let layer_object =
             layer.as_ref() as *const metal::MetalLayerRef as *mut objc::runtime::Object;
         let _: () = msg_send![view, setLayer: layer_object];
+    }
+}
+
+fn present_benchmark_window(window: &winit::window::Window) {
+    unsafe {
+        let application: *mut objc::runtime::Object =
+            msg_send![objc::class!(NSApplication), sharedApplication];
+        let _: bool = msg_send![application, setActivationPolicy: 0_isize];
+        let _: () = msg_send![application, finishLaunching];
+        let _: () = msg_send![application, activateIgnoringOtherApps: YES];
+        let native_window = window.ns_window() as *mut objc::runtime::Object;
+        let _: () = msg_send![
+            native_window,
+            makeKeyAndOrderFront: std::ptr::null_mut::<objc::runtime::Object>()
+        ];
+        let _: () = msg_send![native_window, display];
     }
 }
 
@@ -1462,12 +1836,56 @@ fn command_output(program: &str, arguments: &[&str]) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::pacing_offset;
+    use super::{encode_f32_initializer, pacing_offset};
+    use loom_core::{DataType, Literal};
     use std::time::Duration;
 
     #[test]
     fn rational_pacing_has_no_one_second_drift() {
         assert_eq!(pacing_offset(120, 120), Duration::from_secs(1));
         assert_eq!(pacing_offset(240, 120), Duration::from_secs(2));
+    }
+
+    #[test]
+    fn linear_initializer_expands_to_expected_bytes() {
+        let bytes = encode_f32_initializer(
+            &DataType::f32(),
+            &Literal::f32(1.0),
+            &Literal::f32(0.5),
+            None,
+            3,
+            3,
+        )
+        .unwrap();
+        assert_eq!(decode_f32(&bytes), vec![1.0, 1.5, 2.0]);
+    }
+
+    #[test]
+    fn grid_initializer_expands_in_row_major_order() {
+        let vector =
+            |values: &[f32]| Literal::Vector(values.iter().copied().map(Literal::f32).collect());
+        let bytes = encode_f32_initializer(
+            &DataType::Vector {
+                scalar: loom_core::ScalarType::F32,
+                lanes: 2,
+            },
+            &vector(&[10.0, 20.0]),
+            &vector(&[1.0, 0.0]),
+            Some(&vector(&[0.0, 2.0])),
+            2,
+            4,
+        )
+        .unwrap();
+        assert_eq!(
+            decode_f32(&bytes),
+            vec![10.0, 20.0, 11.0, 20.0, 10.0, 22.0, 11.0, 22.0]
+        );
+    }
+
+    fn decode_f32(bytes: &[u8]) -> Vec<f32> {
+        bytes
+            .chunks_exact(4)
+            .map(|chunk| f32::from_le_bytes(chunk.try_into().unwrap()))
+            .collect()
     }
 }

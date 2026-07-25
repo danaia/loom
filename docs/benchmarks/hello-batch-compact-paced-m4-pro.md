@@ -51,22 +51,36 @@ This closes the paced offscreen 120 Hz gate.
 ## Presented experiment
 
 Presented mode attaches a 960×720 `CAMetalLayer`, acquires actual drawables, encodes
-the same view, and calls `presentDrawable`.
+the same view, and presents it. Render admission is now driven by
+`CAMetalDisplayLink`; the simulation remains on its independent fixed 120 Hz clock.
+Drawable presented handlers distinguish command-buffer completion from actual
+presentation.
 
-At 1M particles with a 4 ms lead over a five-second sample:
+A two-second 100K development smoke test produced:
 
-- GPU p95: 6.209 ms
-- GPU p99: 6.640 ms
-- Deadline misses: 8 of 600
-- One GPU outlier exceeded the 8.33 ms budget
+- 240 fixed simulation ticks and 240 presented frames,
+- zero simulation deadline misses,
+- zero GPU presentation-deadline misses,
+- zero actual presentation misses,
+- zero skipped presentations,
+- zero drawable-starvation events.
 
-Drawable acquisition and display cadence are now visible in CPU and end-to-end
-timings. A larger lead does not solve the problem reliably because acquiring too
-early blocks on drawable availability. The next implementation step is
-display-synchronized admission rather than more queue lead.
+The same two-second smoke test at 1M particles also presented all 240 frames with
+zero misses, skips, or starvation. Render GPU p95 was 5.995 ms and render
+end-to-end p99 was 7.127 ms.
+
+This smoke test was run from a dirty development tree and is regression evidence,
+not the final published baseline.
 
 ## Reproducibility status
 
 These development measurements correctly report `source_dirty: true`. After the
-implementation is committed, rerun the clean-tree commands and commit result files
-separately before using them as release evidence.
+implementation is committed, run:
+
+```text
+./scripts/benchmark-hello-batch-clean.sh 100k rendered 30 60 4
+./scripts/benchmark-hello-batch-clean.sh 1m presented 30 60 4
+```
+
+The runner refuses a dirty source tree and alternates Loom/direct-Metal ordering.
+Commit result files separately before using them as release evidence.

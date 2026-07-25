@@ -46,11 +46,12 @@ initializers reduced the 1M maximum resident set from roughly 3.38 GB to 92 MB.
 A paced 10-second offscreen 1M run completed all 1,200 deadlines with an explicitly
 reported 2 ms submission lead.
 
-Presented benchmarking now acquires real `CAMetalLayer` drawables and calls
-`presentDrawable`. Its GPU p95 remains below budget, but drawable/display cadence
-still causes deadline misses. Hello Batch remains open until presentation is driven
-by a display-synchronized admission policy and longer interleaved direct-Metal trials
-are recorded from a clean tree.
+Presented benchmarking now uses `CAMetalDisplayLink` for display-synchronized render
+admission while the simulation advances on its independent fixed 120 Hz clock.
+Command-buffer GPU completion and actual drawable presentation are measured
+separately. GPU deadline misses, presentation misses, skipped presentations, and
+drawable starvation have separate counters. Hello Batch remains open only until
+longer interleaved Loom/direct-Metal trials are recorded from a clean tree.
 
 ## 2. Hello Field
 
@@ -141,6 +142,7 @@ Loom earns the claim through:
 - [ ] New semantics solve repeated workload friction.
 - [x] Compact stream initialization is typed, deterministic, validated, and
       backend-neutral.
+- [x] Compact initializer expansion has byte-exact regression fixtures.
 - [ ] Diagnostics include stable codes and mechanical repairs where safe.
 - [ ] Canonical hashes remain stable for equivalent graphs.
 - [ ] No parser work is required.
@@ -173,11 +175,14 @@ Loom earns the claim through:
       peak resident set, buffer bytes, copies, and blits are reported; allocator
       instrumentation remains open.
 - [x] Benchmark headless and fixed-resolution offscreen-rendered modes.
+- [x] Drive presented rendering from display timing independently of simulation.
+- [x] Report GPU, presentation, skip, and drawable-starvation failures separately.
 - [x] Hold all in-process direct-Metal encoding controls constant.
 - [x] Measure GPU execution, CPU submission, and end-to-end latency separately.
 - [x] Report p95/p99 against the 8.33 ms budget without assuming success.
 - [ ] Test 1K, 10K, 100K, and 1M particles.
 - [ ] Publish results that are reproducible from a runtime fingerprint.
+- [ ] Run clean-tree interleaved 30–60 second Loom/direct-Metal trials.
 
 ### Agent Experience
 

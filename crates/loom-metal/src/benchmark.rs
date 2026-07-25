@@ -66,8 +66,25 @@ pub struct BenchmarkResult {
     pub synchronized_each_tick: bool,
     pub max_in_flight_command_buffers: u32,
     pub pacing: Option<PacingResult>,
+    pub presentation: Option<PresentationResult>,
     pub resources: ResourceMetrics,
     pub runtime: RuntimeFingerprint,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct PresentationResult {
+    pub display_link_driven: bool,
+    pub presented_frames: u32,
+    pub drawable_starvation_events: u32,
+    pub gpu_deadline_misses: u32,
+    pub presentation_deadline_misses: u32,
+    pub skipped_presentations: u32,
+    pub lateness_tolerance_ms: f64,
+    pub render_gpu_ms: TimingSummary,
+    pub render_cpu_orchestration_ms: TimingSummary,
+    pub render_end_to_end_ms: TimingSummary,
+    pub display_target_lead_ms: TimingSummary,
+    pub presentation_lateness_ms: TimingSummary,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

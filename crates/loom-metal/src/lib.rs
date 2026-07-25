@@ -3,6 +3,7 @@
 
 mod benchmark;
 mod diagnostic;
+mod display_link;
 mod fingerprint;
 mod runtime;
 

@@ -79,8 +79,9 @@ Run bounded benchmarks without opening a window:
 ./scripts/run-hello-particle.sh batch 1m --bench rendered \
   --pace 120 --pace-lead-us 2000 --warmup-seconds 5 --duration-seconds 10
 ./scripts/run-hello-particle.sh batch 1m --bench presented \
-  --pace 120 --pace-lead-us 4000 --warmup-seconds 5 --duration-seconds 10
+  --pace 120 --warmup-seconds 5 --duration-seconds 10
 ./scripts/benchmark-hello-batch.sh 30 60
+./scripts/benchmark-hello-batch-clean.sh 100k rendered 30 60 4
 ```
 
 Benchmark commands build and run the optimized Rust release profile automatically.
@@ -109,12 +110,17 @@ fixed number of ticks per second and reports deadline misses. `--pace-lead-us`
 explicitly admits work slightly ahead of its deadline; the lead must remain shorter
 than one tick and is recorded in the result.
 
-Rendered mode remains offscreen. Presented mode creates an attached `CAMetalLayer`,
-acquires real drawables, and calls `presentDrawable`; its CPU and end-to-end timings
-therefore include drawable backpressure. Completion timestamps still do not identify
-the exact compositor scan-out time.
+Rendered mode remains offscreen. Presented mode creates an attached `CAMetalLayer`
+and uses `CAMetalDisplayLink` to admit render frames independently from the fixed
+120 Hz simulation clock. It reports GPU deadline misses, actual presentation misses,
+skipped presentations, and drawable starvation separately. Actual presentation time
+comes from the drawable presented handler rather than command-buffer completion.
 The sweep script runs 1K, 10K, 100K, and 1M in both modes and writes one JSON result
 per workload under `benchmark-results/hello-batch` by default.
+
+The clean comparison script refuses a dirty source tree and alternates Loom-first
+and direct-Metal-first trials to reduce ordering bias. Its defaults are four
+interleaved pairs with a 30-second warm-up and 60-second sample.
 
 Recorded baselines:
 
