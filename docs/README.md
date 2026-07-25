@@ -49,3 +49,16 @@ The runtime accepts a `ValidatedModuleGraph`, allocates private Metal buffers fr
 the execution plan, compiles its declared compute and render implementations,
 executes `fall → bounce → viewport`, and enforces the plan's cross-tick completion
 leases before single-buffer reuse.
+
+Select the conformance experiment through the same launcher:
+
+```text
+./scripts/run-hello-particle.sh particle
+./scripts/run-hello-particle.sh batch
+./scripts/run-hello-particle.sh batch 10k
+```
+
+`batch` defaults to 1,000 particles. Counts accept exact positive integers plus
+`k` and `m` suffixes. Hello Batch uses the same kernels and language path while
+testing stream capacity, logical length, plan-driven dispatch, private-buffer
+allocation, and instanced rendering at scale.

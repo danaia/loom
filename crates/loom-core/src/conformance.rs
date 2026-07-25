@@ -11,6 +11,8 @@ use crate::{
 
 #[derive(Clone, Debug)]
 pub struct HelloParticleConfig {
+    pub module_name: &'static str,
+    pub particle_count: u32,
     pub particle_buffering: u32,
     pub simulation_ticks_in_flight: u32,
     pub tick_overlap: TickOverlapPolicy,
@@ -21,6 +23,8 @@ pub struct HelloParticleConfig {
 impl Default for HelloParticleConfig {
     fn default() -> Self {
         Self {
+            module_name: "hello_particle",
+            particle_count: 1,
             particle_buffering: 1,
             simulation_ticks_in_flight: 4,
             tick_overlap: TickOverlapPolicy::SerializeConflictingTicks,
@@ -39,7 +43,16 @@ impl HelloParticleConfig {
     }
 }
 
+pub fn hello_batch_builder(particle_count: u32) -> ModuleBuilder {
+    hello_particle_builder(HelloParticleConfig {
+        module_name: "hello_batch",
+        particle_count,
+        ..HelloParticleConfig::default()
+    })
+}
+
 pub fn hello_particle_builder(config: HelloParticleConfig) -> ModuleBuilder {
+    let particle_count = config.particle_count;
     let vec3 = DataType::vec3_f32();
     let vec4 = DataType::vec4_f32();
     let f32_type = DataType::f32();
@@ -53,7 +66,44 @@ pub fn hello_particle_builder(config: HelloParticleConfig) -> ModuleBuilder {
         rendering: RenderOverloadPolicy::DropPresentationOnly,
     };
 
-    ModuleBuilder::new("hello_particle")
+    let positions = (0..particle_count)
+        .map(|index| {
+            let columns = (particle_count as f32).sqrt().ceil().max(1.0) as u32;
+            let column = index % columns;
+            let row = index / columns;
+            let x = if columns == 1 {
+                0.0
+            } else {
+                -0.9 + 1.8 * column as f32 / (columns - 1) as f32
+            };
+            let y = 0.15 + (row % 24) as f32 * 0.035;
+            Literal::Vector(vec![Literal::f32(x), Literal::f32(y), Literal::f32(0.0)])
+        })
+        .collect::<Vec<_>>();
+    let repeated_vec3 = |x: f32, y: f32, z: f32| {
+        Literal::Array(
+            (0..particle_count)
+                .map(|_| Literal::Vector(vec![Literal::f32(x), Literal::f32(y), Literal::f32(z)]))
+                .collect(),
+        )
+    };
+    let repeated_f32 =
+        |value: f32| Literal::Array((0..particle_count).map(|_| Literal::f32(value)).collect());
+    let colors = Literal::Array(
+        (0..particle_count)
+            .map(|index| {
+                let phase = index as f32 / particle_count.max(1) as f32;
+                Literal::Vector(vec![
+                    Literal::f32(0.4 + 0.6 * phase),
+                    Literal::f32(0.2 + 0.5 * (1.0 - phase)),
+                    Literal::f32(1.0 - 0.5 * phase),
+                    Literal::f32(1.0),
+                ])
+            })
+            .collect(),
+    );
+
+    ModuleBuilder::new(config.module_name)
         .target(Target::Metal)
         .value(ValueDraft::constant(
             "world.gravity",
@@ -73,27 +123,25 @@ pub fn hello_particle_builder(config: HelloParticleConfig) -> ModuleBuilder {
         ))
         .stream(
             StreamDraft::new("particles.position", vec3.clone(), Unit::METER)
+                .capacity(particle_count)
+                .length(particle_count)
                 .buffering(config.particle_buffering)
-                .initial(Literal::Array(vec![Literal::Vector(vec![
-                    Literal::f32(0.0),
-                    Literal::f32(1.0),
-                    Literal::f32(0.0),
-                ])])),
+                .initial(Literal::Array(positions)),
         )
         .stream(
             StreamDraft::new("particles.velocity", vec3.clone(), Unit::METERS_PER_SECOND)
+                .capacity(particle_count)
+                .length(particle_count)
                 .buffering(config.particle_buffering)
-                .initial(Literal::Array(vec![Literal::Vector(vec![
-                    Literal::f32(0.0),
-                    Literal::f32(0.0),
-                    Literal::f32(0.0),
-                ])])),
+                .initial(repeated_vec3(0.0, 0.0, 0.0)),
         )
         .stream(
             StreamDraft::new("particles.radius", f32_type.clone(), Unit::METER)
+                .capacity(particle_count)
+                .length(particle_count)
                 .buffering(config.particle_buffering)
                 .access(ResourceAccess::DeviceRead)
-                .initial(Literal::Array(vec![Literal::f32(0.004)])),
+                .initial(repeated_f32(0.004)),
         )
         .stream(
             StreamDraft::new(
@@ -101,26 +149,27 @@ pub fn hello_particle_builder(config: HelloParticleConfig) -> ModuleBuilder {
                 f32_type.clone(),
                 Unit::DIMENSIONLESS,
             )
+            .capacity(particle_count)
+            .length(particle_count)
             .buffering(config.particle_buffering)
             .access(ResourceAccess::DeviceRead)
-            .initial(Literal::Array(vec![Literal::f32(0.8)])),
+            .initial(repeated_f32(0.8)),
         )
         .stream(
             StreamDraft::new("particles.friction", f32_type.clone(), Unit::DIMENSIONLESS)
+                .capacity(particle_count)
+                .length(particle_count)
                 .buffering(config.particle_buffering)
                 .access(ResourceAccess::DeviceRead)
-                .initial(Literal::Array(vec![Literal::f32(0.3)])),
+                .initial(repeated_f32(0.3)),
         )
         .stream(
             StreamDraft::new("particles.color", vec4.clone(), Unit::DIMENSIONLESS)
+                .capacity(particle_count)
+                .length(particle_count)
                 .buffering(config.particle_buffering)
                 .access(ResourceAccess::DeviceRead)
-                .initial(Literal::Array(vec![Literal::Vector(vec![
-                    Literal::f32(1.0),
-                    Literal::f32(0.2),
-                    Literal::f32(0.4),
-                    Literal::f32(1.0),
-                ])])),
+                .initial(colors),
         )
         .kernel(
             KernelDraft::new("integrate")

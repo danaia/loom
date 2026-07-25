@@ -43,7 +43,10 @@ impl MetalRuntime {
         let event_loop = EventLoop::new();
         let window = WindowBuilder::new()
             .with_inner_size(LogicalSize::new(960.0, 720.0))
-            .with_title("Loom — Hello Particle")
+            .with_title(format!(
+                "Loom — {}",
+                display_name(validated.graph().name.as_str())
+            ))
             .build(&event_loop)
             .map_err(|error| {
                 RuntimeDiagnostic::new(
@@ -278,10 +281,52 @@ impl RuntimeState {
                 0,
             );
         }
-        encoder.draw_primitives(MTLPrimitiveType::Triangle, 0, 6);
+        let instances = view_instance_count(self.validated.graph(), view)?;
+        encoder.draw_primitives_instanced(MTLPrimitiveType::Triangle, 0, 6, instances);
         encoder.end_encoding();
         Ok(())
     }
+}
+
+fn display_name(module_name: &str) -> String {
+    module_name
+        .split('_')
+        .map(|word| {
+            let mut characters = word.chars();
+            match characters.next() {
+                Some(first) => first.to_uppercase().chain(characters).collect(),
+                None => String::new(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn view_instance_count(
+    graph: &loom_core::ModuleGraph,
+    view: &PlannedView,
+) -> Result<u64, RuntimeDiagnostic> {
+    let mut count = None;
+    for read in &view.reads {
+        let length = match graph.stream(read.stream).unwrap().length {
+            StreamLength::Fixed(length) => length,
+            StreamLength::Dynamic(_) => {
+                return Err(RuntimeDiagnostic::new(
+                    RuntimeDiagnosticCode::UnsupportedGraph,
+                    "dynamic view lengths are not in the first Metal slice",
+                ));
+            }
+        };
+        if count.is_some_and(|expected| expected != length) {
+            return Err(RuntimeDiagnostic::new(
+                RuntimeDiagnosticCode::UnsupportedGraph,
+                "view streams have incompatible logical lengths",
+            )
+            .at(format!("views.{}", view.view.0)));
+        }
+        count = Some(length);
+    }
+    Ok(count.unwrap_or(0) as u64)
 }
 
 fn requires_wait_after(schedule: &ExecutionSchedule, submitted: ScheduleItemId) -> bool {

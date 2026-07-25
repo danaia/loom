@@ -3,7 +3,7 @@ use loom_core::{
     KernelId, Literal, ModuleBuilder, PresentationLifetimePolicy, QueueModel, ResourceId,
     SnapshotSemantics, StreamDraft, TickOverlapPolicy, Unit, ValueDraft, ValueKind, ViewState,
     canonicalize,
-    conformance::{HelloParticleConfig, hello_particle_builder},
+    conformance::{HelloParticleConfig, hello_batch_builder, hello_particle_builder},
 };
 use loom_validator::{
     ConcurrencyBasis, PresentationConcurrencyBasis, RepairError, RepairPlan, ValidationPass,
@@ -156,6 +156,31 @@ fn topological_order_is_fall_then_bounce_then_viewport() {
             .iter()
             .all(|edge| edge.semantics == DependencySemantics::Completion)
     );
+}
+
+#[test]
+fn hello_batch_uses_the_same_language_path_at_one_thousand_particles() {
+    let graph = hello_batch_builder(1_000).build().unwrap();
+    let report = Validator::validate(&graph);
+
+    assert_diagnostics_empty(&report);
+    assert_eq!(graph.name, "hello_batch");
+    assert!(graph.resources.streams.iter().all(|stream| {
+        stream.capacity == 1_000 && stream.length == loom_core::StreamLength::Fixed(1_000)
+    }));
+    let schedule = &report
+        .validated
+        .as_ref()
+        .unwrap()
+        .execution_plan()
+        .schedules[0];
+    assert!(schedule.passes.iter().all(|pass| {
+        matches!(
+            pass.dispatch,
+            loom_core::DispatchDomain::OverStream(stream)
+                if graph.stream(stream).unwrap().capacity == 1_000
+        )
+    }));
 }
 
 #[test]

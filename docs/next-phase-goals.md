@@ -21,11 +21,23 @@ For every milestone:
 
 - Scale 1K → 10K → 100K → 1M particles.
 - Reuse fall and bounce kernels.
-- Add multi-version buffers and asynchronous ticks.
+- Add multi-version buffers and asynchronous CPU submission.
 - Cache Metal pipelines.
-- Compare against direct Metal using the same MSL and data.
+- Compare against an equivalent direct-Metal runner.
 
-**Gate:** Sustain 120 Hz without a per-tick GPU wait.
+Simulation ticks remain sequential: tick `n + 1` consumes tick `n`. Asynchronous
+submission means the CPU may submit without waiting after every tick while the GPU
+preserves simulation dependencies and safely overlaps presentation or readback where
+permitted. It does not mean dependent physics ticks execute in parallel.
+
+Benchmark every particle count in two modes:
+
+- headless simulation,
+- simulation plus rendering at a fixed viewport resolution.
+
+**Gate:** Record whether GPU p95 is below 8.33 ms at 1K, 10K, 100K, and 1M
+particles without a per-tick CPU wait. One million particles at 120 Hz is a target,
+not a guaranteed outcome.
 
 ## 2. Hello Field
 
@@ -50,12 +62,43 @@ hash
 
 - Spatial hashing.
 - Cell sorting or prefix-sum/scatter.
-- Bounded neighbor interaction.
+- A declared maximum number of neighbors examined per particle.
+- A declared maximum number of particles represented per cell.
+- A deterministic dense-cell overflow policy.
+- An asynchronous overflow counter and structured diagnostic.
 - Simple cohesion, separation, alignment, and boundary avoidance.
 - Compaction and indirect dispatch.
 - GPU-rendered visualization.
 
-**Gate:** Bounded neighbor work using spatial hashing.
+**Gate:** Bounded neighbor work using spatial hashing, with measurable overflow
+behavior and no silent truncation.
+
+### Swarm determinism
+
+Hello Swarm uses tolerance-based physical determinism. Parallel insertion,
+neighbor ordering, and floating-point accumulation are not required to reproduce
+bit-for-bit results. Its contracts declare numerical tolerances and invariant
+metrics explicitly rather than inheriting Hello Particle’s exact tier.
+
+### Swarm collection identity
+
+The active swarm collection is semantically unordered. Particles retain stable IDs
+for inspection and external references, but compaction is not required to preserve
+storage order.
+
+## Direct-Metal Comparison
+
+Loom and the baseline must use identical:
+
+- MSL kernels and input data,
+- buffer layouts and storage modes,
+- pipeline descriptors and specialization constants,
+- threadgroup sizes and dispatch dimensions,
+- command-buffer and encoder grouping,
+- rendering resolution,
+- warm-up duration and sampling duration.
+
+Report GPU execution time and CPU orchestration time separately.
 
 ## Final Proofs
 
@@ -93,6 +136,8 @@ Loom earns the claim through:
 - [ ] Scenarios cover expected physical behavior.
 - [ ] Hazards and cross-tick lifetimes are proven.
 - [ ] Render dropping cannot corrupt simulation state.
+- [ ] Swarm contracts use tolerance-based physical determinism.
+- [ ] Compaction preserves stable IDs, not storage order.
 - [ ] Invalid graphs never receive executable fingerprints.
 
 ### Metal
@@ -101,13 +146,18 @@ Loom earns the claim through:
 - [ ] Threadgroup sizes use compiled pipeline properties.
 - [ ] Particle state stays GPU-resident.
 - [ ] No unnecessary per-tick CPU/GPU wait.
+- [ ] Sequential tick dependencies remain explicit during asynchronous submission.
+- [ ] Dense-cell overflow is counted and diagnosed.
 - [ ] Metal failures produce structured diagnostics.
 
 ### Performance
 
 - [ ] Record device, OS, artifact, shaders, pipelines, and workload.
 - [ ] Measure GPU time, working set, allocations, copies, and blits.
-- [ ] Compare identical MSL and data against direct Metal.
+- [ ] Benchmark headless and fixed-resolution rendered modes.
+- [ ] Hold all direct-Metal comparison controls constant.
+- [ ] Measure GPU execution and CPU orchestration separately.
+- [ ] Report p95 against the 8.33 ms budget without assuming success.
 - [ ] Test 1K, 10K, 100K, and 1M particles.
 - [ ] Publish results that are reproducible from a runtime fingerprint.
 
