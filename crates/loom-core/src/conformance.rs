@@ -69,42 +69,21 @@ pub fn hello_particle_builder(config: HelloParticleConfig) -> ModuleBuilder {
         rendering: RenderOverloadPolicy::DropPresentationOnly,
     };
 
-    let positions = (0..particle_count)
-        .map(|index| {
-            let columns = (particle_count as f32).sqrt().ceil().max(1.0) as u32;
-            let column = index % columns;
-            let row = index / columns;
-            let x = if columns == 1 {
-                0.0
-            } else {
-                -0.9 + 1.8 * column as f32 / (columns - 1) as f32
-            };
-            let y = 0.15 + (row % 24) as f32 * 0.035;
-            Literal::Vector(vec![Literal::f32(x), Literal::f32(y), Literal::f32(0.0)])
-        })
-        .collect::<Vec<_>>();
-    let repeated_vec3 = |x: f32, y: f32, z: f32| {
-        Literal::Array(
-            (0..particle_count)
-                .map(|_| Literal::Vector(vec![Literal::f32(x), Literal::f32(y), Literal::f32(z)]))
-                .collect(),
-        )
+    let vector =
+        |values: &[f32]| Literal::Vector(values.iter().copied().map(Literal::f32).collect());
+    let columns = (particle_count as f32).sqrt().ceil().max(1.0) as u32;
+    let rows = particle_count.div_ceil(columns);
+    let position_column_step = if columns > 1 {
+        1.8 / (columns - 1) as f32
+    } else {
+        0.0
     };
-    let repeated_f32 =
-        |value: f32| Literal::Array((0..particle_count).map(|_| Literal::f32(value)).collect());
-    let colors = Literal::Array(
-        (0..particle_count)
-            .map(|index| {
-                let phase = index as f32 / particle_count.max(1) as f32;
-                Literal::Vector(vec![
-                    Literal::f32(0.4 + 0.6 * phase),
-                    Literal::f32(0.2 + 0.5 * (1.0 - phase)),
-                    Literal::f32(1.0 - 0.5 * phase),
-                    Literal::f32(1.0),
-                ])
-            })
-            .collect(),
-    );
+    let position_row_step = if rows > 1 {
+        0.8 / (rows - 1) as f32
+    } else {
+        0.0
+    };
+    let color_scale = 1.0 / particle_count.max(1) as f32;
 
     ModuleBuilder::new(config.module_name)
         .target(Target::Metal)
@@ -129,14 +108,20 @@ pub fn hello_particle_builder(config: HelloParticleConfig) -> ModuleBuilder {
                 .capacity(particle_count)
                 .length(particle_count)
                 .buffering(config.particle_buffering)
-                .initial(Literal::Array(positions)),
+                .initial_grid_2d(
+                    vector(&[-0.9, 0.15, 0.0]),
+                    vector(&[position_column_step, 0.0, 0.0]),
+                    vector(&[0.0, position_row_step, 0.0]),
+                    columns,
+                    particle_count,
+                ),
         )
         .stream(
             StreamDraft::new("particles.velocity", vec3.clone(), Unit::METERS_PER_SECOND)
                 .capacity(particle_count)
                 .length(particle_count)
                 .buffering(config.particle_buffering)
-                .initial(repeated_vec3(0.0, 0.0, 0.0)),
+                .initial_repeat(vector(&[0.0, 0.0, 0.0]), particle_count),
         )
         .stream(
             StreamDraft::new("particles.radius", f32_type.clone(), Unit::METER)
@@ -144,7 +129,7 @@ pub fn hello_particle_builder(config: HelloParticleConfig) -> ModuleBuilder {
                 .length(particle_count)
                 .buffering(config.particle_buffering)
                 .access(ResourceAccess::DeviceRead)
-                .initial(repeated_f32(0.004)),
+                .initial_repeat(Literal::f32(0.004), particle_count),
         )
         .stream(
             StreamDraft::new(
@@ -156,7 +141,7 @@ pub fn hello_particle_builder(config: HelloParticleConfig) -> ModuleBuilder {
             .length(particle_count)
             .buffering(config.particle_buffering)
             .access(ResourceAccess::DeviceRead)
-            .initial(repeated_f32(0.8)),
+            .initial_repeat(Literal::f32(0.8), particle_count),
         )
         .stream(
             StreamDraft::new("particles.friction", f32_type.clone(), Unit::DIMENSIONLESS)
@@ -164,7 +149,7 @@ pub fn hello_particle_builder(config: HelloParticleConfig) -> ModuleBuilder {
                 .length(particle_count)
                 .buffering(config.particle_buffering)
                 .access(ResourceAccess::DeviceRead)
-                .initial(repeated_f32(0.3)),
+                .initial_repeat(Literal::f32(0.3), particle_count),
         )
         .stream(
             StreamDraft::new("particles.color", vec4.clone(), Unit::DIMENSIONLESS)
@@ -172,7 +157,16 @@ pub fn hello_particle_builder(config: HelloParticleConfig) -> ModuleBuilder {
                 .length(particle_count)
                 .buffering(config.particle_buffering)
                 .access(ResourceAccess::DeviceRead)
-                .initial(colors),
+                .initial_linear(
+                    vector(&[0.4, 0.7, 1.0, 1.0]),
+                    vector(&[
+                        0.6 * color_scale,
+                        -0.5 * color_scale,
+                        -0.5 * color_scale,
+                        0.0,
+                    ]),
+                    particle_count,
+                ),
         )
         .kernel(
             KernelDraft::new("integrate")

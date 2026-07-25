@@ -1,8 +1,8 @@
 use loom_core::{
     CapabilityKind, ContractClause, DataType, DependencySemantics, DiagnosticCode, GraphEdit,
     KernelId, Literal, ModuleBuilder, PresentationLifetimePolicy, QueueModel, ResourceId,
-    SnapshotSemantics, StreamDraft, TickOverlapPolicy, Unit, ValueDraft, ValueKind, ViewState,
-    canonicalize,
+    SnapshotSemantics, StreamDraft, StreamInitializer, TickOverlapPolicy, Unit, ValueDraft,
+    ValueKind, ViewState, canonicalize,
     conformance::{HelloParticleConfig, hello_batch_builder, hello_particle_builder},
 };
 use loom_validator::{
@@ -196,6 +196,46 @@ fn hello_batch_uses_the_same_language_path_at_one_thousand_particles() {
                 *enforcement == loom_validator::CompletionEnforcement::SerialQueueOrder
             })
     );
+}
+
+#[test]
+fn million_particle_initial_state_is_compact_and_validated() {
+    let graph = hello_batch_builder(1_000_000).build().unwrap();
+    let report = Validator::validate(&graph);
+
+    assert_diagnostics_empty(&report);
+    assert!(
+        serde_json::to_vec(&graph).unwrap().len() < 100_000,
+        "compact initializers must keep the semantic graph independent of particle count"
+    );
+    assert!(graph.resources.streams.iter().all(|stream| {
+        !matches!(
+            stream.initial,
+            Some(StreamInitializer::Explicit(Literal::Array(_)))
+        )
+    }));
+}
+
+#[test]
+fn invalid_compact_initializer_parameters_are_diagnosed() {
+    let mut graph = hello_batch_builder(1_000).build().unwrap();
+    let position = graph
+        .resources
+        .streams
+        .iter_mut()
+        .find(|stream| stream.name == "particles.position")
+        .unwrap();
+    let Some(StreamInitializer::Grid2D { columns, .. }) = &mut position.initial else {
+        panic!("Hello Batch position should use a grid initializer");
+    };
+    *columns = 0;
+
+    let report = Validator::validate(&graph);
+    assert!(report.diagnostics.iter().any(|diagnostic| {
+        diagnostic.code == DiagnosticCode::InvalidInitialData
+            && diagnostic.primary
+                == loom_core::SemanticPath::new("streams.particles.position.initial")
+    }));
 }
 
 #[test]
@@ -515,7 +555,9 @@ fn invalid_literals_and_stream_initial_data_are_diagnosed() {
         .iter_mut()
         .find(|stream| stream.name == "particles.position")
         .unwrap();
-    position.initial = Some(Literal::Array(vec![Literal::f32(1.0)]));
+    position.initial = Some(StreamInitializer::Explicit(Literal::Array(vec![
+        Literal::f32(1.0),
+    ])));
 
     let report = Validator::validate(&graph);
     assert!(

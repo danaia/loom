@@ -13,7 +13,7 @@ use block::ConcreteBlock;
 use core_graphics_types::geometry::CGSize;
 use loom_core::{
     DataType, DispatchDomain, Literal, PassId, ResourceId, ScalarType, ScheduleItemId, StreamId,
-    StreamLength, ValueId, ValueKind, ViewId,
+    StreamInitializer, StreamLength, ValueId, ValueKind, ViewId,
 };
 use loom_validator::{
     CompletionEnforcement, CompletionRequirement, ExecutionSchedule, PlannedPass, PlannedView,
@@ -35,9 +35,9 @@ use winit::{
 };
 
 use crate::{
-    BenchmarkConfig, BenchmarkMode, BenchmarkResult, BenchmarkRunner, PipelineIdentity,
-    ResourceMetrics, RuntimeDiagnostic, RuntimeDiagnosticCode, RuntimeFingerprint, ShaderIdentity,
-    ViewportSize, sha256, summarize,
+    BenchmarkConfig, BenchmarkMode, BenchmarkResult, BenchmarkRunner, PacingResult,
+    PipelineIdentity, ResourceMetrics, RuntimeDiagnostic, RuntimeDiagnosticCode,
+    RuntimeFingerprint, ShaderIdentity, ViewportSize, sha256, summarize,
 };
 
 const INTEGRATE_SOURCE: &str = include_str!("../../../kernels/euler_integrate.metal");
@@ -131,12 +131,51 @@ impl MetalRuntime {
                 "benchmark sample count must be positive",
             ));
         }
+        if config.pacing_hz == Some(0) {
+            return Err(RuntimeDiagnostic::new(
+                RuntimeDiagnosticCode::UnsupportedGraph,
+                "benchmark pacing rate must be positive",
+            ));
+        }
+        if let Some(rate_hz) = config.pacing_hz
+            && u64::from(config.pacing_lead_microseconds) * u64::from(rate_hz) >= 1_000_000
+        {
+            return Err(RuntimeDiagnostic::new(
+                RuntimeDiagnosticCode::UnsupportedGraph,
+                "benchmark pacing lead must be shorter than one tick",
+            ));
+        }
         let device = Device::system_default().ok_or_else(|| {
             RuntimeDiagnostic::new(
                 RuntimeDiagnosticCode::DeviceUnavailable,
                 "Metal has no system-default device",
             )
         })?;
+        if config.mode == BenchmarkMode::Presented {
+            let event_loop = EventLoop::new();
+            let window = WindowBuilder::new()
+                .with_inner_size(LogicalSize::new(
+                    config.viewport_width as f64,
+                    config.viewport_height as f64,
+                ))
+                .with_title("Loom — Hello Batch Presented Benchmark")
+                .build(&event_loop)
+                .map_err(|error| {
+                    RuntimeDiagnostic::new(
+                        RuntimeDiagnosticCode::WindowCreationFailed,
+                        error.to_string(),
+                    )
+                })?;
+            let layer = MetalLayer::new();
+            layer.set_device(&device);
+            layer.set_pixel_format(MTLPixelFormat::BGRA8Unorm);
+            layer.set_presents_with_transaction(false);
+            layer.set_maximum_drawable_count(3);
+            attach_layer(&window, &layer);
+            resize_layer(&window, &layer);
+            let mut state = RuntimeState::new(validated, device.clone(), layer)?;
+            return autoreleasepool(|| state.run_benchmark(&device, config));
+        }
         let layer = MetalLayer::new();
         layer.set_device(&device);
         layer.set_pixel_format(MTLPixelFormat::BGRA8Unorm);
@@ -331,6 +370,16 @@ impl RuntimeState {
         device: &Device,
         config: BenchmarkConfig,
     ) -> Result<BenchmarkResult, RuntimeDiagnostic> {
+        if config.pacing_hz.is_some() {
+            let status = unsafe { pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0) };
+            if status != 0 {
+                return Err(RuntimeDiagnostic::new(
+                    RuntimeDiagnosticCode::UnsupportedGraph,
+                    format!("failed to request interactive pacing QoS: errno {status}"),
+                ));
+            }
+        }
+        let presented = config.mode == BenchmarkMode::Presented;
         let render_target = (config.mode == BenchmarkMode::Rendered).then(|| {
             let descriptor = TextureDescriptor::new();
             descriptor.set_width(config.viewport_width as u64);
@@ -345,7 +394,8 @@ impl RuntimeState {
             render_target.as_deref(),
             config.warmup_ticks,
             config.warmup_seconds,
-            config.runner,
+            &config,
+            presented,
         )?;
         self.drain_benchmark_ticks(warmup_receiver, warmup_ticks)?;
 
@@ -354,7 +404,8 @@ impl RuntimeState {
             render_target.as_deref(),
             config.sample_ticks,
             config.sample_seconds,
-            config.runner,
+            &config,
+            presented,
         )?;
         let timings = self.drain_benchmark_ticks(sample_receiver, sample_ticks)?;
         let sample_wall_time_seconds = sample_start.elapsed().as_secs_f64();
@@ -374,6 +425,23 @@ impl RuntimeState {
         let gpu_ms = summarize(&gpu_samples);
         let cpu_orchestration_ms = summarize(&cpu_samples);
         let end_to_end_tick_ms = summarize(&latency_samples);
+        let pacing = config.pacing_hz.map(|target_hz| {
+            let deadline_misses = timings
+                .iter()
+                .filter(|timing| timing.deadline_lateness_ms > 0.0)
+                .count() as u32;
+            PacingResult {
+                target_hz,
+                tick_budget_ms: 1_000.0 / target_hz as f64,
+                submission_lead_ms: config.pacing_lead_microseconds as f64 / 1_000.0,
+                deadline_misses,
+                deadline_miss_rate: deadline_misses as f64 / sample_ticks as f64,
+                maximum_lateness_ms: timings
+                    .iter()
+                    .map(|timing| timing.deadline_lateness_ms)
+                    .fold(0.0, f64::max),
+            }
+        });
         let particle_count = benchmark_dispatch_count(
             self.validated.graph(),
             &self.validated.execution_plan().schedules[0],
@@ -383,7 +451,7 @@ impl RuntimeState {
             particle_count,
             mode: config.mode,
             runner: config.runner,
-            viewport: (config.mode == BenchmarkMode::Rendered).then_some(ViewportSize {
+            viewport: (config.mode != BenchmarkMode::Headless).then_some(ViewportSize {
                 width: config.viewport_width,
                 height: config.viewport_height,
             }),
@@ -399,6 +467,7 @@ impl RuntimeState {
             submitted_ticks_per_second: sample_ticks as f64 / sample_wall_time_seconds,
             synchronized_each_tick: false,
             max_in_flight_command_buffers: self.max_in_flight_command_buffers,
+            pacing,
             resources: self.resource_metrics(),
             runtime: self.fingerprint.clone(),
         })
@@ -409,20 +478,39 @@ impl RuntimeState {
         render_target: Option<&metal::TextureRef>,
         ticks: u32,
         seconds: Option<u32>,
-        runner: BenchmarkRunner,
+        config: &BenchmarkConfig,
+        presented: bool,
     ) -> Result<(Receiver<RawTickTiming>, u32), RuntimeDiagnostic> {
         let (sender, receiver) = mpsc::channel();
         let mut submitted = 0_u32;
         let phase_start = Instant::now();
         loop {
             if let Some(seconds) = seconds {
-                if submitted > 0 && phase_start.elapsed() >= Duration::from_secs(seconds as u64) {
+                let duration = Duration::from_secs(seconds as u64);
+                let phase_complete = config.pacing_hz.map_or_else(
+                    || submitted > 0 && phase_start.elapsed() >= duration,
+                    |hz| pacing_offset(submitted, hz) >= duration,
+                );
+                if phase_complete {
                     break;
                 }
             } else if submitted >= ticks {
                 break;
             }
-            self.submit_benchmark_tick(render_target, sender.clone(), runner)?;
+            let deadline = config.pacing_hz.map(|hz| {
+                let nominal_admission = phase_start + pacing_offset(submitted, hz);
+                let lead = Duration::from_micros(u64::from(config.pacing_lead_microseconds));
+                let admission = nominal_admission.checked_sub(lead).unwrap_or(phase_start);
+                wait_until(admission);
+                phase_start + pacing_offset(submitted + 1, hz)
+            });
+            self.submit_benchmark_tick(
+                render_target,
+                sender.clone(),
+                config.runner,
+                deadline,
+                presented,
+            )?;
             submitted = submitted.checked_add(1).ok_or_else(|| {
                 RuntimeDiagnostic::new(
                     RuntimeDiagnosticCode::UnsupportedGraph,
@@ -439,11 +527,27 @@ impl RuntimeState {
         render_target: Option<&metal::TextureRef>,
         sender: Sender<RawTickTiming>,
         runner: BenchmarkRunner,
+        deadline: Option<Instant>,
+        presented: bool,
     ) -> Result<(), RuntimeDiagnostic> {
         let schedule = &self.validated.execution_plan().schedules[0];
         let cpu_start = Instant::now();
         let command_buffer = self.queue.new_command_buffer();
         command_buffer.set_label("loom.benchmark.tick");
+        let drawable = if presented {
+            Some(self.layer.next_drawable().ok_or_else(|| {
+                RuntimeDiagnostic::new(
+                    RuntimeDiagnosticCode::CommandBufferFailed,
+                    "CAMetalLayer did not provide a drawable",
+                )
+            })?)
+        } else {
+            None
+        };
+        let texture = drawable
+            .as_ref()
+            .map(|drawable| drawable.texture())
+            .or(render_target);
 
         match runner {
             BenchmarkRunner::LoomPlan => {
@@ -458,7 +562,7 @@ impl RuntimeState {
                             self.encode_compute(command_buffer, pass)?;
                         }
                         ScheduleItemId::View(view_id) => {
-                            if let Some(texture) = render_target {
+                            if let Some(texture) = texture {
                                 let view = schedule
                                     .views
                                     .iter()
@@ -471,8 +575,11 @@ impl RuntimeState {
                 }
             }
             BenchmarkRunner::DirectMetalEncoding => {
-                self.encode_direct_metal(command_buffer, render_target)?;
+                self.encode_direct_metal(command_buffer, texture)?;
             }
+        }
+        if let Some(drawable) = &drawable {
+            command_buffer.present_drawable(drawable);
         }
 
         let cpu_orchestration_bits = Arc::new(AtomicU64::new(u64::MAX));
@@ -492,6 +599,9 @@ impl RuntimeState {
                 gpu_end,
                 cpu_orchestration_ms: f64::from_bits(cpu_bits),
                 end_to_end_tick_ms: callback_start.elapsed().as_secs_f64() * 1_000.0,
+                deadline_lateness_ms: deadline
+                    .and_then(|deadline| Instant::now().checked_duration_since(deadline))
+                    .map_or(0.0, |lateness| lateness.as_secs_f64() * 1_000.0),
             });
         })
         .copy();
@@ -715,6 +825,7 @@ struct TickTiming {
     gpu_ms: f64,
     cpu_orchestration_ms: f64,
     end_to_end_tick_ms: f64,
+    deadline_lateness_ms: f64,
 }
 
 struct RawTickTiming {
@@ -723,6 +834,7 @@ struct RawTickTiming {
     gpu_end: f64,
     cpu_orchestration_ms: f64,
     end_to_end_tick_ms: f64,
+    deadline_lateness_ms: f64,
 }
 
 impl RawTickTiming {
@@ -743,6 +855,7 @@ impl RawTickTiming {
             gpu_ms: (self.gpu_end - self.gpu_start) * 1_000.0,
             cpu_orchestration_ms: self.cpu_orchestration_ms,
             end_to_end_tick_ms: self.end_to_end_tick_ms,
+            deadline_lateness_ms: self.deadline_lateness_ms,
         })
     }
 }
@@ -765,6 +878,53 @@ fn peak_resident_set_bytes() -> Option<u64> {
     let mut usage = std::mem::MaybeUninit::<libc::rusage>::zeroed();
     let status = unsafe { libc::getrusage(libc::RUSAGE_SELF, usage.as_mut_ptr()) };
     (status == 0).then(|| unsafe { usage.assume_init().ru_maxrss as u64 })
+}
+
+fn wait_until(target: Instant) {
+    if let Some(remaining) = target.checked_duration_since(Instant::now()) {
+        let (numerator, denominator) = mach_timebase();
+        let ticks =
+            remaining.as_nanos().saturating_mul(u128::from(denominator)) / u128::from(numerator);
+        let deadline = unsafe { mach_absolute_time() }.saturating_add(ticks as u64);
+        unsafe {
+            mach_wait_until(deadline);
+        }
+    }
+    while Instant::now() < target {
+        std::hint::spin_loop();
+    }
+}
+
+fn pacing_offset(tick: u32, rate_hz: u32) -> Duration {
+    let nanoseconds = (u128::from(tick) * 1_000_000_000_u128) / u128::from(rate_hz);
+    Duration::from_nanos(nanoseconds as u64)
+}
+
+fn mach_timebase() -> (u32, u32) {
+    static TIMEBASE: std::sync::OnceLock<(u32, u32)> = std::sync::OnceLock::new();
+    *TIMEBASE.get_or_init(|| {
+        let mut info = std::mem::MaybeUninit::<MachTimebaseInfo>::zeroed();
+        let status = unsafe { mach_timebase_info(info.as_mut_ptr()) };
+        assert_eq!(status, 0, "mach_timebase_info failed");
+        let info = unsafe { info.assume_init() };
+        (info.numer, info.denom)
+    })
+}
+
+#[repr(C)]
+struct MachTimebaseInfo {
+    numer: u32,
+    denom: u32,
+}
+
+const QOS_CLASS_USER_INTERACTIVE: u32 = 0x21;
+
+unsafe extern "C" {
+    fn mach_absolute_time() -> u64;
+    fn mach_timebase_info(info: *mut MachTimebaseInfo) -> libc::c_int;
+    fn mach_wait_until(deadline: u64) -> libc::c_int;
+    fn pthread_set_qos_class_self_np(qos_class: u32, relative_priority: libc::c_int)
+    -> libc::c_int;
 }
 
 fn view_instance_count(
@@ -906,19 +1066,107 @@ fn allocate_values(
 
 fn encode_stream_initial(stream: &loom_core::StreamNode) -> Result<Vec<u8>, RuntimeDiagnostic> {
     match &stream.initial {
-        Some(Literal::Array(items)) => {
+        Some(StreamInitializer::Explicit(Literal::Array(items))) => {
             let mut bytes = Vec::new();
             for item in items {
                 bytes.extend(encode_literal(&stream.element_type, item)?);
             }
             Ok(bytes)
         }
+        Some(StreamInitializer::Repeat { value, count }) => {
+            let element = encode_literal(&stream.element_type, value)?;
+            let mut bytes = Vec::with_capacity(element.len() * *count as usize);
+            for _ in 0..*count {
+                bytes.extend_from_slice(&element);
+            }
+            Ok(bytes)
+        }
+        Some(StreamInitializer::Linear { start, step, count }) => {
+            encode_f32_initializer(&stream.element_type, start, step, None, *count, *count)
+        }
+        Some(StreamInitializer::Grid2D {
+            origin,
+            column_step,
+            row_step,
+            columns,
+            count,
+        }) => encode_f32_initializer(
+            &stream.element_type,
+            origin,
+            column_step,
+            Some(row_step),
+            *columns,
+            *count,
+        ),
         Some(_) => Err(RuntimeDiagnostic::new(
             RuntimeDiagnosticCode::UnsupportedGraph,
-            "validated stream initial data is not an array",
+            "validated stream initializer cannot be lowered by Metal v0",
         )
         .at(format!("streams.{}.initial", stream.name))),
         None => Ok(Vec::new()),
+    }
+}
+
+fn encode_f32_initializer(
+    data_type: &DataType,
+    origin: &Literal,
+    column_step: &Literal,
+    row_step: Option<&Literal>,
+    columns: u32,
+    count: u32,
+) -> Result<Vec<u8>, RuntimeDiagnostic> {
+    let origin = f32_components(data_type, origin)?;
+    let column_step = f32_components(data_type, column_step)?;
+    let row_step = row_step
+        .map(|literal| f32_components(data_type, literal))
+        .transpose()?;
+    let mut bytes = Vec::with_capacity(origin.len() * count as usize * std::mem::size_of::<f32>());
+    for index in 0..count {
+        let column = if row_step.is_some() {
+            index % columns
+        } else {
+            index
+        } as f32;
+        let row = if row_step.is_some() {
+            index / columns
+        } else {
+            0
+        } as f32;
+        for lane in 0..origin.len() {
+            let value = origin[lane]
+                + column_step[lane] * column
+                + row_step.as_ref().map_or(0.0, |step| step[lane] * row);
+            bytes.extend_from_slice(&value.to_bits().to_le_bytes());
+        }
+    }
+    Ok(bytes)
+}
+
+fn f32_components(data_type: &DataType, literal: &Literal) -> Result<Vec<f32>, RuntimeDiagnostic> {
+    match (data_type, literal) {
+        (DataType::Scalar(ScalarType::F32), Literal::F32Bits(value)) => {
+            Ok(vec![f32::from_bits(*value)])
+        }
+        (
+            DataType::Vector {
+                scalar: ScalarType::F32,
+                lanes,
+            },
+            Literal::Vector(items),
+        ) if items.len() == *lanes as usize => items
+            .iter()
+            .map(|item| match item {
+                Literal::F32Bits(value) => Ok(f32::from_bits(*value)),
+                _ => Err(RuntimeDiagnostic::new(
+                    RuntimeDiagnosticCode::UnsupportedGraph,
+                    "f32 initializer vector contains a non-f32 lane",
+                )),
+            })
+            .collect(),
+        _ => Err(RuntimeDiagnostic::new(
+            RuntimeDiagnosticCode::UnsupportedGraph,
+            "linear and grid initializers require f32 scalar or vector data",
+        )),
     }
 }
 
@@ -1210,4 +1458,16 @@ fn command_output(program: &str, arguments: &[&str]) -> Option<String> {
         .filter(|output| output.status.success())
         .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_owned())
         .filter(|output| !output.is_empty())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::pacing_offset;
+    use std::time::Duration;
+
+    #[test]
+    fn rational_pacing_has_no_one_second_drift() {
+        assert_eq!(pacing_offset(120, 120), Duration::from_secs(1));
+        assert_eq!(pacing_offset(240, 120), Duration::from_secs(2));
+    }
 }

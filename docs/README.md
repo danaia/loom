@@ -61,7 +61,10 @@ Select the conformance experiment through the same launcher:
 `batch` defaults to 1,000 particles. Counts accept exact positive integers plus
 `k` and `m` suffixes. Hello Batch uses the same kernels and language path while
 testing stream capacity, logical length, plan-driven dispatch, private-buffer
-allocation, and instanced rendering at scale.
+allocation, and instanced rendering at scale. Initial state uses typed compact
+`repeat`, `linear`, and `grid_2d` generators. Their counts, element types, shapes,
+and parameters are validated before the Metal backend expands them into the one-time
+upload; the semantic graph no longer grows with particle count.
 
 Run bounded benchmarks without opening a window:
 
@@ -73,6 +76,10 @@ Run bounded benchmarks without opening a window:
   --runner direct-metal --warmup 120 --samples 600
 ./scripts/run-hello-particle.sh batch 100k --bench headless \
   --warmup-seconds 30 --duration-seconds 60
+./scripts/run-hello-particle.sh batch 1m --bench rendered \
+  --pace 120 --pace-lead-us 2000 --warmup-seconds 5 --duration-seconds 10
+./scripts/run-hello-particle.sh batch 1m --bench presented \
+  --pace 120 --pace-lead-us 4000 --warmup-seconds 5 --duration-seconds 10
 ./scripts/benchmark-hello-batch.sh 30 60
 ```
 
@@ -97,8 +104,15 @@ it is not an independently implemented resource loader.
 
 Tick counts remain convenient for short regression runs. `--warmup-seconds` and
 `--duration-seconds` select sustained wall-time phases; the result records both the
-requested duration and the number of ticks actually executed. Rendered mode remains
-offscreen and does not include drawable acquisition, presentation, or compositor cost.
+requested duration and the number of ticks actually executed. `--pace` admits a
+fixed number of ticks per second and reports deadline misses. `--pace-lead-us`
+explicitly admits work slightly ahead of its deadline; the lead must remain shorter
+than one tick and is recorded in the result.
+
+Rendered mode remains offscreen. Presented mode creates an attached `CAMetalLayer`,
+acquires real drawables, and calls `presentDrawable`; its CPU and end-to-end timings
+therefore include drawable backpressure. Completion timestamps still do not identify
+the exact compositor scan-out time.
 The sweep script runs 1K, 10K, 100K, and 1M in both modes and writes one JSON result
 per workload under `benchmark-results/hello-batch` by default.
 
@@ -106,3 +120,4 @@ Recorded baselines:
 
 - [`benchmarks/hello-batch-100k-m4-pro.md`](benchmarks/hello-batch-100k-m4-pro.md)
 - [`benchmarks/hello-batch-100k-async-m4-pro.md`](benchmarks/hello-batch-100k-async-m4-pro.md)
+- [`benchmarks/hello-batch-compact-paced-m4-pro.md`](benchmarks/hello-batch-compact-paced-m4-pro.md)

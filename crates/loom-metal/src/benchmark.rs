@@ -6,6 +6,7 @@ use crate::RuntimeFingerprint;
 pub enum BenchmarkMode {
     Headless,
     Rendered,
+    Presented,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -22,6 +23,8 @@ pub struct BenchmarkConfig {
     pub sample_ticks: u32,
     pub warmup_seconds: Option<u32>,
     pub sample_seconds: Option<u32>,
+    pub pacing_hz: Option<u32>,
+    pub pacing_lead_microseconds: u32,
     pub viewport_width: u32,
     pub viewport_height: u32,
 }
@@ -35,6 +38,8 @@ impl Default for BenchmarkConfig {
             sample_ticks: 240,
             warmup_seconds: None,
             sample_seconds: None,
+            pacing_hz: None,
+            pacing_lead_microseconds: 0,
             viewport_width: 960,
             viewport_height: 720,
         }
@@ -60,8 +65,19 @@ pub struct BenchmarkResult {
     pub gpu_p95_below_8_33_ms: bool,
     pub synchronized_each_tick: bool,
     pub max_in_flight_command_buffers: u32,
+    pub pacing: Option<PacingResult>,
     pub resources: ResourceMetrics,
     pub runtime: RuntimeFingerprint,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct PacingResult {
+    pub target_hz: u32,
+    pub tick_budget_ms: f64,
+    pub submission_lead_ms: f64,
+    pub deadline_misses: u32,
+    pub deadline_miss_rate: f64,
+    pub maximum_lateness_ms: f64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

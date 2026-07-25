@@ -41,14 +41,16 @@ not a guaranteed outcome.
 
 Current status: asynchronous CPU submission is plan-proven and running with four
 bounded command buffers. Timestamp collection is completion-handler based, and
-wall-time warm-up/sampling plus p99/end-to-end latency are available. The remaining
-Hello Batch work is the full sustained count sweep, presented mode, resource/host
-metrics, and longer interleaved direct-Metal trials.
+wall-time warm-up/sampling plus p99/end-to-end latency are available. Compact typed
+initializers reduced the 1M maximum resident set from roughly 3.38 GB to 92 MB.
+A paced 10-second offscreen 1M run completed all 1,200 deadlines with an explicitly
+reported 2 ms submission lead.
 
-The 1M smoke test remains below the GPU budget in both headless and offscreen-rendered
-modes. It also exposed expanded initial literals as a roughly 3 GB host-memory cost.
-Design a compact initializer only after specifying its deterministic semantics and
-trust boundary; do not hide initialization in backend code.
+Presented benchmarking now acquires real `CAMetalLayer` drawables and calls
+`presentDrawable`. Its GPU p95 remains below budget, but drawable/display cadence
+still causes deadline misses. Hello Batch remains open until presentation is driven
+by a display-synchronized admission policy and longer interleaved direct-Metal trials
+are recorded from a clean tree.
 
 ## 2. Hello Field
 
@@ -137,6 +139,8 @@ Loom earns the claim through:
 
 - [ ] State, units, access, bindings, and authority remain explicit.
 - [ ] New semantics solve repeated workload friction.
+- [x] Compact stream initialization is typed, deterministic, validated, and
+      backend-neutral.
 - [ ] Diagnostics include stable codes and mechanical repairs where safe.
 - [ ] Canonical hashes remain stable for equivalent graphs.
 - [ ] No parser work is required.

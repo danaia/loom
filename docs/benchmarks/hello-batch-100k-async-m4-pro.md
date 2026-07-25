@@ -82,3 +82,6 @@ Constructing the current one-million-particle graph peaked around 3.0–3.4 GB b
 initial stream contents are represented as expanded literal arrays. This is now a
 measured language/runtime issue: Loom needs compact, explicit initialization before
 the 1M path is considered production-clean.
+
+Resolved by the compact initializer milestone documented in
+[`hello-batch-compact-paced-m4-pro.md`](hello-batch-compact-paced-m4-pro.md).

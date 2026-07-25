@@ -253,7 +253,28 @@ pub struct StreamNode {
     pub buffering: u32,
     pub storage: StorageClass,
     pub access: ResourceAccess,
-    pub initial: Option<Literal>,
+    pub initial: Option<StreamInitializer>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum StreamInitializer {
+    Explicit(Literal),
+    Repeat {
+        value: Literal,
+        count: u32,
+    },
+    Linear {
+        start: Literal,
+        step: Literal,
+        count: u32,
+    },
+    Grid2D {
+        origin: Literal,
+        column_step: Literal,
+        row_step: Literal,
+        columns: u32,
+        count: u32,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

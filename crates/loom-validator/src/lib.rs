@@ -863,36 +863,72 @@ fn validate_types_shapes_units(graph: CheckedGraph<'_>, diagnostics: &mut Vec<Di
     }
     for stream in &graph.resources.streams {
         if let Some(initial) = &stream.initial {
-            let Literal::Array(items) = initial else {
-                diagnostics.push(Diagnostic::error(
-                    DiagnosticCode::InvalidInitialData,
-                    "stream initial data must be an array",
-                    path("streams", &stream.name).child("initial"),
-                ));
-                continue;
+            let (count, literals, arithmetic, valid_parameters) = match initial {
+                loom_core::StreamInitializer::Explicit(Literal::Array(items)) => {
+                    (items.len(), items.iter().collect::<Vec<_>>(), false, true)
+                }
+                loom_core::StreamInitializer::Explicit(_) => {
+                    diagnostics.push(Diagnostic::error(
+                        DiagnosticCode::InvalidInitialData,
+                        "explicit stream initial data must be an array",
+                        path("streams", &stream.name).child("initial"),
+                    ));
+                    continue;
+                }
+                loom_core::StreamInitializer::Repeat { value, count } => {
+                    (*count as usize, vec![value], false, true)
+                }
+                loom_core::StreamInitializer::Linear { start, step, count } => {
+                    (*count as usize, vec![start, step], true, true)
+                }
+                loom_core::StreamInitializer::Grid2D {
+                    origin,
+                    column_step,
+                    row_step,
+                    columns,
+                    count,
+                } => (
+                    *count as usize,
+                    vec![origin, column_step, row_step],
+                    true,
+                    *columns > 0,
+                ),
             };
             let valid_length = match stream.length {
-                StreamLength::Fixed(length) => items.len() == length as usize,
-                StreamLength::Dynamic(_) => items.len() <= stream.capacity as usize,
+                StreamLength::Fixed(length) => count == length as usize,
+                StreamLength::Dynamic(_) => count <= stream.capacity as usize,
             };
-            if !valid_length || items.len() > stream.capacity as usize {
+            if !valid_length || count > stream.capacity as usize {
                 diagnostics.push(Diagnostic::error(
                     DiagnosticCode::InvalidInitialData,
                     format!(
                         "initial element count {} is incompatible with length and capacity {}",
-                        items.len(),
-                        stream.capacity
+                        count, stream.capacity
                     ),
                     path("streams", &stream.name).child("initial"),
                 ));
             }
-            if items
+            if literals
                 .iter()
                 .any(|literal| !literal_matches_type(literal, &stream.element_type))
             {
                 diagnostics.push(Diagnostic::error(
                     DiagnosticCode::InvalidInitialData,
                     "one or more initial elements do not match the stream element type",
+                    path("streams", &stream.name).child("initial"),
+                ));
+            }
+            if arithmetic && !supports_initializer_arithmetic(&stream.element_type) {
+                diagnostics.push(Diagnostic::error(
+                    DiagnosticCode::InvalidInitialData,
+                    "linear and grid initializers require an f32 scalar or vector element type",
+                    path("streams", &stream.name).child("initial"),
+                ));
+            }
+            if !valid_parameters {
+                diagnostics.push(Diagnostic::error(
+                    DiagnosticCode::InvalidInitialData,
+                    "grid initializer columns must be positive",
                     path("streams", &stream.name).child("initial"),
                 ));
             }
@@ -1084,6 +1120,17 @@ fn literal_matches_scalar(literal: &Literal, scalar: &loom_core::ScalarType) -> 
             | (Literal::U32(_), loom_core::ScalarType::U32)
             | (Literal::F16Bits(_), loom_core::ScalarType::F16)
             | (Literal::F32Bits(_), loom_core::ScalarType::F32)
+    )
+}
+
+fn supports_initializer_arithmetic(data_type: &DataType) -> bool {
+    matches!(
+        data_type,
+        DataType::Scalar(loom_core::ScalarType::F32)
+            | DataType::Vector {
+                scalar: loom_core::ScalarType::F32,
+                ..
+            }
     )
 }
 

@@ -693,7 +693,7 @@ pub struct StreamDraft {
     pub buffering: u32,
     pub storage: StorageClass,
     pub access: ResourceAccess,
-    pub initial: Option<Literal>,
+    pub initial: Option<StreamInitializer>,
 }
 
 impl StreamDraft {
@@ -742,7 +742,35 @@ impl StreamDraft {
     }
 
     pub fn initial(mut self, initial: Literal) -> Self {
-        self.initial = Some(initial);
+        self.initial = Some(StreamInitializer::Explicit(initial));
+        self
+    }
+
+    pub fn initial_repeat(mut self, value: Literal, count: u32) -> Self {
+        self.initial = Some(StreamInitializer::Repeat { value, count });
+        self
+    }
+
+    pub fn initial_linear(mut self, start: Literal, step: Literal, count: u32) -> Self {
+        self.initial = Some(StreamInitializer::Linear { start, step, count });
+        self
+    }
+
+    pub fn initial_grid_2d(
+        mut self,
+        origin: Literal,
+        column_step: Literal,
+        row_step: Literal,
+        columns: u32,
+        count: u32,
+    ) -> Self {
+        self.initial = Some(StreamInitializer::Grid2D {
+            origin,
+            column_step,
+            row_step,
+            columns,
+            count,
+        });
         self
     }
 }

@@ -87,6 +87,10 @@ fn parse_batch_arguments(
                             config.mode = BenchmarkMode::Rendered;
                             index += 1;
                         }
+                        "presented" => {
+                            config.mode = BenchmarkMode::Presented;
+                            index += 1;
+                        }
                         _ => {}
                     }
                 }
@@ -135,9 +139,23 @@ fn parse_batch_arguments(
                     .runner = runner;
                 index += 1;
             }
+            "--pace" => {
+                let value = parse_positive_option(arguments, index, "--pace")?;
+                benchmark
+                    .get_or_insert_with(BenchmarkConfig::default)
+                    .pacing_hz = Some(value);
+                index += 1;
+            }
+            "--pace-lead-us" => {
+                let value = parse_positive_option(arguments, index, "--pace-lead-us")?;
+                benchmark
+                    .get_or_insert_with(BenchmarkConfig::default)
+                    .pacing_lead_microseconds = value;
+                index += 1;
+            }
             other => {
                 return Err(argument_error(format!(
-                    "unknown batch option `{other}`; use `--bench [headless|rendered]`, `--runner [loom|direct-metal]`, `--warmup N`, `--samples N`, `--warmup-seconds N`, or `--duration-seconds N`"
+                    "unknown batch option `{other}`; use `--bench [headless|rendered|presented]`, `--runner [loom|direct-metal]`, `--pace HZ`, `--pace-lead-us N`, `--warmup N`, `--samples N`, `--warmup-seconds N`, or `--duration-seconds N`"
                 )));
             }
         }
@@ -216,6 +234,10 @@ mod tests {
             "2",
             "--runner",
             "direct-metal",
+            "--pace",
+            "120",
+            "--pace-lead-us",
+            "2000",
         ]
         .map(str::to_owned);
         let (count, benchmark) = parse_batch_arguments(&arguments).unwrap();
@@ -227,5 +249,7 @@ mod tests {
         assert_eq!(benchmark.warmup_seconds, Some(1));
         assert_eq!(benchmark.sample_seconds, Some(2));
         assert_eq!(benchmark.runner, BenchmarkRunner::DirectMetalEncoding);
+        assert_eq!(benchmark.pacing_hz, Some(120));
+        assert_eq!(benchmark.pacing_lead_microseconds, 2_000);
     }
 }
