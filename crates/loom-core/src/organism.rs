@@ -12,6 +12,24 @@ const SPATIAL_INDEX_COUNT: u32 = SPATIAL_BIN_COUNT * SPATIAL_BIN_CAPACITY;
 const SCAN_BLOCK_SIZE: u32 = 256;
 const COMPONENT_RELAXATION_ROUNDS: u32 = 64;
 
+/// Causal controls for the Hello Organism reference and field ablations.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct HelloOrganismConfig {
+    pub capacity: u32,
+    pub activator_transport: bool,
+    pub inhibitor_transport: bool,
+}
+
+impl HelloOrganismConfig {
+    pub const fn reference(capacity: u32) -> Self {
+        Self {
+            capacity,
+            activator_transport: true,
+            inhibitor_transport: true,
+        }
+    }
+}
+
 fn packaged_kernel(name: &str, slots: Vec<SlotDraft>) -> KernelDraft {
     let binding_order = slots
         .iter()
@@ -73,8 +91,16 @@ fn dynamic_stream(
 /// stable-ID birth allocation, and an authoritative final count commit.
 /// Developmental perception derives quantized density, contact, and exact
 /// eight-sector exposure from those bins. Convergence-audited component labels
-/// feed GPU morphology reductions. Sustained homeostasis remains a later gate.
+/// feed GPU morphology reductions. One organizer constructs a connected,
+/// differentiated reference body through local field and placement laws.
+/// Sustained homeostasis remains a later gate.
 pub fn hello_organism_builder(capacity: u32) -> ModuleBuilder {
+    hello_organism_builder_with_config(HelloOrganismConfig::reference(capacity))
+}
+
+/// Builds Hello Organism with explicit causal field controls.
+pub fn hello_organism_builder_with_config(config: HelloOrganismConfig) -> ModuleBuilder {
+    let capacity = config.capacity;
     assert!(capacity >= 2);
     assert!(
         capacity <= SCAN_BLOCK_SIZE * SCAN_BLOCK_SIZE,
@@ -102,6 +128,7 @@ pub fn hello_organism_builder(capacity: u32) -> ModuleBuilder {
         "cells.previous_fate",
         "cells.fate_confidence",
         "cells.time_in_fate",
+        "cells.event_hash",
         "cells.recent_activator",
         "cells.recent_inhibitor",
         "cells.recent_surface_exposure",
@@ -152,6 +179,18 @@ pub fn hello_organism_builder(capacity: u32) -> ModuleBuilder {
             u32_type.clone(),
             Unit::DIMENSIONLESS,
             Literal::U32(FIELD_WIDTH),
+        ))
+        .value(ValueDraft::constant(
+            "field.activator_transport",
+            f32_type.clone(),
+            Unit::DIMENSIONLESS,
+            Literal::f32(if config.activator_transport { 1.0 } else { 0.0 }),
+        ))
+        .value(ValueDraft::constant(
+            "field.inhibitor_transport",
+            f32_type.clone(),
+            Unit::DIMENSIONLESS,
+            Literal::f32(if config.inhibitor_transport { 1.0 } else { 0.0 }),
         ))
         .value(ValueDraft::constant(
             "population.scan_block_count",
@@ -252,6 +291,12 @@ pub fn hello_organism_builder(capacity: u32) -> ModuleBuilder {
             Literal::U32(0),
         ),
         (
+            "cells.event_hash",
+            u32_type.clone(),
+            Unit::DIMENSIONLESS,
+            Literal::U32(2_166_136_261),
+        ),
+        (
             "cells.recent_activator",
             u32_type.clone(),
             Unit::DIMENSIONLESS,
@@ -326,6 +371,7 @@ pub fn hello_organism_builder(capacity: u32) -> ModuleBuilder {
         "population.survival_flag",
         "population.birth_prequalified",
         "population.birth_flag",
+        "population.candidate_sector",
         "population.survival_prefix",
         "population.birth_prefix",
     ] {
@@ -382,6 +428,7 @@ pub fn hello_organism_builder(capacity: u32) -> ModuleBuilder {
         "population.neighbor_overflow",
         "population.physical_neighbor_overflow",
         "population.perception_truncation",
+        "deposit.saturation_count",
     ] {
         builder = builder.stream(
             StreamDraft::new(name, u32_type.clone(), Unit::DIMENSIONLESS)
@@ -538,6 +585,12 @@ pub fn hello_organism_builder(capacity: u32) -> ModuleBuilder {
             Literal::U32(0),
         ),
         (
+            "population.stage_event_hash",
+            u32_type.clone(),
+            Unit::DIMENSIONLESS,
+            Literal::U32(0),
+        ),
+        (
             "population.stage_recent_activator",
             u32_type.clone(),
             Unit::DIMENSIONLESS,
@@ -642,12 +695,14 @@ pub fn hello_organism_builder(capacity: u32) -> ModuleBuilder {
                 .bind("surface_exposure_bin", "perception.surface_exposure_bin")
                 .bind("physical_overflow", "population.physical_neighbor_overflow")
                 .bind("perception_truncation", "population.perception_truncation")
+                .bind("active_count", "cells.active_count")
                 .dispatch_over("cells.stable_id"),
         )
         .pass(
             PassDraft::new("initialize_components", "organism_initialize_components")
                 .bind("stable_id", "cells.stable_id")
                 .bind("label", "morphology.component_label_a")
+                .bind("active_count", "cells.active_count")
                 .dispatch_over("cells.stable_id"),
         );
     let mut component_predecessor = "initialize_components".to_owned();
@@ -680,6 +735,7 @@ pub fn hello_organism_builder(capacity: u32) -> ModuleBuilder {
                     .bind("input_label", input)
                     .bind("output_label", output)
                     .bind("changes", "morphology.component_unresolved")
+                    .bind("active_count", "cells.active_count")
                     .dispatch_over("cells.stable_id"),
             );
         component_dependencies.push((clear.clone(), component_predecessor));
@@ -724,6 +780,7 @@ pub fn hello_organism_builder(capacity: u32) -> ModuleBuilder {
                 .bind("perimeter_q16", "morphology.perimeter_q16")
                 .bind("centroid_sum_x_q16", "morphology.centroid_sum_x_q16")
                 .bind("centroid_sum_y_q16", "morphology.centroid_sum_y_q16")
+                .bind("active_count", "cells.active_count")
                 .dispatch_over("cells.stable_id"),
         )
         .pass(
@@ -744,6 +801,7 @@ pub fn hello_organism_builder(capacity: u32) -> ModuleBuilder {
                 .bind("centroid_x_q16", "morphology.centroid_x_q16")
                 .bind("centroid_y_q16", "morphology.centroid_y_q16")
                 .bind("radial_density", "morphology.radial_density")
+                .bind("active_count", "cells.active_count")
                 .dispatch_over("cells.stable_id"),
         );
 
@@ -813,6 +871,7 @@ pub fn hello_organism_builder(capacity: u32) -> ModuleBuilder {
                 stream_slot("density_bin", u32_type.clone(), SlotAccess::Write, false),
                 stream_slot("energy_bin", u32_type.clone(), SlotAccess::Write, false),
                 value_slot("width", u32_type.clone()),
+                stream_slot("active_count", u32_type.clone(), SlotAccess::Read, true),
             ],
         ))
         .kernel(packaged_kernel(
@@ -831,6 +890,7 @@ pub fn hello_organism_builder(capacity: u32) -> ModuleBuilder {
                 ("density_bin", SlotAccess::Read),
                 ("local_density_bin", SlotAccess::Read),
                 ("contact_count", SlotAccess::Read),
+                ("surface_mask", SlotAccess::Read),
                 ("surface_exposure_bin", SlotAccess::Read),
                 ("recent_surface_exposure", SlotAccess::Read),
                 ("energy_bin", SlotAccess::Read),
@@ -844,6 +904,12 @@ pub fn hello_organism_builder(capacity: u32) -> ModuleBuilder {
             ]
             .into_iter()
             .map(|(name, access)| stream_slot(name, u32_type.clone(), access, false))
+            .chain(std::iter::once(stream_slot(
+                "active_count",
+                u32_type.clone(),
+                SlotAccess::Read,
+                true,
+            )))
             .collect(),
         ))
         .kernel(packaged_kernel(
@@ -915,14 +981,18 @@ pub fn hello_organism_builder(capacity: u32) -> ModuleBuilder {
                     SlotAccess::Read,
                     false,
                 ),
+                stream_slot("active_count", u32_type.clone(), SlotAccess::Read, true),
+                stream_slot("stable_id", u32_type.clone(), SlotAccess::Read, false),
+                stream_slot("event_hash", u32_type.clone(), SlotAccess::ReadWrite, false),
             ],
         ))
         .kernel(packaged_kernel(
             "organism_clear_deposits",
-            ["activator", "inhibitor", "density"]
-                .into_iter()
-                .map(|name| stream_slot(name, u32_type.clone(), SlotAccess::Write, false))
-                .collect(),
+            vec![
+                stream_slot("activator", u32_type.clone(), SlotAccess::Write, false),
+                stream_slot("inhibitor", u32_type.clone(), SlotAccess::Write, false),
+                stream_slot("density", u32_type.clone(), SlotAccess::Write, false),
+            ],
         ))
         .kernel(packaged_kernel(
             "organism_deposit",
@@ -949,7 +1019,14 @@ pub fn hello_organism_builder(capacity: u32) -> ModuleBuilder {
                 stream_slot("activator", u32_type.clone(), SlotAccess::Atomic, true),
                 stream_slot("inhibitor", u32_type.clone(), SlotAccess::Atomic, true),
                 stream_slot("density", u32_type.clone(), SlotAccess::Atomic, true),
+                stream_slot(
+                    "saturation_count",
+                    u32_type.clone(),
+                    SlotAccess::Atomic,
+                    true,
+                ),
                 value_slot("width", u32_type.clone()),
+                stream_slot("active_count", u32_type.clone(), SlotAccess::Read, true),
             ],
         ))
         .kernel(packaged_kernel(
@@ -979,6 +1056,8 @@ pub fn hello_organism_builder(capacity: u32) -> ModuleBuilder {
                 stream_slot("density_next", f32_type.clone(), SlotAccess::Write, false),
                 stream_slot("injury_next", f32_type.clone(), SlotAccess::Write, false),
                 value_slot("width", u32_type.clone()),
+                value_slot("activator_transport", f32_type.clone()),
+                value_slot("inhibitor_transport", f32_type.clone()),
             ],
         ))
         .kernel(packaged_kernel(
@@ -1042,19 +1121,6 @@ pub fn hello_organism_builder(capacity: u32) -> ModuleBuilder {
                     u32_type.clone(),
                     SlotAccess::Write,
                     false,
-                ),
-                stream_slot("overflow", u32_type.clone(), SlotAccess::Write, true),
-                stream_slot(
-                    "physical_overflow",
-                    u32_type.clone(),
-                    SlotAccess::Write,
-                    true,
-                ),
-                stream_slot(
-                    "perception_truncation",
-                    u32_type.clone(),
-                    SlotAccess::Write,
-                    true,
                 ),
             ],
         ))
@@ -1129,6 +1195,7 @@ pub fn hello_organism_builder(capacity: u32) -> ModuleBuilder {
                     SlotAccess::Atomic,
                     true,
                 ),
+                stream_slot("active_count", u32_type.clone(), SlotAccess::Read, true),
             ],
         ))
         .kernel(packaged_kernel(
@@ -1136,6 +1203,7 @@ pub fn hello_organism_builder(capacity: u32) -> ModuleBuilder {
             vec![
                 stream_slot("stable_id", u32_type.clone(), SlotAccess::Read, false),
                 stream_slot("label", u32_type.clone(), SlotAccess::Write, false),
+                stream_slot("active_count", u32_type.clone(), SlotAccess::Read, true),
             ],
         ))
         .kernel(packaged_kernel(
@@ -1169,6 +1237,7 @@ pub fn hello_organism_builder(capacity: u32) -> ModuleBuilder {
                 stream_slot("input_label", u32_type.clone(), SlotAccess::Read, false),
                 stream_slot("output_label", u32_type.clone(), SlotAccess::Write, false),
                 stream_slot("changes", u32_type.clone(), SlotAccess::Atomic, true),
+                stream_slot("active_count", u32_type.clone(), SlotAccess::Read, true),
             ],
         ))
         .kernel(packaged_kernel(
@@ -1261,6 +1330,7 @@ pub fn hello_organism_builder(capacity: u32) -> ModuleBuilder {
                     SlotAccess::Atomic,
                     true,
                 ),
+                stream_slot("active_count", u32_type.clone(), SlotAccess::Read, true),
             ],
         ))
         .kernel(packaged_kernel(
@@ -1320,6 +1390,7 @@ pub fn hello_organism_builder(capacity: u32) -> ModuleBuilder {
                     true,
                 ),
                 stream_slot("radial_density", u32_type.clone(), SlotAccess::Atomic, true),
+                stream_slot("active_count", u32_type.clone(), SlotAccess::Read, true),
             ],
         ))
         .kernel(packaged_kernel(
@@ -1341,12 +1412,20 @@ pub fn hello_organism_builder(capacity: u32) -> ModuleBuilder {
                     true,
                 ),
                 stream_slot("stable_id", u32_type.clone(), SlotAccess::Read, true),
+                stream_slot("age", u32_type.clone(), SlotAccess::Read, true),
+                stream_slot("surface_mask", u32_type.clone(), SlotAccess::Read, true),
                 stream_slot("divide", u32_type.clone(), SlotAccess::Read, true),
                 stream_slot("death", u32_type.clone(), SlotAccess::Read, true),
                 stream_slot("bin_count", u32_type.clone(), SlotAccess::Read, true),
                 stream_slot("bin_indices", u32_type.clone(), SlotAccess::Read, true),
                 stream_slot("survival", u32_type.clone(), SlotAccess::Write, false),
                 stream_slot("birth", u32_type.clone(), SlotAccess::Write, false),
+                stream_slot(
+                    "candidate_sector",
+                    u32_type.clone(),
+                    SlotAccess::Write,
+                    false,
+                ),
                 stream_slot("overflow", u32_type.clone(), SlotAccess::Atomic, true),
             ],
         ))
@@ -1370,6 +1449,12 @@ pub fn hello_organism_builder(capacity: u32) -> ModuleBuilder {
                 ),
                 stream_slot("stable_id", u32_type.clone(), SlotAccess::Read, true),
                 stream_slot("birth", u32_type.clone(), SlotAccess::Read, false),
+                stream_slot(
+                    "candidate_sector",
+                    u32_type.clone(),
+                    SlotAccess::Read,
+                    false,
+                ),
                 stream_slot("count", u32_type.clone(), SlotAccess::Atomic, true),
                 stream_slot("indices", u32_type.clone(), SlotAccess::Write, true),
                 stream_slot("overflow", u32_type.clone(), SlotAccess::Atomic, true),
@@ -1395,6 +1480,12 @@ pub fn hello_organism_builder(capacity: u32) -> ModuleBuilder {
                 ),
                 stream_slot("stable_id", u32_type.clone(), SlotAccess::Read, true),
                 stream_slot("prequalified", u32_type.clone(), SlotAccess::Read, false),
+                stream_slot(
+                    "candidate_sector",
+                    u32_type.clone(),
+                    SlotAccess::Read,
+                    false,
+                ),
                 stream_slot("bin_count", u32_type.clone(), SlotAccess::Read, true),
                 stream_slot("bin_indices", u32_type.clone(), SlotAccess::Read, true),
                 stream_slot("birth", u32_type.clone(), SlotAccess::Write, false),
@@ -1521,6 +1612,12 @@ pub fn hello_organism_builder(capacity: u32) -> ModuleBuilder {
                     true,
                 ),
                 stream_slot("energy", f32_type.clone(), SlotAccess::Read, true),
+                stream_slot(
+                    "candidate_sector",
+                    u32_type.clone(),
+                    SlotAccess::Read,
+                    false,
+                ),
                 stream_slot("survival", u32_type.clone(), SlotAccess::Read, false),
                 stream_slot("birth", u32_type.clone(), SlotAccess::Read, false),
                 stream_slot("survival_prefix", u32_type.clone(), SlotAccess::Read, false),
@@ -1560,6 +1657,13 @@ pub fn hello_organism_builder(capacity: u32) -> ModuleBuilder {
                     false,
                 ),
                 stream_slot("stage_energy", f32_type.clone(), SlotAccess::Write, false),
+                stream_slot("event_hash", u32_type.clone(), SlotAccess::Read, true),
+                stream_slot(
+                    "stage_event_hash",
+                    u32_type.clone(),
+                    SlotAccess::Write,
+                    false,
+                ),
             ],
         ))
         .kernel(packaged_kernel(
@@ -1675,6 +1779,13 @@ pub fn hello_organism_builder(capacity: u32) -> ModuleBuilder {
                     true,
                 ),
                 stream_slot("energy", f32_type.clone(), SlotAccess::Write, true),
+                stream_slot(
+                    "stage_event_hash",
+                    u32_type.clone(),
+                    SlotAccess::Read,
+                    false,
+                ),
+                stream_slot("event_hash", u32_type.clone(), SlotAccess::Write, true),
             ],
         ))
         .kernel(packaged_kernel(
@@ -1783,6 +1894,7 @@ pub fn hello_organism_builder(capacity: u32) -> ModuleBuilder {
                 .bind("density_bin", "perception.density_bin")
                 .bind("energy_bin", "perception.energy_bin")
                 .bind("width", "field.width")
+                .bind("active_count", "cells.active_count")
                 .dispatch_over("cells.position"),
         )
         .pass(
@@ -1800,6 +1912,7 @@ pub fn hello_organism_builder(capacity: u32) -> ModuleBuilder {
                 .bind("density_bin", "perception.density_bin")
                 .bind("local_density_bin", "perception.local_density_bin")
                 .bind("contact_count", "perception.contact_count")
+                .bind("surface_mask", "perception.surface_mask")
                 .bind("surface_exposure_bin", "perception.surface_exposure_bin")
                 .bind("recent_surface_exposure", "cells.recent_surface_exposure")
                 .bind("energy_bin", "perception.energy_bin")
@@ -1810,6 +1923,7 @@ pub fn hello_organism_builder(capacity: u32) -> ModuleBuilder {
                 .bind("death_intent", "intent.death")
                 .bind("activator_deposit", "intent.activator_deposit")
                 .bind("inhibitor_deposit", "intent.inhibitor_deposit")
+                .bind("active_count", "cells.active_count")
                 .dispatch_over("cells.stable_id"),
         )
         .pass(
@@ -1835,6 +1949,9 @@ pub fn hello_organism_builder(capacity: u32) -> ModuleBuilder {
                 .bind("surface_exposure_bin", "perception.surface_exposure_bin")
                 .bind("activator_deposit", "intent.activator_deposit")
                 .bind("inhibitor_deposit", "intent.inhibitor_deposit")
+                .bind("active_count", "cells.active_count")
+                .bind("stable_id", "cells.stable_id")
+                .bind("event_hash", "cells.event_hash")
                 .dispatch_over("cells.stable_id")
                 .grant("mutate_cell_state"),
         )
@@ -1853,7 +1970,9 @@ pub fn hello_organism_builder(capacity: u32) -> ModuleBuilder {
                 .bind("activator", "deposit.activator_q16")
                 .bind("inhibitor", "deposit.inhibitor_q16")
                 .bind("density", "deposit.density_q16")
+                .bind("saturation_count", "deposit.saturation_count")
                 .bind("width", "field.width")
+                .bind("active_count", "cells.active_count")
                 .dispatch_over("cells.position"),
         )
         .pass(
@@ -1872,6 +1991,8 @@ pub fn hello_organism_builder(capacity: u32) -> ModuleBuilder {
                 .bind("density_next", "field.density_next")
                 .bind("injury_next", "field.injury_next")
                 .bind("width", "field.width")
+                .bind("activator_transport", "field.activator_transport")
+                .bind("inhibitor_transport", "field.inhibitor_transport")
                 .dispatch_over("field.activator")
                 .grant("mutate_field_state"),
         )
@@ -1894,9 +2015,6 @@ pub fn hello_organism_builder(capacity: u32) -> ModuleBuilder {
             PassDraft::new("clear_population_bins", "organism_clear_population_bins")
                 .bind("living_count", "spatial.living_bin_count")
                 .bind("candidate_count", "spatial.candidate_bin_count")
-                .bind("overflow", "population.neighbor_overflow")
-                .bind("physical_overflow", "population.physical_neighbor_overflow")
-                .bind("perception_truncation", "population.perception_truncation")
                 .dispatch_over("spatial.living_bin_count"),
         )
         .pass(
@@ -1921,12 +2039,15 @@ pub fn hello_organism_builder(capacity: u32) -> ModuleBuilder {
                 .bind("position", "cells.position")
                 .bind("radius", "cells.radius")
                 .bind("stable_id", "cells.stable_id")
+                .bind("age", "cells.age")
+                .bind("surface_mask", "perception.surface_mask")
                 .bind("divide", "intent.divide")
                 .bind("death", "intent.death")
                 .bind("bin_count", "spatial.living_bin_count")
                 .bind("bin_indices", "spatial.living_bin_indices")
                 .bind("survival", "population.survival_flag")
                 .bind("birth", "population.birth_prequalified")
+                .bind("candidate_sector", "population.candidate_sector")
                 .bind("overflow", "population.neighbor_overflow")
                 .dispatch_over("population.survival_flag"),
         )
@@ -1937,6 +2058,7 @@ pub fn hello_organism_builder(capacity: u32) -> ModuleBuilder {
                 .bind("radius", "cells.radius")
                 .bind("stable_id", "cells.stable_id")
                 .bind("birth", "population.birth_prequalified")
+                .bind("candidate_sector", "population.candidate_sector")
                 .bind("count", "spatial.candidate_bin_count")
                 .bind("indices", "spatial.candidate_bin_indices")
                 .bind("overflow", "population.neighbor_overflow")
@@ -1959,6 +2081,7 @@ pub fn hello_organism_builder(capacity: u32) -> ModuleBuilder {
             .bind("radius", "cells.radius")
             .bind("stable_id", "cells.stable_id")
             .bind("prequalified", "population.birth_prequalified")
+            .bind("candidate_sector", "population.candidate_sector")
             .bind("bin_count", "spatial.candidate_bin_count")
             .bind("bin_indices", "spatial.candidate_bin_indices")
             .bind("birth", "population.birth_flag")
@@ -2032,6 +2155,7 @@ pub fn hello_organism_builder(capacity: u32) -> ModuleBuilder {
             .bind("position", "cells.position")
             .bind("radius", "cells.radius")
             .bind("energy", "cells.energy")
+            .bind("candidate_sector", "population.candidate_sector")
             .bind("survival", "population.survival_flag")
             .bind("birth", "population.birth_flag")
             .bind("survival_prefix", "population.survival_prefix")
@@ -2044,6 +2168,8 @@ pub fn hello_organism_builder(capacity: u32) -> ModuleBuilder {
             .bind("stage_position", "population.stage_position")
             .bind("stage_radius", "population.stage_radius")
             .bind("stage_energy", "population.stage_energy")
+            .bind("event_hash", "cells.event_hash")
+            .bind("stage_event_hash", "population.stage_event_hash")
             .dispatch_over("population.survival_flag"),
         )
         .pass(
@@ -2105,6 +2231,8 @@ pub fn hello_organism_builder(capacity: u32) -> ModuleBuilder {
                 .bind("position", "cells.position")
                 .bind("radius", "cells.radius")
                 .bind("energy", "cells.energy")
+                .bind("stage_event_hash", "population.stage_event_hash")
+                .bind("event_hash", "cells.event_hash")
                 .dispatch_over("population.survival_flag")
                 .grant("mutate_cell_state"),
         )

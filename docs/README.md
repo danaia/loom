@@ -13,6 +13,7 @@ The language documents are read in this order:
 9. [`07-emergent-systems.md`](07-emergent-systems.md) — implemented dynamic populations, fields, and Hello Organism boundary.
 10. [`benchmarks/hello-organism-population-gate-m4-pro.md`](benchmarks/hello-organism-population-gate-m4-pro.md) — scalable population correctness load and declared-capacity timing boundary.
 11. [`benchmarks/hello-organism-neighborhood-gate-m4-pro.md`](benchmarks/hello-organism-neighborhood-gate-m4-pro.md) — developmental neighborhoods, morphology reductions, and their timing boundary.
+12. [`benchmarks/hello-organism-development-gate-m4-pro.md`](benchmarks/hello-organism-development-gate-m4-pro.md) — one-seed procedural development, causal ablations, exact replay, and populated reference timing.
 
 Planned specifications:
 

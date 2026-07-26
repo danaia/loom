@@ -126,20 +126,30 @@ It uses count-backed indirect execution, packaged Metal kernels, immutable
 transition rules, derived behavior, explicit state/field/membership capabilities,
 bounded canonical spatial bins, hierarchical scans, stable-ID birth allocation,
 parallel compaction, developmental neighbor observations, convergence-audited
-contact components, and morphology reductions. A 300-tick GPU test proves that
-the organizer produces a daughter; a separate 1,024-parent test proves
+contact components, and morphology reductions. A 3,200-tick GPU test proves that
+one organizer constructs a connected, differentiated 39-cell body without
+target geometry; a separate 1,024-parent test proves
 simultaneous deterministic population mutation. A 256-cell connected-body test
 proves boundary/interior differentiation, one converged component, quantized
 area/perimeter/centroid/compactness, complete radial accounting, and zero
 observation overflow.
 
-The full acceptance gate remains:
+The developmental gate also proves causal fields and exact replay. With activator
+transport disabled, growth arrests at five cells with no interior tissue. With
+inhibitor transport disabled, growth reaches 55 cells and leaves the declared
+24–48 reference envelope. Two complete reference runs match stable identities,
+lineage, developmental state, morphology, quantized decisions, and per-lineage
+trajectory hashes exactly.
 
-- exact overflow and transition reductions,
-- formation of a bounded differentiated body from one organizer,
+The remaining organism gates are:
+
 - a stable pre-lesion envelope before tick 30,000,
 - recorded injury and recovery by tick 50,000,
 - 500 consecutive ticks inside the recovery envelope.
+
+Global component and morphology passes still run every tick in this proof build.
+Cadenced observation, faster convergence, and populated scale measurements remain
+performance work; global metrics never feed back into cell decisions.
 
 ## 5. Adaptive Hierarchy
 

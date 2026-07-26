@@ -2310,9 +2310,9 @@ mod tests {
     use super::{MetalRuntime, RuntimeState, encode_f32_initializer, pacing_offset};
     use crate::{BenchmarkConfig, BenchmarkMode, BenchmarkRunner};
     use loom_core::{
-        DataType, Literal, StreamInitializer,
+        DataType, HelloOrganismConfig, Literal, StreamInitializer,
         conformance::{hello_field_builder, hello_population_builder},
-        hello_organism_builder,
+        hello_organism_builder, hello_organism_builder_with_config,
     };
     use loom_validator::Validator;
     use std::time::Duration;
@@ -2561,6 +2561,7 @@ mod tests {
                     ]),
                     INITIAL_COUNT,
                 )),
+                "field.activator" => Some(repeat(Literal::f32(1.0), 256 * 256)),
                 _ => stream.initial.clone(),
             };
         }
@@ -2846,6 +2847,207 @@ mod tests {
             values[metric_ids.len()..].iter().sum::<u32>(),
             INITIAL_COUNT,
             "radial density bins must account for every active cell"
+        );
+    }
+
+    #[derive(Debug, PartialEq, Eq)]
+    struct DevelopmentProbe {
+        metrics: Vec<u32>,
+        radial_density: Vec<u32>,
+        logical_state: Vec<u32>,
+    }
+
+    fn run_development_probe(config: HelloOrganismConfig, ticks: u32) -> DevelopmentProbe {
+        let graph = hello_organism_builder_with_config(config).build().unwrap();
+        let stream_id = |name: &str| {
+            graph
+                .resources
+                .streams
+                .iter()
+                .find(|stream| stream.name == name)
+                .unwrap()
+                .id
+        };
+        let metric_ids = [
+            "cells.active_count",
+            "morphology.population",
+            "morphology.component_count",
+            "morphology.component_unresolved",
+            "morphology.organizer_count",
+            "morphology.undifferentiated_count",
+            "morphology.boundary_count",
+            "morphology.interior_count",
+            "morphology.area_q16",
+            "morphology.perimeter_q16",
+            "morphology.compactness_q16",
+            "population.neighbor_overflow",
+            "population.physical_neighbor_overflow",
+            "population.perception_truncation",
+            "deposit.saturation_count",
+        ]
+        .map(stream_id);
+        let radial_id = stream_id("morphology.radial_density");
+        let logical_ids = [
+            "cells.stable_id",
+            "cells.parent_id",
+            "cells.fate",
+            "cells.phase",
+            "cells.health",
+            "cells.event_hash",
+            "perception.inhibitor_bin",
+        ]
+        .map(stream_id);
+        let report = Validator::validate(&graph);
+        assert!(
+            report.is_valid(),
+            "Gate 3 diagnostics: {:#?}",
+            report.diagnostics
+        );
+        let device = metal::Device::system_default().expect("Metal device");
+        let layer = metal::MetalLayer::new();
+        layer.set_device(&device);
+        layer.set_pixel_format(metal::MTLPixelFormat::BGRA8Unorm);
+        let mut state =
+            RuntimeState::new(report.validated.unwrap(), device.clone(), layer).unwrap();
+        state
+            .run_benchmark(
+                &device,
+                BenchmarkConfig {
+                    mode: BenchmarkMode::Headless,
+                    runner: BenchmarkRunner::LoomPlan,
+                    warmup_ticks: 0,
+                    sample_ticks: ticks,
+                    ..BenchmarkConfig::default()
+                },
+            )
+            .expect("one organizer must execute the Gate 3 developmental program");
+
+        let metric_words = metric_ids.len() + 8;
+        let logical_words = logical_ids.len() * config.capacity as usize;
+        let readback = device.new_buffer(
+            ((metric_words + logical_words) * 4) as u64,
+            metal::MTLResourceOptions::StorageModeShared,
+        );
+        let command_buffer = state.queue.new_command_buffer();
+        let blit = command_buffer.new_blit_command_encoder();
+        for (index, metric) in metric_ids.iter().enumerate() {
+            blit.copy_from_buffer(
+                &state.stream_buffers[metric.0 as usize][0],
+                0,
+                &readback,
+                (index * 4) as u64,
+                4,
+            );
+        }
+        blit.copy_from_buffer(
+            &state.stream_buffers[radial_id.0 as usize][0],
+            0,
+            &readback,
+            (metric_ids.len() * 4) as u64,
+            8 * 4,
+        );
+        for (index, stream) in logical_ids.iter().enumerate() {
+            blit.copy_from_buffer(
+                &state.stream_buffers[stream.0 as usize][0],
+                0,
+                &readback,
+                ((metric_words + index * config.capacity as usize) * 4) as u64,
+                u64::from(config.capacity) * 4,
+            );
+        }
+        blit.end_encoding();
+        command_buffer.commit();
+        command_buffer.wait_until_completed();
+        let words = unsafe {
+            std::slice::from_raw_parts(
+                readback.contents().cast::<u32>(),
+                metric_words + logical_words,
+            )
+        };
+        let active_count = words[0] as usize;
+        let logical_state = (0..logical_ids.len())
+            .flat_map(|stream| {
+                let start = metric_words + stream * config.capacity as usize;
+                words[start..start + active_count].iter().copied()
+            })
+            .collect();
+        DevelopmentProbe {
+            metrics: words[..metric_ids.len()].to_vec(),
+            radial_density: words[metric_ids.len()..metric_words].to_vec(),
+            logical_state,
+        }
+    }
+
+    #[test]
+    fn one_organizer_constructs_a_connected_differentiated_body() {
+        const CAPACITY: u32 = 1_024;
+        const DEADLINE: u32 = 3_200;
+        let probe = run_development_probe(HelloOrganismConfig::reference(CAPACITY), DEADLINE);
+        let metrics = &probe.metrics;
+        assert!(
+            (24..=48).contains(&metrics[1]),
+            "development must reach the declared broad envelope: {probe:?}"
+        );
+        assert_eq!(metrics[2], 1, "the constructed contact graph must connect");
+        assert_eq!(metrics[3], 0, "component propagation must converge");
+        assert_eq!(metrics[4], 1, "organizer fate must remain unique");
+        assert!(metrics[6] > 0, "boundary tissue must differentiate");
+        assert!(metrics[7] > 0, "interior tissue must differentiate");
+        assert_eq!(
+            (metrics[1], metrics[6], metrics[7]),
+            (39, 17, 21),
+            "the deterministic reference morphology changed: {probe:?}"
+        );
+        assert!(metrics[8] > 0 && metrics[9] > 0 && metrics[10] > 0);
+        assert_eq!(
+            probe.radial_density.iter().sum::<u32>(),
+            metrics[1],
+            "radial bins must account for the observed body"
+        );
+        assert_eq!(
+            &metrics[11..],
+            &[0, 0, 0, 0],
+            "reference development must remain within all declared bounds"
+        );
+    }
+
+    #[test]
+    fn developmental_fields_are_causal_and_logical_replay_is_exact() {
+        const CAPACITY: u32 = 1_024;
+        const DEADLINE: u32 = 3_200;
+        let reference = run_development_probe(HelloOrganismConfig::reference(CAPACITY), DEADLINE);
+        let replay = run_development_probe(HelloOrganismConfig::reference(CAPACITY), DEADLINE);
+        assert_eq!(
+            replay, reference,
+            "the complete logical and integer morphology state must replay exactly"
+        );
+
+        let without_activator = run_development_probe(
+            HelloOrganismConfig {
+                capacity: CAPACITY,
+                activator_transport: false,
+                inhibitor_transport: true,
+            },
+            DEADLINE,
+        );
+        assert!(
+            without_activator.metrics[1] <= 8 && without_activator.metrics[7] == 0,
+            "without activator transport the differentiated body must not form: \
+             {without_activator:?}"
+        );
+
+        let without_inhibitor = run_development_probe(
+            HelloOrganismConfig {
+                capacity: CAPACITY,
+                activator_transport: true,
+                inhibitor_transport: false,
+            },
+            DEADLINE,
+        );
+        assert!(
+            without_inhibitor.metrics[1] > 48,
+            "without inhibitor transport growth must leave the reference envelope: \
+             reference={reference:?}, inhibitor_off={without_inhibitor:?}"
         );
     }
 
