@@ -13,8 +13,10 @@ A keyboard-controlled Loom/Metal marble experiment with eight GPU-simulated hunt
 - Red enemy marbles slowly chase the player.
 - Drag, gravity, landing detection, speed limits, surface constraints, and bounded movement run on Metal.
 - Marbles stay on top of the enlarged water plane and continuously emit wakes from their horizontal motion.
-- Up to 30,704 spring-coupled water particles consume those wakes and propagate damped waves to their four neighbors.
-- Higher amplification broadens each impact, increases impulse energy and neighbor coupling, and reduces damping for larger, longer-lived ripples.
+- Up to 30,704 GPU-resident water particles solve a spacing-aware 2D shallow-water wave equation with an isotropic nine-point stencil.
+- A dropped marble transfers momentum through a volume-balanced crater-and-rim impulse, producing a crest/trough pair that expands from the exact contact point.
+- The outer particle band absorbs outgoing energy to prevent square boundary echoes, while moving marbles still produce gentler continuous wakes.
+- Higher amplification increases impact energy and wave speed while reducing damping for larger, longer-lived ripples.
 - Rendering reads the staged GPU state directly; no CPU-side particle model exists.
 
 Build the self-contained Loom package:

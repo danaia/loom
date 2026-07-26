@@ -2,9 +2,9 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { getSnapshot, setControl } from './bridge'
 
-const density = ref(0)
+const density = ref(0.5)
 const planeScale = ref(1)
-const amplification = ref(0)
+const amplification = ref(0.25)
 const fps = ref(0)
 const gpuMemory = ref(0)
 const connected = ref(false)

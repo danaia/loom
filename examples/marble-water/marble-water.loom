@@ -15,9 +15,9 @@ const interaction.grab_active: f32 = 0
 const interaction.grab_x: f32<m> = 0
 const interaction.grab_y: f32<m> = 0.641
 const interaction.grab_z: f32<m> = 0.15
-const interaction.water_density: f32 = 0
+const interaction.water_density: f32 = 0.5
 const interaction.plane_scale: f32 = 1
-const interaction.water_amplification: f32 = 0
+const interaction.water_amplification: f32 = 0.25
 const interaction.reset_scene: f32 = 0
 const interaction.reset_water: f32 = 0
 const interaction.hud_fps: f32 = 0
@@ -42,11 +42,14 @@ const enemies.maximum_speed: f32<m/s> = 0.22
 const water.width: u32 = 202
 const water.height: u32 = 152
 const water.spacing: f32<m> = 0.01443
-const water.spring: f32<s^-2> = 28
-const water.coupling: f32<s^-2> = 72
-const water.damping: f32<s^-1> = 2.2
-const water.impact_radius: f32<m> = 0.24
-const water.impact_gain: f32 = 2.4
+// Height-field shallow-water parameters. The physical wave speed is
+// independent of particle spacing/density; damping removes wave energy while
+// the outer particle band absorbs boundary reflections.
+const water.wave_speed: f32<m/s> = 0.55
+const water.damping: f32<s^-1> = 0.82
+const water.impact_radius: f32<m> = 0.105
+const water.impact_gain: f32 = 0.24
+const water.wake_gain: f32 = 0.34
 
 stream player.position: f32x3<m> {
   cap=1 len=1 buffers=1 access=rw storage=device
@@ -179,11 +182,11 @@ kernel water_force(
   density: in value<f32>,
   plane_scale: in value<f32>,
   amplification: in value<f32>,
-  spring: in value<f32,s^-2>,
-  coupling: in value<f32,s^-2>,
+  wave_speed: in value<f32,m/s>,
   damping: in value<f32,s^-1>,
   impact_radius: in value<f32,m>,
   impact_gain: in value<f32>,
+  wake_gain: in value<f32>,
   dt: in value<f32,s>
 ) extern metal {
   source="kernels/marble_water.metal"
@@ -288,11 +291,11 @@ pass disturb_water = water_force(
   density=interaction.water_density
   plane_scale=interaction.plane_scale
   amplification=interaction.water_amplification
-  spring=water.spring
-  coupling=water.coupling
+  wave_speed=water.wave_speed
   damping=water.damping
   impact_radius=water.impact_radius
   impact_gain=water.impact_gain
+  wake_gain=water.wake_gain
   dt=simulation.fixed_dt
 ) over water.position
 

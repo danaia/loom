@@ -100,9 +100,9 @@ impl Default for State {
             dragging_marble: false,
             grab_height: 0.55,
             grab_target: [0.0, 0.641, 0.15],
-            density: 0.0,
+            density: 0.5,
             plane_scale: 1.0,
-            amplification: 0.0,
+            amplification: 0.25,
             reset_scene: false,
             reset_water: false,
         }

@@ -148,7 +148,10 @@ kernel void marble_player_step(
             landing_speed > 0.0
                 ? packed_float3(position.x, surface_height, position.z)
                 : packed_float3(0.0);
-        impact_speeds[0] = landing_speed * 4.0;
+        // A negative speed marks a one-frame vertical drop. Grounded motion
+        // remains positive so the water pass can treat wakes as continuous
+        // forcing without smearing a landing impulse across later frames.
+        impact_speeds[0] = -landing_speed;
         return;
     }
 
@@ -229,7 +232,7 @@ kernel void marble_enemy_step(
     impact_speeds[index] = length(velocity.xz);
 }
 
-inline float impact_impulse(
+inline float wake_impulse(
     float2 point,
     float3 impact_position,
     float impact_speed,
@@ -239,6 +242,27 @@ inline float impact_impulse(
     const float2 delta = point - impact_position.xz;
     const float normalized_distance = dot(delta, delta) / max(radius * radius, 1e-6);
     return impact_speed * exp(-normalized_distance * 3.0);
+}
+
+inline float drop_impulse(
+    float2 point,
+    float3 impact_position,
+    float impact_speed,
+    float radius)
+{
+    if (impact_speed >= 0.0) return 0.0;
+    const float distance_from_impact =
+        length(point - impact_position.xz) / max(radius, 1e-4);
+    if (distance_from_impact >= 2.4) return 0.0;
+
+    // A pebble first displaces water down at the contact point and up into a
+    // narrow rim. The nearly volume-balanced profile becomes the first
+    // crest/trough pair that the shallow-water solver propagates outward.
+    const float crater =
+        exp(-3.0 * distance_from_impact * distance_from_impact);
+    const float rim_offset = distance_from_impact - 1.15;
+    const float displaced_rim = 0.22 * exp(-9.0 * rim_offset * rim_offset);
+    return (-impact_speed) * (displaced_rim - crater);
 }
 
 kernel void marble_water_force(
@@ -255,11 +279,11 @@ kernel void marble_water_force(
     constant float &density [[buffer(10)]],
     constant float &plane_scale [[buffer(11)]],
     constant float &amplification [[buffer(12)]],
-    constant float &spring [[buffer(13)]],
-    constant float &coupling [[buffer(14)]],
-    constant float &damping [[buffer(15)]],
-    constant float &impact_radius [[buffer(16)]],
-    constant float &impact_gain [[buffer(17)]],
+    constant float &wave_speed [[buffer(13)]],
+    constant float &damping [[buffer(14)]],
+    constant float &impact_radius [[buffer(15)]],
+    constant float &impact_gain [[buffer(16)]],
+    constant float &wake_gain [[buffer(17)]],
     constant float &dt [[buffer(18)]],
     uint index [[thread_position_in_grid]])
 {
@@ -281,34 +305,90 @@ kernel void marble_water_force(
     const float rest_z = (float(z) - (float(active_height) - 1.0) * 0.5) * active_spacing;
     const float2 rest_point = float2(rest_x, rest_z);
     const float amplification_amount = clamp(amplification, 0.0, 1.0);
-    const float ripple_gain =
-        1.0 + 5.0 * pow(amplification_amount, 1.25);
+    const float ripple_gain = 1.0 + 2.5 * pow(amplification_amount, 1.25);
     const float ripple_radius =
-        impact_radius * (1.0 + 0.80 * amplification_amount);
-    const float ripple_coupling =
-        coupling * (1.0 + 0.30 * amplification_amount);
+        impact_radius * (1.0 + 0.25 * amplification_amount);
+    const float ripple_wave_speed =
+        wave_speed * (1.0 + 0.12 * amplification_amount);
     const float ripple_damping =
-        damping * (1.0 - 0.50 * amplification_amount);
+        damping * (1.0 - 0.35 * amplification_amount);
 
-    float neighbor_sum = 0.0;
-    uint neighbor_count = 0;
-    if (x > 0) { neighbor_sum += float3(positions[index - 1]).y; neighbor_count++; }
-    if (x + 1 < active_width) { neighbor_sum += float3(positions[index + 1]).y; neighbor_count++; }
-    if (z > 0) { neighbor_sum += float3(positions[index - active_width]).y; neighbor_count++; }
-    if (z + 1 < active_height) { neighbor_sum += float3(positions[index + active_width]).y; neighbor_count++; }
-    const float neighbor_average = neighbor_sum / max(float(neighbor_count), 1.0);
-    const float acceleration = -spring * position.y
-        + ripple_coupling * (neighbor_average - position.y)
-        - ripple_damping * velocity.y;
+    // Nine-point, spacing-aware Laplacian for the 2D shallow-water wave
+    // equation. The old neighbor average omitted 1 / spacing^2, making wave
+    // speed depend on particle density and effectively trapping disturbances
+    // beside the marble.
+    const float center = position.y;
+    const float left =
+        x > 0 ? float3(positions[index - 1]).y : center;
+    const float right =
+        x + 1 < active_width ? float3(positions[index + 1]).y : center;
+    const float near =
+        z > 0 ? float3(positions[index - active_width]).y : center;
+    const float far =
+        z + 1 < active_height ? float3(positions[index + active_width]).y : center;
+    const float near_left =
+        x > 0 && z > 0
+            ? float3(positions[index - active_width - 1]).y
+            : center;
+    const float near_right =
+        x + 1 < active_width && z > 0
+            ? float3(positions[index - active_width + 1]).y
+            : center;
+    const float far_left =
+        x > 0 && z + 1 < active_height
+            ? float3(positions[index + active_width - 1]).y
+            : center;
+    const float far_right =
+        x + 1 < active_width && z + 1 < active_height
+            ? float3(positions[index + active_width + 1]).y
+            : center;
+    const float inverse_spacing_squared =
+        1.0 / max(active_spacing * active_spacing, 1e-6);
+    const float laplacian = (
+        4.0 * (left + right + near + far)
+        + near_left + near_right + far_left + far_right
+        - 20.0 * center
+    ) * (inverse_spacing_squared / 6.0);
+
+    // Absorb outgoing waves over the outer particle band instead of reflecting
+    // a hard square echo back through the pool.
+    const uint edge_x = min(x, active_width - 1u - x);
+    const uint edge_z = min(z, active_height - 1u - z);
+    const float edge_distance = float(min(edge_x, edge_z));
+    const float edge_absorption =
+        4.0 * (1.0 - smoothstep(0.0, 10.0, edge_distance));
+    const float acceleration =
+        ripple_wave_speed * ripple_wave_speed * laplacian
+        - (ripple_damping + edge_absorption) * velocity.y;
     velocity.y += acceleration * dt;
 
-    float impulse = impact_impulse(rest_point, float3(player_impact_positions[0]),
-                                   player_impact_speeds[0], ripple_radius);
+    const float player_impact_speed = player_impact_speeds[0];
+    const float landing_impulse = drop_impulse(
+        rest_point,
+        float3(player_impact_positions[0]),
+        player_impact_speed,
+        ripple_radius
+    );
+    // Landing is an instantaneous momentum transfer, so it is deliberately
+    // not multiplied by dt. This produces one coherent expanding ring.
+    velocity.y += landing_impulse * impact_gain * ripple_gain;
+
+    float continuous_wake = wake_impulse(
+        rest_point,
+        float3(player_impact_positions[0]),
+        player_impact_speed,
+        ripple_radius
+    );
     for (uint enemy = 0; enemy < enemy_count; ++enemy) {
-        impulse += impact_impulse(rest_point, float3(enemy_impact_positions[enemy]),
-                                  enemy_impact_speeds[enemy], ripple_radius);
+        continuous_wake += wake_impulse(
+            rest_point,
+            float3(enemy_impact_positions[enemy]),
+            enemy_impact_speeds[enemy],
+            ripple_radius
+        );
     }
-    velocity.y += impulse * impact_gain * ripple_gain * dt;
+    velocity.y += continuous_wake * wake_gain * ripple_gain * dt;
+    velocity.y = clamp(velocity.y, -1.5, 1.5);
     velocity.xz = 0.0;
     velocities[index] = packed_float3(velocity);
 }
@@ -351,10 +431,19 @@ kernel void marble_compose_scene(
         const float rest_z = (float(z) - (float(active_height) - 1.0) * 0.5) * active_spacing;
         const float water_height = float3(water_positions[water_index]).y;
         render_positions[index] = packed_float3(rest_x, water_height, rest_z);
+        const float wave_energy = clamp(abs(water_height) * 42.0, 0.0, 1.0);
         render_radii[index] = clamp(active_spacing * 0.28, 0.003, 0.013)
-            + min(abs(water_height) * 0.10, 0.008);
-        const float crest = clamp(water_height * 8.0 + 0.35, 0.0, 1.0);
-        render_colors[index] = float4(mix(float3(0.02, 0.25, 0.58), float3(0.18, 0.86, 1.0), crest), 0.82);
+            + min(abs(water_height) * 0.24, 0.014);
+        const float crest = clamp(water_height * 28.0 + 0.34, 0.0, 1.0);
+        const float3 height_color = mix(
+            float3(0.01, 0.12, 0.40),
+            float3(0.16, 0.88, 1.0),
+            crest
+        );
+        render_colors[index] = float4(
+            mix(height_color, float3(0.72, 0.98, 1.0), wave_energy * 0.38),
+            0.84
+        );
     } else if (index == water_capacity) {
         render_positions[index] = player_positions[0];
         render_radii[index] = marble_radius;
