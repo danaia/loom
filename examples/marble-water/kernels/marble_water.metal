@@ -95,6 +95,44 @@ inline float submerged_volume_fraction(
         / max(4.0 * radius * radius * radius, 1e-6);
 }
 
+kernel void marble_project_scene(
+    device packed_float3 *positions [[buffer(0)]],
+    device float *radii [[buffer(1)]],
+    device float *waterline_views [[buffer(2)]],
+    constant float &camera_x [[buffer(3)]],
+    constant float &camera_y [[buffer(4)]],
+    constant float &camera_z [[buffer(5)]],
+    constant float &target_x [[buffer(6)]],
+    constant float &target_y [[buffer(7)]],
+    constant float &target_z [[buffer(8)]],
+    constant float &aspect [[buffer(9)]],
+    uint index [[thread_position_in_grid]])
+{
+    const float radius = radii[index];
+    if (radius <= 0.0) return;
+
+    const float3 camera = float3(camera_x, camera_y, camera_z);
+    const float3 target = float3(target_x, target_y, target_z);
+    const float3 forward = normalize(target - camera);
+    const float3 right =
+        normalize(cross(forward, float3(0.0, 1.0, 0.0)));
+    const float3 camera_up = cross(right, forward);
+    const float3 relative = float3(positions[index]) - camera;
+    const float depth = max(dot(relative, forward), 0.05);
+    constexpr float focal = 1.85;
+    const float safe_aspect = max(aspect, 0.1);
+    positions[index] = packed_float3(
+        dot(relative, right) * focal / (depth * safe_aspect),
+        dot(relative, camera_up) * focal / depth,
+        depth
+    );
+    radii[index] = radius * focal / depth;
+    // The fragment shader reconstructs the visible sphere surface in world Y.
+    // A single elevation term is sufficient because the camera's right vector
+    // stays horizontal and camera_up.y = sqrt(1 - elevation^2).
+    waterline_views[index] = clamp(-forward.y, -1.0, 1.0);
+}
+
 kernel void marble_reset_state(
     device packed_float3 *player_positions [[buffer(0)]],
     device packed_float3 *player_velocities [[buffer(1)]],
@@ -165,6 +203,7 @@ kernel void marble_player_step(
     constant float &water_density [[buffer(24)]],
     constant float &density_ratio [[buffer(25)]],
     constant float &vertical_drag [[buffer(26)]],
+    constant float &speed_multiplier [[buffer(27)]],
     uint index [[thread_position_in_grid]])
 {
     if (index > 0) return;
@@ -208,14 +247,18 @@ kernel void marble_player_step(
     ) * dt;
     const float2 input = float2(input_x, input_z);
     const float input_length = length(input);
+    const float speed_scale = clamp(speed_multiplier, 0.25, 3.0);
     if (input_length > 0.0) {
         const float2 direction = input / max(input_length, 1.0);
-        velocity.xz += direction * drive_acceleration * dt;
+        velocity.xz +=
+            direction * drive_acceleration * speed_scale * dt;
     }
     velocity.xz *= mix(0.9995, ground_drag, submerged_fraction);
     const float horizontal_speed = length(velocity.xz);
-    if (horizontal_speed > maximum_speed) {
-        velocity.xz *= maximum_speed / horizontal_speed;
+    const float effective_maximum_speed =
+        maximum_speed * speed_scale;
+    if (horizontal_speed > effective_maximum_speed) {
+        velocity.xz *= effective_maximum_speed / horizontal_speed;
     }
     position += velocity * dt;
     contain_marble(
@@ -852,10 +895,75 @@ kernel void marble_compose_scene(
         const float rest_x = (float(x) - (float(active_width) - 1.0) * 0.5) * active_spacing;
         const float rest_z = (float(z) - (float(active_height) - 1.0) * 0.5) * active_spacing;
         const float water_height = float3(water_positions[water_index]).y;
-        render_positions[index] = packed_float3(rest_x, water_height, rest_z);
+        const float water_surface = surface_height + water_height;
+        const float2 water_point = float2(rest_x, rest_z);
+        bool inside_body = false;
+        float contact_edge = 0.0;
+
+        const float3 player_position = float3(player_positions[0]);
+        const float player_vertical = water_surface - player_position.y;
+        if (abs(player_vertical) < marble_radius) {
+            const float contact_radius = sqrt(max(
+                marble_radius * marble_radius
+                    - player_vertical * player_vertical,
+                0.0
+            ));
+            const float contact_gap =
+                length(water_point - player_position.xz) - contact_radius;
+            inside_body = contact_gap < -active_spacing * 0.20;
+            contact_edge = max(
+                contact_edge,
+                exp(
+                    -pow(
+                        max(contact_gap, 0.0)
+                            / max(active_spacing * 1.65, 1e-4),
+                        2.0
+                    )
+                ) * smoothstep(-active_spacing * 0.20, 0.0, contact_gap)
+            );
+        }
+        for (uint enemy = 0; enemy < enemy_count; ++enemy) {
+            const float enemy_radius = marble_radius * 0.92;
+            const float3 enemy_position = float3(enemy_positions[enemy]);
+            const float enemy_vertical = water_surface - enemy_position.y;
+            if (abs(enemy_vertical) >= enemy_radius) continue;
+            const float contact_radius = sqrt(max(
+                enemy_radius * enemy_radius
+                    - enemy_vertical * enemy_vertical,
+                0.0
+            ));
+            const float contact_gap =
+                length(water_point - enemy_position.xz) - contact_radius;
+            inside_body =
+                inside_body || contact_gap < -active_spacing * 0.20;
+            contact_edge = max(
+                contact_edge,
+                exp(
+                    -pow(
+                        max(contact_gap, 0.0)
+                            / max(active_spacing * 1.65, 1e-4),
+                        2.0
+                    )
+                ) * smoothstep(-active_spacing * 0.20, 0.0, contact_gap)
+            );
+        }
+        if (inside_body) {
+            render_positions[index] = packed_float3(0.0);
+            render_radii[index] = 0.0;
+            render_colors[index] = float4(0.0);
+            return;
+        }
+
+        // Capillary rise and a denser/brighter particle band make the true
+        // circular sphere-water contact edge visible from every camera angle.
+        const float meniscus_height =
+            marble_radius * 0.055 * contact_edge;
+        render_positions[index] =
+            packed_float3(rest_x, water_height + meniscus_height, rest_z);
         const float wave_energy = clamp(abs(water_height) * 42.0, 0.0, 1.0);
         render_radii[index] = clamp(active_spacing * 0.28, 0.003, 0.013)
-            + min(abs(water_height) * 0.24, 0.014);
+            + min(abs(water_height) * 0.24, 0.014)
+            + active_spacing * 0.16 * contact_edge;
         const float crest = clamp(water_height * 28.0 + 0.34, 0.0, 1.0);
         const float3 height_color = mix(
             float3(0.01, 0.12, 0.40),
@@ -863,8 +971,12 @@ kernel void marble_compose_scene(
             crest
         );
         render_colors[index] = float4(
-            mix(height_color, float3(0.72, 0.98, 1.0), wave_energy * 0.38),
-            0.84
+            mix(
+                height_color,
+                float3(0.72, 0.98, 1.0),
+                max(wave_energy * 0.38, contact_edge * 0.78)
+            ),
+            mix(0.84, 0.98, contact_edge)
         );
     } else if (index == water_capacity) {
         // The simulated body center already follows the local surface through

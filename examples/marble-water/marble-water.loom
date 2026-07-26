@@ -18,10 +18,18 @@ const interaction.grab_z: f32<m> = 0.15
 const interaction.water_density: f32 = 0.5
 const interaction.plane_scale: f32 = 1
 const interaction.water_amplification: f32 = 0.25
+const interaction.player_speed: f32 = 1
 const interaction.reset_scene: f32 = 0
 const interaction.reset_water: f32 = 0
 const interaction.hud_fps: f32 = 0
 const interaction.hud_gpu_mb: f32 = 0
+const interaction.camera_x: f32<m> = 0
+const interaction.camera_y: f32<m> = 2.10
+const interaction.camera_z: f32<m> = 3.55
+const interaction.camera_target_x: f32<m> = 0
+const interaction.camera_target_y: f32<m> = 0.02
+const interaction.camera_target_z: f32<m> = 0
+const interaction.camera_aspect: f32 = 1.333333
 
 // The height field stores the physical waterline at its particle centers.
 // A half-density sphere equilibrates with its center exactly on this plane.
@@ -157,7 +165,8 @@ kernel player_step(
   water_spacing: in value<f32,m>,
   water_density: in value<f32>,
   density_ratio: in value<f32>,
-  vertical_drag: in value<f32,s^-1>
+  vertical_drag: in value<f32,s^-1>,
+  speed_multiplier: in value<f32>
 ) extern metal {
   source="kernels/marble_water.metal"
   entry="marble_player_step"
@@ -292,6 +301,22 @@ kernel compose_scene(
   entry="marble_compose_scene"
 }
 
+kernel project_scene(
+  position: rw stream<f32x3,m>,
+  radius: rw stream<f32,m>,
+  waterline_view: rw stream<f32>,
+  camera_x: in value<f32,m>,
+  camera_y: in value<f32,m>,
+  camera_z: in value<f32,m>,
+  target_x: in value<f32,m>,
+  target_y: in value<f32,m>,
+  target_z: in value<f32,m>,
+  aspect: in value<f32>
+) extern metal {
+  source="kernels/marble_water.metal"
+  entry="marble_project_scene"
+}
+
 pass reset_simulation = reset_state(
   player_position=player.position
   player_velocity=player.velocity
@@ -336,6 +361,7 @@ pass drive_player = player_step(
   water_density=interaction.water_density
   density_ratio=marble.density_ratio
   vertical_drag=marble.vertical_drag
+  speed_multiplier=interaction.player_speed
 ) over player.position
 
 pass chase_player = enemy_step(
@@ -450,6 +476,19 @@ pass stage_scene = compose_scene(
   surface_height=world.surface_height
 ) over render.position
 
+pass project_camera = project_scene(
+  position=render.position
+  radius=render.radius
+  waterline_view=render.scale
+  camera_x=interaction.camera_x
+  camera_y=interaction.camera_y
+  camera_z=interaction.camera_z
+  target_x=interaction.camera_target_x
+  target_y=interaction.camera_target_y
+  target_z=interaction.camera_target_z
+  aspect=interaction.camera_aspect
+) over render.position
+
 view viewport(
   color=render.color
   position=render.position
@@ -461,6 +500,6 @@ view viewport(
 }
 
 flow simulation rate=120hz {
-  reset_simulation -> drive_player -> chase_player -> collide_marbles -> disturb_water -> move_water -> move_marbles_with_waves -> stage_scene
-  draw viewport after stage_scene
+  reset_simulation -> drive_player -> chase_player -> collide_marbles -> disturb_water -> move_water -> move_marbles_with_waves -> stage_scene -> project_camera
+  draw viewport after project_camera
 }

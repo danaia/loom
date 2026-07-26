@@ -251,6 +251,11 @@ h1 {
   --accent-soft: rgba(255, 137, 38, 0.14);
 }
 
+.control--green {
+  --accent: #5ce7ad;
+  --accent-soft: rgba(56, 218, 150, 0.14);
+}
+
 .control__heading {
   display: flex;
   align-items: start;

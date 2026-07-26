@@ -5,6 +5,7 @@ import { getSnapshot, setControl } from './bridge'
 const density = ref(0.5)
 const planeScale = ref(1)
 const amplification = ref(0.25)
+const playerSpeed = ref(1)
 const fps = ref(0)
 const gpuMemory = ref(0)
 const connected = ref(false)
@@ -18,6 +19,7 @@ const particleCount = computed(() => {
 })
 
 const amplificationLabel = computed(() => `${(1 + amplification.value * 5).toFixed(1)}×`)
+const playerSpeedLabel = computed(() => `${playerSpeed.value.toFixed(2)}×`)
 
 function updateControl(name: string, value: number) {
   void setControl(name, value).catch(() => {
@@ -40,6 +42,11 @@ function updateAmplification(event: Event) {
   updateControl('interaction.water_amplification', amplification.value)
 }
 
+function updatePlayerSpeed(event: Event) {
+  playerSpeed.value = Number((event.target as HTMLInputElement).value)
+  updateControl('interaction.player_speed', playerSpeed.value)
+}
+
 async function resetScene() {
   resetActive.value = true
   updateControl('interaction.reset_scene', 1)
@@ -56,6 +63,7 @@ async function pollSnapshot() {
     planeScale.value = snapshot.values['interaction.plane_scale'] ?? planeScale.value
     amplification.value =
       snapshot.values['interaction.water_amplification'] ?? amplification.value
+    playerSpeed.value = snapshot.values['interaction.player_speed'] ?? playerSpeed.value
     fps.value = snapshot.values['interaction.hud_fps'] ?? fps.value
     gpuMemory.value = snapshot.values['interaction.hud_gpu_mb'] ?? gpuMemory.value
   } catch {
@@ -168,6 +176,27 @@ onBeforeUnmount(() => {
           @input="updateAmplification"
         />
         <div class="range-legend"><span>1× calm</span><span>6× kinetic</span></div>
+      </article>
+
+      <article class="control control--green">
+        <div class="control__heading">
+          <div>
+            <p class="control__kicker">PLAYER</p>
+            <h2>Movement speed</h2>
+          </div>
+          <output>{{ playerSpeedLabel }}</output>
+        </div>
+        <input
+          aria-label="Player movement speed"
+          type="range"
+          min="0.25"
+          max="3"
+          step="0.05"
+          :value="playerSpeed"
+          :style="{ '--progress': `${((playerSpeed - 0.25) / 2.75) * 100}%` }"
+          @input="updatePlayerSpeed"
+        />
+        <div class="range-legend"><span>0.25× drift</span><span>3× fast wake</span></div>
       </article>
     </section>
 
