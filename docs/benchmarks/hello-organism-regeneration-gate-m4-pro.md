@@ -84,15 +84,37 @@ recovery criterion, ending with 30 cells and persistent injury.
 These branches distinguish causal local injury/repair behavior from passive
 regrowth or a hidden global morphology correction.
 
-## Performance boundary
+## Clean post-Gate-5 timing
 
-This record promotes a correctness result, not a Gate 5 timing claim. The clean
-pre-Gate-5 timing remains archived in
-`hello-organism-homeostasis-gate-m4-pro.md`. Injury transport, regeneration
-reductions, checkpoint branching, and four 20,000-tick suffixes make this test a
-proof workload rather than an interactive performance benchmark. A clean
-post-Gate-5 single-branch benchmark is required before publishing new runtime
-timing.
+```text
+cargo run --release -q -p loom-metal --bin hello-particle-view -- \
+  organism 1024 --bench headless --warmup 30000 --samples 100
+```
+
+Device: Apple M4 Pro. macOS: 26.6. Host profile: release. Rust:
+`rustc 1.88.0`. Metal SDK: 26.0. Source:
+`b9b3f6d4a070423982f33867e3f3c3dc4fcc2449`, clean.
+
+```text
+GPU mean: 1.422 ms
+GPU p50:  1.425 ms
+GPU p95:  1.462 ms
+GPU p99:  1.521 ms
+GPU max:  1.578 ms
+stream buffers: 8,217,972 bytes
+```
+
+Runtime artifact:
+`bbaeb3c6b37930a098672899830ad0bc6d0612f1fe2ffea7ea116b1355da9411`.
+Runtime fingerprint:
+`55d9573f27d1cb7b6ad34ffd9a792067576c01d834aee8298d550d30178120f6`.
+Organism shader:
+`1751a13058b12bf922ca8b7d0539d21f190a94b699df7bdc81e39aa800ca902e`.
+
+This is a 39-cell-class single-branch workload at 1,024 declared capacity. It is
+not a populated regeneration-scaling result. Checkpoint branching and the four
+20,000-tick causal suffixes remain a correctness workload rather than an
+interactive performance benchmark.
 
 Proof command:
 
@@ -101,3 +123,6 @@ cargo test --release -p loom-metal \
   runtime::tests::committed_homeostatic_checkpoint_branches_into_causal_regeneration_proofs \
   -- --nocapture
 ```
+
+The committed tick-30,000 checkpoint hash is:
+`58b307aef094fa5204a0ebda443c2ccf38ac6a8f998f2950f086bf7e19d4b1b8`.

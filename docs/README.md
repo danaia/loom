@@ -16,6 +16,8 @@ The language documents are read in this order:
 12. [`benchmarks/hello-organism-development-gate-m4-pro.md`](benchmarks/hello-organism-development-gate-m4-pro.md) — one-seed procedural development, causal ablations, exact replay, and populated reference timing.
 13. [`benchmarks/hello-organism-homeostasis-gate-m4-pro.md`](benchmarks/hello-organism-homeostasis-gate-m4-pro.md) — sustained equilibrium, energy accounting, nutrient perturbation, and the clean Gate 4 timing.
 14. [`benchmarks/hello-organism-regeneration-gate-m4-pro.md`](benchmarks/hello-organism-regeneration-gate-m4-pro.md) — committed-checkpoint lesion, local repair, sustained recovery, and causal ablations.
+15. [`visuals/hello-organism-gate-5.svg`](visuals/hello-organism-gate-5.svg) — visual evidence summary of development, lesion, local regeneration, and causal ablations.
+16. [`milestones/hello-organism-v0.1.md`](milestones/hello-organism-v0.1.md) — frozen Gate 1–5 proof manifest, hashes, event record, timing, and limitations.
 
 Planned specifications:
 

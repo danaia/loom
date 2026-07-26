@@ -1,0 +1,232 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1000" viewBox="0 0 1600 1000" role="img" aria-labelledby="title desc">
+  <title id="title">Loom Hello Organism — Emergent Systems Proof</title>
+  <desc id="desc">An evidence view of one organizer developing into a homeostatic organism, receiving a deterministic lesion, and regenerating through local injury and density rules. It includes causal ablations and measured Gate 5 results.</desc>
+  <defs>
+    <linearGradient id="background" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#07111f"/>
+      <stop offset="0.55" stop-color="#0b1728"/>
+      <stop offset="1" stop-color="#08121c"/>
+    </linearGradient>
+    <linearGradient id="success" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#60f0bd"/>
+      <stop offset="1" stop-color="#22b9a2"/>
+    </linearGradient>
+    <linearGradient id="cellBlue" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#78c9ff"/>
+      <stop offset="1" stop-color="#397ce5"/>
+    </linearGradient>
+    <radialGradient id="injury">
+      <stop offset="0" stop-color="#ff5d6c" stop-opacity="0.7"/>
+      <stop offset="0.55" stop-color="#ff5d6c" stop-opacity="0.22"/>
+      <stop offset="1" stop-color="#ff5d6c" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="8" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="soft" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="10" stdDeviation="16" flood-color="#000814" flood-opacity="0.45"/>
+    </filter>
+    <symbol id="cell" viewBox="-10 -10 20 20">
+      <circle r="8.2" fill="url(#cellBlue)" stroke="#bce6ff" stroke-width="1.1"/>
+      <circle cx="-2.5" cy="-2.8" r="2.2" fill="#d9f4ff" opacity="0.55"/>
+    </symbol>
+    <symbol id="organizer" viewBox="-11 -11 22 22">
+      <circle r="9.2" fill="#ff665e" stroke="#ffd4ca" stroke-width="1.2"/>
+      <circle r="3.4" fill="#fff2dd" opacity="0.9"/>
+    </symbol>
+    <style>
+      .eyebrow { font: 700 18px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; letter-spacing: 3px; fill: #65e7c4; }
+      .title { font: 750 58px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #f4f8ff; }
+      .subtitle { font: 400 23px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #a8b9ce; }
+      .card-title { font: 700 25px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #f2f7ff; }
+      .card-kicker { font: 700 14px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; letter-spacing: 2px; fill: #6fe5c3; }
+      .body { font: 400 17px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #9fb0c4; }
+      .metric { font: 700 23px ui-monospace, SFMono-Regular, Menlo, monospace; fill: #f3f8ff; }
+      .metric-label { font: 500 14px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #7f93aa; }
+      .small { font: 500 13px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #8194aa; }
+      .mono { font: 500 13px ui-monospace, SFMono-Regular, Menlo, monospace; fill: #91a5bc; }
+      .panel { fill: #101f32; stroke: #203851; stroke-width: 1.2; }
+      .rule { stroke: #29445e; stroke-width: 1; }
+    </style>
+  </defs>
+
+  <rect width="1600" height="1000" fill="url(#background)"/>
+  <circle cx="1320" cy="20" r="360" fill="#123c50" opacity="0.16"/>
+  <circle cx="80" cy="930" r="330" fill="#123d39" opacity="0.14"/>
+
+  <g transform="translate(86 72)">
+    <text class="eyebrow" x="0" y="0">LOOM / HELLO ORGANISM / GATE 5</text>
+    <text class="title" x="0" y="70">Form that constructs, sustains, and repairs itself.</text>
+    <text class="subtitle" x="0" y="114">Deterministic Metal execution · local laws · no stored target geometry · measured causal proof</text>
+  </g>
+
+  <g transform="translate(86 225)" filter="url(#soft)">
+    <rect class="panel" width="420" height="410" rx="24"/>
+    <text class="card-kicker" x="30" y="42">01 / DEVELOPMENT + HOMEOSTASIS</text>
+    <text class="card-title" x="30" y="78">One organizer constructs a body</text>
+    <text class="body" x="30" y="108">No mesh, target coordinates, or central controller.</text>
+
+    <g transform="translate(210 234)">
+      <path d="M-104 0 C-88-77 -22-108 54-89 C117-73 138-15 105 48 C72 111 -14 117 -74 80 C-108 58 -121 27 -104 0Z"
+            fill="#173653" stroke="#3f769c" stroke-width="2" opacity="0.7"/>
+      <g opacity="0.98">
+        <use href="#organizer" x="-10" y="-4" width="22" height="22"/>
+        <use href="#cell" x="14" y="-5" width="20" height="20"/><use href="#cell" x="-34" y="-5" width="20" height="20"/>
+        <use href="#cell" x="-10" y="-29" width="20" height="20"/><use href="#cell" x="-10" y="20" width="20" height="20"/>
+        <use href="#cell" x="31" y="-27" width="20" height="20"/><use href="#cell" x="31" y="18" width="20" height="20"/>
+        <use href="#cell" x="-51" y="-28" width="20" height="20"/><use href="#cell" x="-51" y="20" width="20" height="20"/>
+        <use href="#cell" x="55" y="-5" width="20" height="20"/><use href="#cell" x="55" y="-50" width="20" height="20"/>
+        <use href="#cell" x="55" y="40" width="20" height="20"/><use href="#cell" x="-75" y="-5" width="20" height="20"/>
+        <use href="#cell" x="-75" y="-50" width="20" height="20"/><use href="#cell" x="-75" y="40" width="20" height="20"/>
+        <use href="#cell" x="79" y="-28" width="20" height="20"/><use href="#cell" x="79" y="18" width="20" height="20"/>
+        <use href="#cell" x="31" y="-72" width="20" height="20"/><use href="#cell" x="31" y="63" width="20" height="20"/>
+        <use href="#cell" x="-34" y="-73" width="20" height="20"/><use href="#cell" x="-34" y="63" width="20" height="20"/>
+        <use href="#cell" x="-96" y="-27" width="20" height="20"/><use href="#cell" x="-96" y="19" width="20" height="20"/>
+        <use href="#cell" x="98" y="-5" width="20" height="20"/><use href="#cell" x="77" y="-73" width="20" height="20"/>
+        <use href="#cell" x="77" y="62" width="20" height="20"/><use href="#cell" x="-78" y="-73" width="20" height="20"/>
+        <use href="#cell" x="-78" y="62" width="20" height="20"/><use href="#cell" x="-10" y="-93" width="20" height="20"/>
+        <use href="#cell" x="-10" y="84" width="20" height="20"/><use href="#cell" x="101" y="-49" width="20" height="20"/>
+        <use href="#cell" x="101" y="39" width="20" height="20"/><use href="#cell" x="-99" y="-51" width="20" height="20"/>
+        <use href="#cell" x="-99" y="41" width="20" height="20"/><use href="#cell" x="52" y="-94" width="20" height="20"/>
+        <use href="#cell" x="52" y="83" width="20" height="20"/><use href="#cell" x="-56" y="-94" width="20" height="20"/>
+        <use href="#cell" x="-56" y="83" width="20" height="20"/><use href="#cell" x="116" y="-27" width="20" height="20"/>
+      </g>
+    </g>
+
+    <line class="rule" x1="30" y1="344" x2="390" y2="344"/>
+    <text class="metric" x="30" y="380">39</text><text class="metric-label" x="30" y="402">CELLS</text>
+    <text class="metric" x="122" y="380">1</text><text class="metric-label" x="122" y="402">COMPONENT</text>
+    <text class="metric" x="254" y="380">30,000</text><text class="metric-label" x="254" y="402">HOMEOSTATIC TICKS</text>
+  </g>
+
+  <g transform="translate(530 225)" filter="url(#soft)">
+    <rect class="panel" width="420" height="410" rx="24"/>
+    <text class="card-kicker" x="30" y="42" fill="#ff8a92">02 / STRUCTURAL LESION</text>
+    <text class="card-title" x="30" y="78">A lesion removes nine cells</text>
+    <text class="body" x="30" y="108">Organizer preserved. Geometry measures only.</text>
+
+    <g transform="translate(210 232)">
+      <path d="M-104 0 C-88-77 -22-108 54-89 C117-73 138-15 105 48 C72 111 -14 117 -74 80 C-108 58 -121 27 -104 0Z"
+            fill="#173653" stroke="#3f769c" stroke-width="2" opacity="0.54"/>
+      <circle cx="74" cy="-2" r="78" fill="url(#injury)" filter="url(#glow)"/>
+      <circle cx="74" cy="-2" r="55" fill="none" stroke="#ff6571" stroke-width="2" stroke-dasharray="6 6" opacity="0.9"/>
+      <use href="#organizer" x="-10" y="-4" width="22" height="22"/>
+      <g opacity="0.72">
+        <use href="#cell" x="14" y="-5" width="20" height="20"/><use href="#cell" x="-34" y="-5" width="20" height="20"/>
+        <use href="#cell" x="-10" y="-29" width="20" height="20"/><use href="#cell" x="-10" y="20" width="20" height="20"/>
+        <use href="#cell" x="31" y="-27" width="20" height="20"/><use href="#cell" x="31" y="18" width="20" height="20"/>
+        <use href="#cell" x="-51" y="-28" width="20" height="20"/><use href="#cell" x="-51" y="20" width="20" height="20"/>
+        <use href="#cell" x="-75" y="-5" width="20" height="20"/><use href="#cell" x="-75" y="-50" width="20" height="20"/>
+        <use href="#cell" x="-75" y="40" width="20" height="20"/><use href="#cell" x="-96" y="-27" width="20" height="20"/>
+        <use href="#cell" x="-96" y="19" width="20" height="20"/><use href="#cell" x="-78" y="-73" width="20" height="20"/>
+        <use href="#cell" x="-78" y="62" width="20" height="20"/><use href="#cell" x="-10" y="-93" width="20" height="20"/>
+        <use href="#cell" x="-10" y="84" width="20" height="20"/><use href="#cell" x="-99" y="-51" width="20" height="20"/>
+        <use href="#cell" x="-99" y="41" width="20" height="20"/><use href="#cell" x="-56" y="-94" width="20" height="20"/>
+        <use href="#cell" x="-56" y="83" width="20" height="20"/>
+      </g>
+      <g fill="none" stroke="#ff9ca3" stroke-width="3" stroke-linecap="round">
+        <path d="M38-42l15 15m0-15L38-27"/><path d="M65-68l15 15m0-15L65-53"/>
+        <path d="M70-18l15 15m0-15L70-3"/><path d="M84 12l15 15m0-15L84 27"/>
+        <path d="M102-42l15 15m0-15l-15 15"/><path d="M106 34l15 15m0-15l-15 15"/>
+        <path d="M45 38l15 15m0-15L45 53"/><path d="M70 63l15 15m0-15L70 78"/>
+        <path d="M112-2l15 15m0-15l-15 15"/>
+      </g>
+    </g>
+
+    <line class="rule" x1="30" y1="344" x2="390" y2="344"/>
+    <text class="metric" x="30" y="380">−9</text><text class="metric-label" x="30" y="402">CELLS REMOVED</text>
+    <text class="metric" x="180" y="380">10</text><text class="metric-label" x="180" y="402">DAMAGED SHELL</text>
+    <text class="metric" x="326" y="380">1</text><text class="metric-label" x="326" y="402">ORGANIZER</text>
+  </g>
+
+  <g transform="translate(974 225)" filter="url(#soft)">
+    <rect width="540" height="410" rx="24" fill="#10243a" stroke="#2a6d66" stroke-width="1.5"/>
+    <text class="card-kicker" x="30" y="42">03 / LOCAL REGENERATION</text>
+    <text class="card-title" x="30" y="78">Local fields coordinate repair</text>
+    <text class="body" x="30" y="108">Cells follow local fields. Resolvers retain state authority.</text>
+
+    <g transform="translate(153 228)">
+      <circle r="104" fill="#14344c" stroke="#39877d" stroke-width="2"/>
+      <circle cx="58" cy="-3" r="52" fill="url(#injury)" opacity="0.35"/>
+      <path d="M24 52 C44 28 45 2 72-15 C90-27 95-45 108-60" fill="none" stroke="#67edbd" stroke-width="3" stroke-dasharray="5 5"/>
+      <use href="#organizer" x="-10" y="-4" width="22" height="22"/>
+      <g opacity="0.95">
+        <use href="#cell" x="14" y="-5" width="20" height="20"/><use href="#cell" x="-34" y="-5" width="20" height="20"/>
+        <use href="#cell" x="-10" y="-29" width="20" height="20"/><use href="#cell" x="-10" y="20" width="20" height="20"/>
+        <use href="#cell" x="31" y="-27" width="20" height="20"/><use href="#cell" x="31" y="18" width="20" height="20"/>
+        <use href="#cell" x="-51" y="-28" width="20" height="20"/><use href="#cell" x="-51" y="20" width="20" height="20"/>
+        <use href="#cell" x="55" y="-5" width="20" height="20"/><use href="#cell" x="55" y="-50" width="20" height="20"/>
+        <use href="#cell" x="55" y="40" width="20" height="20"/><use href="#cell" x="-75" y="-5" width="20" height="20"/>
+        <use href="#cell" x="-75" y="-50" width="20" height="20"/><use href="#cell" x="-75" y="40" width="20" height="20"/>
+        <use href="#cell" x="79" y="-28" width="20" height="20"/><use href="#cell" x="79" y="18" width="20" height="20"/>
+        <use href="#cell" x="31" y="-72" width="20" height="20"/><use href="#cell" x="31" y="63" width="20" height="20"/>
+        <use href="#cell" x="-34" y="-73" width="20" height="20"/><use href="#cell" x="-34" y="63" width="20" height="20"/>
+        <use href="#cell" x="-96" y="-27" width="20" height="20"/><use href="#cell" x="-96" y="19" width="20" height="20"/>
+        <use href="#cell" x="98" y="-5" width="20" height="20"/><use href="#cell" x="77" y="-73" width="20" height="20"/>
+        <use href="#cell" x="77" y="62" width="20" height="20"/><use href="#cell" x="-78" y="-73" width="20" height="20"/>
+        <use href="#cell" x="-78" y="62" width="20" height="20"/><use href="#cell" x="-10" y="-93" width="20" height="20"/>
+        <use href="#cell" x="-10" y="84" width="20" height="20"/><use href="#cell" x="101" y="-49" width="20" height="20"/>
+        <use href="#cell" x="101" y="39" width="20" height="20"/><use href="#cell" x="-99" y="-51" width="20" height="20"/>
+        <use href="#cell" x="-99" y="41" width="20" height="20"/><use href="#cell" x="52" y="-94" width="20" height="20"/>
+        <use href="#cell" x="52" y="83" width="20" height="20"/><use href="#cell" x="-56" y="-94" width="20" height="20"/>
+        <use href="#cell" x="-56" y="83" width="20" height="20"/><use href="#cell" x="116" y="-27" width="20" height="20"/>
+        <use href="#cell" x="116" y="18" width="20" height="20"/>
+      </g>
+      <g filter="url(#glow)">
+        <circle cx="47" cy="-12" r="7" fill="#62f0bd"/><circle cx="70" cy="9" r="7" fill="#62f0bd"/>
+        <circle cx="70" cy="-35" r="7" fill="#62f0bd"/><circle cx="93" cy="-12" r="7" fill="#62f0bd"/>
+      </g>
+    </g>
+
+    <g transform="translate(292 150)">
+      <rect x="0" y="0" width="215" height="158" rx="18" fill="#0b1929" stroke="#244158"/>
+      <text class="small" x="20" y="30">RECOVERY ACCEPTED</text>
+      <text x="20" y="65" font-family="ui-monospace, Menlo, monospace" font-size="32" font-weight="700" fill="#62efbd">tick 30,806</text>
+      <line class="rule" x1="20" y1="82" x2="195" y2="82"/>
+      <text class="small" x="20" y="106">SUSTAINED THROUGH 50,000</text>
+      <text class="metric" x="20" y="137">19,694 ticks</text>
+    </g>
+
+    <line class="rule" x1="30" y1="344" x2="510" y2="344"/>
+    <text class="metric" x="30" y="380">40</text><text class="metric-label" x="30" y="402">CELLS</text>
+    <text class="metric" x="125" y="380">1</text><text class="metric-label" x="125" y="402">COMPONENT</text>
+    <text class="metric" x="255" y="380">0</text><text class="metric-label" x="255" y="402">FINAL INJURY</text>
+    <text class="metric" x="407" y="380">16 / 23</text><text class="metric-label" x="407" y="402">BOUNDARY / INTERIOR</text>
+  </g>
+
+  <g transform="translate(86 670)">
+    <text class="eyebrow" x="0" y="0">CAUSAL ABLATIONS</text>
+    <text class="card-title" x="0" y="37">The same checkpoint and lesion. One local capability changed.</text>
+
+    <g transform="translate(0 66)">
+      <rect width="448" height="145" rx="20" fill="#11283a" stroke="#2b6f68"/>
+      <circle cx="36" cy="38" r="12" fill="#62efbd"/>
+      <text class="card-title" x="62" y="46">Injury ON · Repair ON</text>
+      <text class="body" x="24" y="82">Coordinated regeneration returns inside the envelope.</text>
+      <text class="metric" x="24" y="120">40 cells · accepted</text>
+    </g>
+    <g transform="translate(472 66)">
+      <rect width="448" height="145" rx="20" fill="#2a211d" stroke="#a5653c"/>
+      <circle cx="36" cy="38" r="12" fill="#f3a25f"/>
+      <text class="card-title" x="62" y="46">Injury OFF · Repair ON</text>
+      <text class="body" x="24" y="82">No injury signal; growth escapes its envelope.</text>
+      <text class="metric" x="24" y="120" fill="#ffc08c">97 cells · failed</text>
+    </g>
+    <g transform="translate(944 66)">
+      <rect width="448" height="145" rx="20" fill="#2b1d27" stroke="#9a4d68"/>
+      <circle cx="36" cy="38" r="12" fill="#f37c9d"/>
+      <text class="card-title" x="62" y="46">Injury ON · Repair OFF</text>
+      <text class="body" x="24" y="82">The wound remains observable, but tissue cannot rebuild.</text>
+      <text class="metric" x="24" y="120" fill="#ff9eb7">30 cells · failed</text>
+    </g>
+  </g>
+
+  <g transform="translate(86 914)">
+    <line class="rule" x1="0" y1="0" x2="1428" y2="0"/>
+    <text class="small" x="0" y="34">MEASURED RESULT · CELL IMAGERY IS SCHEMATIC</text>
+    <text class="mono" x="0" y="61">checkpoint sha256  58b307aef094fa5204a0ebda443c2ccf38ac6a8f998f2950f086bf7e19d4b1b8</text>
+    <text class="small" x="1040" y="34">APPLE M4 PRO · CLEAN SOURCE b9b3f6d4</text>
+    <text class="mono" x="1040" y="61">GPU mean 1.422 ms · p95 1.462 ms</text>
+  </g>
+</svg>
