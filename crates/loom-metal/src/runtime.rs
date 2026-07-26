@@ -456,7 +456,7 @@ impl MetalRuntime {
                             }
                         }
                     }
-                    let project_values = if let Some(extension) = project_extension.as_mut() {
+                    let mut project_values = if let Some(extension) = project_extension.as_mut() {
                         let size = window.inner_size();
                         match extension.frame(ProjectFrameContextV1 {
                             viewport_width: size.width as f32,
@@ -483,6 +483,7 @@ impl MetalRuntime {
                     } else {
                         Vec::new()
                     };
+                    state.append_runtime_telemetry(&mut project_values);
                     if let Some(panel) = project_panel.as_mut() {
                         panel.publish(&project_values);
                     }
@@ -713,6 +714,13 @@ struct RuntimeState {
     frames_per_second: f32,
     fps_sample_started: Instant,
     presented_frames: u32,
+    gpu_timing: Arc<Mutex<GpuTiming>>,
+}
+
+#[derive(Default)]
+struct GpuTiming {
+    frame_time_ms: f32,
+    samples: u64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -810,6 +818,7 @@ impl RuntimeState {
             frames_per_second: 0.0,
             fps_sample_started: Instant::now(),
             presented_frames: 0,
+            gpu_timing: Arc::new(Mutex::new(GpuTiming::default())),
         })
     }
 
@@ -819,6 +828,45 @@ impl RuntimeState {
 
     fn gpu_memory_mb(&self) -> f32 {
         self.device.current_allocated_size() as f32 / (1024.0 * 1024.0)
+    }
+
+    fn gpu_frame_time_ms(&self) -> f32 {
+        self.gpu_timing
+            .lock()
+            .map(|timing| timing.frame_time_ms)
+            .unwrap_or_default()
+    }
+
+    fn append_runtime_telemetry(&self, values: &mut Vec<(String, f32)>) {
+        let gpu_frame_time_ms = self.gpu_frame_time_ms();
+        let gpu_budget_ms = 1_000.0 / self.rate_hz.max(1) as f32;
+        let gpu_pressure = if gpu_frame_time_ms > 0.0 {
+            gpu_frame_time_ms / gpu_budget_ms * 100.0
+        } else {
+            0.0
+        };
+
+        for (name, value) in [
+            ("interaction.hud_gpu_frame_ms", gpu_frame_time_ms),
+            ("interaction.hud_gpu_budget_ms", gpu_budget_ms),
+            ("interaction.hud_gpu_pressure", gpu_pressure),
+        ] {
+            if !self
+                .validated
+                .graph()
+                .resources
+                .values
+                .iter()
+                .any(|candidate| candidate.name == name)
+            {
+                continue;
+            }
+            if let Some((_, existing)) = values.iter_mut().find(|(key, _)| key == name) {
+                *existing = value;
+            } else {
+                values.push((name.to_owned(), value));
+            }
+        }
     }
 
     fn record_presented_frame(&mut self) {
@@ -1150,6 +1198,25 @@ impl RuntimeState {
             interaction_buffers.push(overrides);
         }
 
+        let gpu_timing = Arc::clone(&self.gpu_timing);
+        let handler = ConcreteBlock::new(move |completed: &metal::CommandBufferRef| {
+            let gpu_start: f64 = unsafe { msg_send![completed, GPUStartTime] };
+            let gpu_end: f64 = unsafe { msg_send![completed, GPUEndTime] };
+            let frame_time_ms = ((gpu_end - gpu_start) * 1_000.0) as f32;
+            if !frame_time_ms.is_finite() || frame_time_ms < 0.0 {
+                return;
+            }
+            if let Ok(mut timing) = gpu_timing.lock() {
+                timing.frame_time_ms = if timing.samples == 0 {
+                    frame_time_ms
+                } else {
+                    timing.frame_time_ms + (frame_time_ms - timing.frame_time_ms) * 0.15
+                };
+                timing.samples += 1;
+            }
+        })
+        .copy();
+        command_buffer.add_completed_handler(&handler);
         command_buffer.commit();
         if wait_before_next_tick {
             command_buffer.wait_until_completed();

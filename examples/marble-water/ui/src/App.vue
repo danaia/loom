@@ -5,6 +5,7 @@ import {
   Button as AButton,
   ConfigProvider as AConfigProvider,
   Divider as ADivider,
+  Progress as AProgress,
   Slider as ASlider,
   Tooltip as ATooltip,
   theme,
@@ -22,6 +23,9 @@ const amplification = ref(0.25)
 const playerSpeed = ref(1)
 const fps = ref(0)
 const gpuMemory = ref(0)
+const gpuFrameTime = ref(0)
+const gpuBudget = ref(1000 / 120)
+const gpuPressure = ref(0)
 const connected = ref(false)
 const resetActive = ref(false)
 let pollTimer: number | undefined
@@ -74,6 +78,13 @@ const particleCount = computed(() => {
 
 const amplificationLabel = computed(() => `${(1 + amplification.value * 5).toFixed(1)}×`)
 const playerSpeedLabel = computed(() => `${playerSpeed.value.toFixed(2)}×`)
+const gpuPressurePercent = computed(() => Math.min(100, Math.max(0, gpuPressure.value)))
+const gpuPressureState = computed(() => {
+  if (gpuPressure.value >= 100) return { label: 'Limit', color: '#ff6b6b' }
+  if (gpuPressure.value >= 80) return { label: 'High', color: '#ffb454' }
+  if (gpuPressure.value >= 55) return { label: 'Working', color: '#f4d35e' }
+  return { label: 'Ready', color: '#56d6a3' }
+})
 
 function commitControl(name: string, value: number) {
   void setControl(name, value).catch(() => {
@@ -120,6 +131,11 @@ async function pollSnapshot() {
     playerSpeed.value = snapshot.values['interaction.player_speed'] ?? playerSpeed.value
     fps.value = snapshot.values['interaction.hud_fps'] ?? fps.value
     gpuMemory.value = snapshot.values['interaction.hud_gpu_mb'] ?? gpuMemory.value
+    gpuFrameTime.value =
+      snapshot.values['interaction.hud_gpu_frame_ms'] ?? gpuFrameTime.value
+    gpuBudget.value = snapshot.values['interaction.hud_gpu_budget_ms'] ?? gpuBudget.value
+    gpuPressure.value =
+      snapshot.values['interaction.hud_gpu_pressure'] ?? gpuPressure.value
   } catch {
     connected.value = false
   }
@@ -155,14 +171,38 @@ onBeforeUnmount(() => {
       </header>
 
       <section class="telemetry" aria-label="Viewer performance">
-        <div class="telemetry__item">
-          <span>Frame rate</span>
-          <strong>{{ Math.round(fps) }}<small>fps</small></strong>
+        <div class="telemetry__summary">
+          <div class="telemetry__item">
+            <span>Frame rate</span>
+            <strong>{{ Math.round(fps) }}<small>fps</small></strong>
+          </div>
+          <a-divider type="vertical" />
+          <div class="telemetry__item">
+            <span>GPU memory</span>
+            <strong>{{ Math.round(gpuMemory) }}<small>MiB</small></strong>
+          </div>
         </div>
-        <a-divider type="vertical" />
-        <div class="telemetry__item">
-          <span>GPU memory</span>
-          <strong>{{ Math.round(gpuMemory) }}<small>MiB</small></strong>
+
+        <div class="gpu-pressure">
+          <div class="gpu-pressure__heading">
+            <a-tooltip title="Metal execution time compared with the 120 Hz frame budget.">
+              <span>GPU pressure <question-circle-outlined /></span>
+            </a-tooltip>
+            <strong :style="{ color: gpuPressureState.color }">
+              {{ Math.round(gpuPressure) }}% · {{ gpuPressureState.label }}
+            </strong>
+          </div>
+          <a-progress
+            :percent="gpuPressurePercent"
+            :show-info="false"
+            :stroke-color="gpuPressureState.color"
+            :trail-color="'#253039'"
+            :stroke-width="5"
+          />
+          <div class="gpu-pressure__timing">
+            <span>{{ gpuFrameTime.toFixed(2) }} ms GPU</span>
+            <span>{{ gpuBudget.toFixed(2) }} ms budget</span>
+          </div>
         </div>
         <div class="telemetry__pulse" :class="{ 'telemetry__pulse--live': connected }">
           <i v-for="index in 8" :key="index" :style="{ '--i': index }"></i>

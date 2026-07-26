@@ -124,14 +124,19 @@ h1 {
 
 .telemetry {
   position: relative;
-  display: flex;
-  align-items: center;
-  min-height: 47px;
+  display: grid;
+  min-height: 91px;
   overflow: hidden;
-  padding: 7px 11px;
+  padding: 7px 11px 8px;
   border: 1px solid #202a31;
   border-radius: 7px;
   background: rgba(15, 21, 27, 0.88);
+}
+
+.telemetry__summary {
+  display: flex;
+  align-items: center;
+  min-height: 39px;
 }
 
 .telemetry .ant-divider-vertical {
@@ -175,12 +180,65 @@ h1 {
 .telemetry__pulse {
   position: absolute;
   right: 10px;
-  bottom: 8px;
+  top: 17px;
   display: flex;
   align-items: end;
   gap: 2px;
   height: 19px;
   opacity: 0.16;
+}
+
+.gpu-pressure {
+  position: relative;
+  z-index: 1;
+  padding-top: 6px;
+  border-top: 1px solid #1d272e;
+}
+
+.gpu-pressure__heading,
+.gpu-pressure__timing {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.gpu-pressure__heading {
+  color: #7c8e98;
+  font-size: 9px;
+}
+
+.gpu-pressure__heading > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: help;
+}
+
+.gpu-pressure__heading .anticon {
+  color: #536873;
+  font-size: 8px;
+}
+
+.gpu-pressure__heading strong {
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+}
+
+.gpu-pressure .ant-progress {
+  display: block;
+  margin: 1px 0 -2px;
+  line-height: 1;
+}
+
+.gpu-pressure .ant-progress-inner {
+  vertical-align: top;
+}
+
+.gpu-pressure__timing {
+  color: #61747e;
+  font-size: 8px;
+  font-variant-numeric: tabular-nums;
 }
 
 .telemetry__pulse i {
