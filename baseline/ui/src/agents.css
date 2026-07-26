@@ -481,6 +481,19 @@ p {
   height: 20px;
 }
 
+.agent-activity {
+  display: flex;
+  min-height: 24px;
+  align-items: center;
+  gap: 9px;
+  color: #929292;
+  font-size: 10px;
+}
+
+.agent-activity > span {
+  animation: activity-fade 1.4s ease-in-out infinite;
+}
+
 .composer-area {
   position: sticky;
   z-index: 10;
@@ -743,6 +756,12 @@ p {
 @keyframes pulse {
   50% {
     opacity: 0.4;
+  }
+}
+
+@keyframes activity-fade {
+  50% {
+    color: #c9c9c9;
   }
 }
 

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import {
   ApiOutlined,
   ArrowUpOutlined,
@@ -29,13 +29,16 @@ const responseId = ref<string | null>(null)
 const messages = ref<ChatMessage[]>([])
 const prompt = ref('')
 const sending = ref(false)
+const agentActivity = ref('Thinking')
 const conversation = ref<HTMLElement | null>(null)
+let activityTimer: ReturnType<typeof setInterval> | null = null
 
 const modelId = 'gpt-5.6-terra'
 const activeModel = ref(modelId)
 const projectName = ref('baseline')
 const projectRoot = ref('')
 const projectFileCount = ref(0)
+const minimumActivityMs = 900
 const modelLabel = computed(() => activeModel.value)
 const canSaveKey = computed(() => apiKey.value.trim().length > 0)
 const connected = computed(() => connectionPhase.value === 'connected')
@@ -58,6 +61,38 @@ async function scrollToLatest() {
     top: conversation.value.scrollHeight,
     behavior: 'smooth',
   })
+}
+
+function waitForPaint() {
+  return new Promise<void>((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+  })
+}
+
+function wait(milliseconds: number) {
+  return new Promise<void>((resolve) => window.setTimeout(resolve, milliseconds))
+}
+
+function startAgentActivity() {
+  const stages = [
+    'I’m on it',
+    'Reading project context',
+    'Working through the request',
+    'Checking the result',
+  ]
+  let stage = 0
+  agentActivity.value = stages[stage]
+  activityTimer = setInterval(() => {
+    stage = Math.min(stage + 1, stages.length - 1)
+    agentActivity.value = stages[stage]
+  }, 1400)
+}
+
+function stopAgentActivity() {
+  if (activityTimer !== null) {
+    clearInterval(activityTimer)
+    activityTimer = null
+  }
 }
 
 function acceptReply(reply: {
@@ -126,14 +161,20 @@ async function sendMessage() {
   messages.value.push({ role: 'user', text })
   prompt.value = ''
   sending.value = true
+  startAgentActivity()
   error.value = ''
-  void scrollToLatest()
+  await scrollToLatest()
+  await waitForPaint()
+  const activityStartedAt = performance.now()
   try {
     const reply = await sendAgentMessage(text, responseId.value)
+    const remainingActivity = minimumActivityMs - (performance.now() - activityStartedAt)
+    if (remainingActivity > 0) await wait(remainingActivity)
     acceptReply(reply)
   } catch (reason) {
     error.value = describeError(reason, 'The agent could not complete that request.')
   } finally {
+    stopAgentActivity()
     sending.value = false
     void scrollToLatest()
   }
@@ -159,6 +200,8 @@ onMounted(async () => {
     error.value = describeError(reason, 'The macOS Keychain could not be read.')
   }
 })
+
+onBeforeUnmount(stopAgentActivity)
 </script>
 
 <template>
@@ -249,7 +292,10 @@ onMounted(async () => {
               <span class="message-avatar"><api-outlined /></span>
               <div>
                 <strong>Loom Agent</strong>
-                <div class="loading-dots loading-dots--inline"><i></i><i></i><i></i></div>
+                <div class="agent-activity">
+                  <span>{{ agentActivity }}</span>
+                  <div class="loading-dots loading-dots--inline"><i></i><i></i><i></i></div>
+                </div>
               </div>
             </article>
           </div>
