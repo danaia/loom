@@ -2355,6 +2355,7 @@ fn command_output(program: &str, arguments: &[&str]) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::{MetalRuntime, RuntimeState, encode_f32_initializer, pacing_offset};
+    use crate::fingerprint::sha256;
     use crate::{BenchmarkConfig, BenchmarkMode, BenchmarkRunner};
     use loom_core::{
         DataType, HelloOrganismConfig, Literal, StreamInitializer,
@@ -3537,6 +3538,7 @@ mod tests {
         let mut no_injury = control.fork_checkpoint(&device).unwrap();
         let mut no_repair = control.fork_checkpoint(&device).unwrap();
         let checkpoint = checkpoint_signature(&control, &device);
+        eprintln!("Gate 5 checkpoint_sha256={}", sha256(&checkpoint));
         assert_eq!(checkpoint_signature(&lesion, &device), checkpoint);
         assert_eq!(checkpoint_signature(&no_injury, &device), checkpoint);
         assert_eq!(checkpoint_signature(&no_repair, &device), checkpoint);
@@ -3567,6 +3569,13 @@ mod tests {
         assert_eq!(lesion_events.len(), 2);
         assert_eq!(no_injury_events.len(), 3);
         assert_eq!(no_repair_events.len(), 3);
+        eprintln!(
+            "Gate 5 lesion_events_sha256={} no_injury_events_sha256={} \
+             no_repair_events_sha256={}",
+            sha256(serde_json::to_vec(&lesion_events).unwrap()),
+            sha256(serde_json::to_vec(&no_injury_events).unwrap()),
+            sha256(serde_json::to_vec(&no_repair_events).unwrap())
+        );
         assert!(
             lesion_events
                 .iter()
