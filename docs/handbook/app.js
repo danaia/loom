@@ -33,16 +33,23 @@ function seededNoise(seed) {
 
 function makeAgents() {
   agents = [];
-  const total = mode === "crystal" ? 96 : mode === "swarm" ? 68 : 82;
+  const total = mode === "crystal" ? 96 : mode === "swarm" ? 66 : 92;
   for (let i = 0; i < total; i += 1) {
     const angle = i * 2.39996;
     const spread = Math.sqrt(i / total);
+    const noise = seededNoise(i + 50);
     agents.push({
       angle,
       spread,
       phase: seededNoise(i + 8) * Math.PI * 2,
-      speed: 0.003 + seededNoise(i + 30) * 0.005,
-      size: i === 0 ? 6 : 2.2 + seededNoise(i + 50) * 2.5,
+      speed: mode === "organism"
+        ? 0.000045 + seededNoise(i + 30) * 0.000055
+        : mode === "swarm"
+          ? 0.0003 + seededNoise(i + 30) * 0.00012
+          : 0.003 + seededNoise(i + 30) * 0.005,
+      size: mode === "swarm"
+        ? (i === 0 ? 3.4 : 1.15 + noise * 1.25)
+        : (i === 0 ? 7 : 2.4 + noise * 2.8),
     });
   }
   frame = 0;
@@ -64,17 +71,27 @@ function agentPosition(agent, index, t) {
     };
   }
   if (mode === "swarm") {
-    const flow = t * agent.speed * 90 + agent.phase;
+    const columns = 11;
+    const row = Math.floor(index / columns);
+    const column = index % columns;
+    const formationX = (column - (columns - 1) / 2) * 16 + (row % 2) * 7;
+    const formationY = (row - 2.5) * 13;
+    const wave = Math.sin(t * agent.speed + column * 0.48);
+    const groupDrift = Math.sin(t * 0.00022) * 6;
     return {
-      x: cx + Math.cos(flow * 0.7 + agent.angle) * maxR * (0.35 + agent.spread * 0.65),
-      y: cy + Math.sin(flow + agent.angle * 0.65) * maxR * (0.25 + agent.spread * 0.6),
+      x: cx + formationX + wave * 3.5 + groupDrift,
+      y: cy + formationY + Math.sin(t * agent.speed * 0.72 + column * 0.36) * 3,
     };
   }
-  const pulse = 1 + Math.sin(t * agent.speed * 18 + agent.phase) * 0.04;
-  const r = maxR * agent.spread * pulse;
+  const tissueAngle = agent.angle + Math.sin(t * 0.00012 + agent.phase) * 0.025;
+  const pulse = 1 + Math.sin(t * agent.speed * 8 + agent.phase) * 0.018;
+  const edge = 1 + Math.cos(tissueAngle * 3 + t * 0.00008) * 0.045;
+  const r = maxR * agent.spread * pulse * edge;
+  const taper = 0.9 + Math.cos(tissueAngle) * 0.1;
   return {
-    x: cx + Math.cos(agent.angle + Math.sin(t * 0.0002 + agent.phase) * 0.07) * r,
-    y: cy + Math.sin(agent.angle) * r * 0.73 + Math.sin(agent.phase + t * 0.001) * 2,
+    x: cx + Math.cos(tissueAngle) * r,
+    y: cy + Math.sin(tissueAngle) * r * 0.62 * taper
+      + Math.sin(agent.phase + t * 0.00018) * 0.8,
   };
 }
 
@@ -100,20 +117,59 @@ function drawField(t, palette) {
   ctx.stroke();
 }
 
+function drawOrganismBody(t, palette) {
+  if (mode !== "organism") return;
+  const cx = width / 2;
+  const cy = height / 2 - 6;
+  const maxR = Math.min(width, height) * 0.35;
+  const breath = 1 + Math.sin(t * 0.00042) * 0.018;
+
+  ctx.beginPath();
+  for (let i = 0; i <= 48; i += 1) {
+    const angle = (i / 48) * Math.PI * 2;
+    const membrane = 0.96
+      + Math.cos(angle * 3 + t * 0.0001) * 0.035
+      + Math.sin(angle * 5 - t * 0.00007) * 0.02;
+    const x = cx + Math.cos(angle) * maxR * membrane * breath;
+    const y = cy + Math.sin(angle) * maxR * 0.63 * membrane * breath
+      * (0.9 + Math.cos(angle) * 0.1);
+    if (i === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  }
+  ctx.closePath();
+  const tissue = ctx.createRadialGradient(cx - maxR * 0.18, cy, 8, cx, cy, maxR);
+  tissue.addColorStop(0, `${palette.leader}18`);
+  tissue.addColorStop(0.35, `${palette.agent}12`);
+  tissue.addColorStop(1, `${palette.agent}04`);
+  ctx.fillStyle = tissue;
+  ctx.fill();
+  ctx.strokeStyle = `${palette.agent}58`;
+  ctx.lineWidth = 1.2;
+  ctx.stroke();
+
+  ctx.strokeStyle = `${palette.field}24`;
+  ctx.lineWidth = 0.8;
+  ctx.beginPath();
+  ctx.ellipse(cx, cy, maxR * 0.24 * breath, maxR * 0.13 * breath, t * 0.00005, 0, Math.PI * 2);
+  ctx.stroke();
+}
+
 function draw(t) {
   ctx.clearRect(0, 0, width, height);
   const palette = palettes[mode];
   drawField(t, palette);
+  drawOrganismBody(t, palette);
   const positions = agents.map((agent, index) => agentPosition(agent, index, t));
 
   ctx.lineWidth = 0.55;
+  const connectionDistance = mode === "crystal" ? 18 : mode === "organism" ? 32 : 20;
   for (let i = 0; i < positions.length; i += 1) {
     for (let j = i + 1; j < positions.length; j += 1) {
       const dx = positions[i].x - positions[j].x;
       const dy = positions[i].y - positions[j].y;
       const dist = Math.hypot(dx, dy);
-      if (dist < (mode === "crystal" ? 18 : 38)) {
-        ctx.strokeStyle = `${palette.line}${Math.round((1 - dist / 38) * 36).toString(16).padStart(2, "0")}`;
+      if (dist < connectionDistance) {
+        ctx.strokeStyle = `${palette.line}${Math.round((1 - dist / connectionDistance) * 36).toString(16).padStart(2, "0")}`;
         ctx.beginPath();
         ctx.moveTo(positions[i].x, positions[i].y);
         ctx.lineTo(positions[j].x, positions[j].y);
@@ -140,7 +196,8 @@ function draw(t) {
   ctx.globalAlpha = 1;
 
   frame += 1;
-  const visible = Math.min(agents.length, Math.max(1, Math.floor(frame / 3)));
+  const revealRate = mode === "organism" ? 7 : 3;
+  const visible = Math.min(agents.length, Math.max(1, Math.floor(frame / revealRate)));
   countLabel.innerHTML = `<strong>${visible.toLocaleString()}</strong> ${mode === "swarm" ? "agents" : "cells"}`;
   animationId = requestAnimationFrame(draw);
 }
@@ -154,7 +211,7 @@ function setMode(nextMode) {
   const captions = {
     organism: "Stay close. Avoid crowding. Follow the signal.",
     crystal: "Attach where the surface energy is lowest.",
-    swarm: "Keep coverage. Share load. Avoid collision.",
+    swarm: "Keep formation. Share load. Move as one.",
   };
   document.querySelector(".lab-caption strong").textContent = captions[mode];
   makeAgents();
@@ -210,6 +267,40 @@ mobileNav.querySelectorAll("a").forEach((link) => {
 
 document.querySelector("[data-scroll-to]").addEventListener("click", (event) => {
   document.querySelector(`#${event.currentTarget.dataset.scrollTo}`).scrollIntoView({ behavior: "smooth" });
+});
+
+async function copyCode(button) {
+  const target = document.querySelector(`#${button.dataset.copyTarget}`);
+  if (!target) return;
+  const text = target.textContent.trim();
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+    } else {
+      const textarea = document.createElement("textarea");
+      textarea.value = text;
+      textarea.setAttribute("readonly", "");
+      textarea.style.position = "fixed";
+      textarea.style.opacity = "0";
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand("copy");
+      textarea.remove();
+    }
+    const label = button.querySelector("span");
+    button.classList.add("is-copied");
+    if (label) label.textContent = "Copied";
+    setTimeout(() => {
+      button.classList.remove("is-copied");
+      if (label) label.textContent = "Copy";
+    }, 1800);
+  } catch (error) {
+    console.warn("Loom handbook could not copy text", error);
+  }
+}
+
+document.querySelectorAll("[data-copy-target]").forEach((button) => {
+  button.addEventListener("click", () => copyCode(button));
 });
 
 const builderContent = [

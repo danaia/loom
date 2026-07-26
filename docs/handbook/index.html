@@ -5,10 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta
       name="description"
-      content="A visual, beginner-friendly guide to Loom: an agent-native language that compiles rules for millions of tiny actors into GPU programs."
+      content="Install Loom, run your first native Metal program, and learn how agent-authored rules become living GPU systems."
     />
     <meta name="theme-color" content="#f3f0e7" />
-    <title>Loom — Programming Systems That Build Themselves</title>
+    <title>Loom — Software as a Living Process</title>
     <link rel="stylesheet" href="./styles.css" />
     <script src="./app.js" defer></script>
   </head>
@@ -25,9 +25,9 @@
         <span>LOOM</span>
       </a>
       <nav class="desktop-nav" aria-label="Primary navigation">
+        <a href="#get-started">Get started</a>
         <a href="#idea">The idea</a>
         <a href="#mechanism">How it works</a>
-        <a href="#get-started">Get started</a>
         <a href="#proof">Proof</a>
         <a href="#possibilities">Possibilities</a>
       </nav>
@@ -36,9 +36,9 @@
         <span class="sr-only">Open navigation</span>
       </button>
       <nav id="mobile-nav" class="mobile-nav" aria-label="Mobile navigation">
+        <a href="#get-started">Get started</a>
         <a href="#idea">The idea</a>
         <a href="#mechanism">How it works</a>
-        <a href="#get-started">Get started</a>
         <a href="#proof">Proof</a>
         <a href="#possibilities">Possibilities</a>
         <a href="#build">Build yours</a>
@@ -48,22 +48,23 @@
     <main id="top">
       <section class="hero">
         <div class="hero-copy">
-          <p class="eyebrow reveal">A visual handbook for curious builders</p>
-          <h1 class="reveal">Programming systems that <em>build themselves.</em></h1>
+          <p class="eyebrow reveal">An agent-native language for Apple GPUs</p>
+          <h1 class="reveal">Software as a <em>living process.</em></h1>
           <p class="hero-deck reveal">
-            What if you could program a million tiny agents, give them simple rules, and
-            watch them grow a crystal, repair a wound, or organize live data?
+            Loom programs systems that are not fully drawn in advance. Agents perceive,
+            fields communicate, rules constrain, structures emerge, and systems can repair
+            themselves.
           </p>
           <div class="hero-actions reveal">
-            <a class="button button-dark" href="#idea">Start with the idea <span>↓</span></a>
-            <button class="text-button" data-scroll-to="proof" type="button">Jump to the proof <span>↗</span></button>
+            <a class="button button-dark" href="#get-started">Install Loom <span>↓</span></a>
+            <button class="text-button" data-scroll-to="idea" type="button">Explore the idea <span>↗</span></button>
           </div>
         </div>
 
         <div class="hero-lab reveal" data-simulation="organism">
           <div class="lab-toolbar">
             <span class="live-dot"></span>
-            <span>LIVE RULE STUDY</span>
+            <span>LIVING SYSTEM / GPU</span>
             <span class="lab-count"><strong>1</strong> seed</span>
           </div>
           <canvas id="agent-canvas" aria-label="Animated simulation of agents organizing"></canvas>
@@ -81,6 +82,151 @@
           </div>
         </div>
         <p class="hero-note">No final shape is stored. Only the rules that create it.</p>
+      </section>
+
+      <section class="get-started quickstart" id="get-started">
+        <div class="section-marker section-marker-light">
+          <span>START</span>
+          <p>GET STARTED</p>
+        </div>
+
+        <div class="start-heading">
+          <div>
+            <p class="eyebrow">From zero to a native Metal window</p>
+            <h2>Install Loom. Run a living GPU program in under a minute.</h2>
+          </div>
+          <p>
+            The complete compiler, Metal runtime, examples, and handbook install beneath
+            <code>~/.loom</code>. No Rust toolchain or Cargo command is required.
+          </p>
+        </div>
+
+        <div class="install-panel reveal">
+          <div class="install-copy">
+            <span class="mini-label">APPLE SILICON MAC</span>
+            <h3>One directory. One command.</h3>
+            <p>
+              The installer verifies the release, adds the <code>loom</code> command, and
+              includes Particle and Crystal programs ready to run.
+            </p>
+            <div class="install-layout" aria-label="Installed Loom directory layout">
+              <span>~/.loom/</span>
+              <i>bin/loom</i>
+              <i>examples/</i>
+              <i>share/loom/docs/</i>
+            </div>
+          </div>
+          <div class="install-commands">
+            <div class="code-header">
+              <span>INSTALL LOOM</span>
+              <button
+                class="copy-button"
+                type="button"
+                data-copy-target="install-command"
+                aria-label="Copy Loom install command"
+              >
+                <svg viewBox="0 0 20 20" aria-hidden="true">
+                  <rect x="6.5" y="6.5" width="9" height="10" rx="1.5"></rect>
+                  <path d="M4.5 13.5h-1a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1h8a1 1 0 0 1 1 1v1"></path>
+                </svg>
+                <span>Copy</span>
+              </button>
+            </div>
+            <pre><code id="install-command">curl -fsSL \
+  https://raw.githubusercontent.com/danaia/loom/main/install.sh | sh</code></pre>
+            <div class="remove-command">
+              <span>THEN RUN</span>
+              <code>loom ~/.loom/examples/crystal.loom</code>
+            </div>
+          </div>
+        </div>
+
+        <div class="quick-run-grid reveal">
+          <article>
+            <span>01 / PARTICLE</span>
+            <h3>Drop one bright agent into gravity.</h3>
+            <code>loom ~/.loom/examples/hello-particle.loom</code>
+          </article>
+          <article>
+            <span>02 / CRYSTAL</span>
+            <h3>Grow a 32³ mesoscopic crystal on Metal.</h3>
+            <code>loom ~/.loom/examples/crystal.loom</code>
+          </article>
+          <article>
+            <span>03 / STAY CURRENT</span>
+            <h3>Upgrade the compiler and runtime in place.</h3>
+            <code>loom update</code>
+          </article>
+        </div>
+
+        <div class="agent-prompt-intro">
+          <div>
+            <span class="mini-label">PASTE INTO A CODING AGENT</span>
+            <h3>Three prompts designed to produce real, runnable Loom programs.</h3>
+          </div>
+          <p>
+            Each prompt tells the agent to inspect the actual compiler, use native Loom where
+            supported, declare Metal escape hatches honestly, and prove the result through the CLI.
+          </p>
+        </div>
+
+        <div class="agent-prompt-grid">
+          <article class="prompt-card reveal">
+            <div class="code-header">
+              <span>NEON FLOCK</span>
+              <button class="copy-button" type="button" data-copy-target="prompt-flock" aria-label="Copy Neon Flock agent prompt">
+                <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="6.5" y="6.5" width="9" height="10" rx="1.5"></rect><path d="M4.5 13.5h-1a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1h8a1 1 0 0 1 1 1v1"></path></svg>
+                <span>Copy</span>
+              </button>
+            </div>
+            <pre><code id="prompt-flock">You are an AI coding agent inside the Loom repository.
+
+Build examples/neon-flock/neon-flock.loom: a beautiful GPU flock of luminous agents that cohere, avoid crowding, and leave a subtle color trail.
+
+First inspect the current grammar, Hello Particle, and the native compiler gates. Keep .loom as the source of truth. Use native Loom for supported element-wise f32 math and explicit extern metal only for unsupported neighborhood or render work. Never invent syntax.
+
+Iterate until all three succeed:
+loom check examples/neon-flock/neon-flock.loom
+loom explain examples/neon-flock/neon-flock.loom
+loom examples/neon-flock/neon-flock.loom
+
+Add a README with exact run commands and clearly label every native versus external kernel.</code></pre>
+          </article>
+
+          <article class="prompt-card reveal">
+            <div class="code-header">
+              <span>CRYSTAL GARDEN</span>
+              <button class="copy-button" type="button" data-copy-target="prompt-crystal" aria-label="Copy Crystal Garden agent prompt">
+                <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="6.5" y="6.5" width="9" height="10" rx="1.5"></rect><path d="M4.5 13.5h-1a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1h8a1 1 0 0 1 1 1v1"></path></svg>
+                <span>Copy</span>
+              </button>
+            </div>
+            <pre><code id="prompt-crystal">You are an AI coding agent extending the runnable Loom Crystal example.
+
+Create examples/crystal-garden/crystal-garden.loom: a slow garden of faceted teal, violet, and acid-green growth with multiple visible growth centers and an elegant dark renderer.
+
+Begin from examples/hello-crystal/crystal.loom. Preserve its typed graph and 32³ bounded field. Make the smallest compiler or Metal changes necessary, never hide the program in a Rust-only builder, and do not claim native coverage the compiler does not have.
+
+Prove it with loom check, loom explain, and a real loom run. Add a README explaining the rules, GPU passes, controls, and native/external boundary.</code></pre>
+          </article>
+
+          <article class="prompt-card reveal">
+            <div class="code-header">
+              <span>HEALING TISSUE</span>
+              <button class="copy-button" type="button" data-copy-target="prompt-tissue" aria-label="Copy Healing Tissue agent prompt">
+                <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="6.5" y="6.5" width="9" height="10" rx="1.5"></rect><path d="M4.5 13.5h-1a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1h8a1 1 0 0 1 1 1v1"></path></svg>
+                <span>Copy</span>
+              </button>
+            </div>
+            <pre><code id="prompt-tissue">You are an AI coding agent building a flagship Loom demo.
+
+Create a CLI-runnable healing-tissue.loom where thousands of cells use local nutrient, injury, attachment, and repair rules. A visible lesion should close without storing a target shape.
+
+Inspect the organism proof and compiler roadmap first. Extend native Loom coverage when the next gate is small and measurable; otherwise use an explicit Metal escape hatch with a differential test. Keep bounded resources and deterministic scheduling.
+
+Done means the source passes loom check, its graph is inspectable with loom explain, loom healing-tissue.loom opens a Metal window, and the README states exactly what is generated versus handwritten.</code></pre>
+          </article>
+        </div>
       </section>
 
       <section class="manifesto" id="idea">
@@ -342,99 +488,27 @@
         </div>
       </section>
 
-      <section class="get-started" id="get-started">
+      <section class="get-started language-guide" id="language-guide">
         <div class="section-marker section-marker-light">
           <span>06</span>
-          <p>GET STARTED</p>
+          <p>LANGUAGE TOUR</p>
         </div>
 
         <div class="start-heading">
           <div>
-            <p class="eyebrow">Hello Particle</p>
-            <h2>One install. One command. Your Loom program becomes a Metal application.</h2>
+            <p class="eyebrow">Readable by agents. Inspectable by humans.</p>
+            <h2>Compact where repetition is cheap. Explicit where trust matters.</h2>
           </div>
           <p>
-            This is Loom’s first complete language slice: agent-authored source is parsed,
-            type- and unit-checked, lowered into the canonical graph, generated as Metal,
-            compiled, and run in a native window.
+            Loom keeps names, units, access modes, implementations, ordering, and dispatch
+            visible. An agent can author quickly without hiding what the program will do.
           </p>
-        </div>
-
-        <div class="install-panel reveal">
-          <div class="install-copy">
-            <span class="mini-label">INSTALL / APPLE SILICON MAC</span>
-            <h3>The whole language lives in one directory.</h3>
-            <p>
-              The compiler, Metal runtime, examples, handbook, version, and install manifest
-              live under <code>~/.loom</code>. A single symlink exposes the <code>loom</code>
-              command. No Rust or Cargo is required on the host. Loom currently supports
-              Apple Silicon Macs.
-            </p>
-            <div class="install-layout" aria-label="Installed Loom directory layout">
-              <span>~/.loom/</span>
-              <i>bin/loom</i>
-              <i>examples/</i>
-              <i>share/loom/docs/</i>
-              <i>install-manifest</i>
-            </div>
-          </div>
-          <div class="install-commands">
-            <div class="code-header"><span>INSTALL</span><i>one curl command</i></div>
-            <pre><code>curl -fsSL \
-  https://raw.githubusercontent.com/danaia/loom/main/install.sh | sh</code></pre>
-            <div class="remove-command">
-              <span>REMOVE</span>
-              <code>curl -fsSL https://raw.githubusercontent.com/danaia/loom/main/uninstall.sh | sh</code>
-            </div>
-          </div>
-        </div>
-
-        <div class="start-path reveal" aria-label="Loom compilation path">
-          <span>LOOM SOURCE</span><b>→</b><span>TYPED GRAPH</span><b>→</b>
-          <span>GENERATED METAL</span><b>→</b><span>APPLE GPU</span><b>→</b><span>WINDOW</span>
-        </div>
-
-        <div class="start-grid">
-          <article class="start-steps reveal">
-            <span class="mini-label">RUN THE FIRST APPLICATION</span>
-            <ol>
-              <li>
-                <span>01</span>
-                <div><strong>Launch Hello Particle</strong><p>Run the example included with every Loom installation.</p></div>
-              </li>
-              <li>
-                <span>02</span>
-                <div><strong>Check your source</strong><p>Parse, validate, and fingerprint without running.</p></div>
-              </li>
-              <li>
-                <span>03</span>
-                <div><strong>Explain the build</strong><p>Inspect the graph, execution plan, and generated Metal.</p></div>
-              </li>
-            </ol>
-          </article>
-
-          <div class="terminal-card reveal">
-            <div class="code-header"><span>RUN HELLO PARTICLE</span><i>no Cargo</i></div>
-            <pre><code><span class="prompt">$</span> loom ~/.loom/examples/hello-particle.loom
-
-<span class="prompt">$</span> loom ~/.loom/examples/crystal.loom
-
-<span class="prompt">$</span> loom check hello-particle.loom
-
-<span class="prompt">$</span> loom explain hello-particle.loom
-
-<span class="prompt">$</span> loom update</code></pre>
-            <div class="run-result">
-              <span>RESULT</span>
-              <p>A native Metal window opens and Loom runs the particle simulation at 120 Hz.</p>
-            </div>
-          </div>
         </div>
 
         <div class="syntax-intro">
           <div>
-            <span class="mini-label">THE LANGUAGE</span>
-            <h3>Compact where repetition is cheap. Explicit where trust matters.</h3>
+            <span class="mini-label">FOUR PIECES</span>
+            <h3>State, kernels, escape hatches, and flows stay visible in the source.</h3>
           </div>
           <p>
             Loom syntax is optimized for agents to produce, inspect, and repair. Names,
@@ -743,14 +817,13 @@
 
       <section class="closing">
         <div class="closing-canvas" aria-hidden="true"></div>
-        <p class="eyebrow">THE LARGER VISION</p>
-        <h2>Software as a <em>living process.</em></h2>
+        <p class="eyebrow">YOUR FIRST RULE IS ENOUGH</p>
+        <h2>Start small. <em>See what grows.</em></h2>
         <p>
-          Loom is an experiment in programming systems that are not fully drawn in
-          advance. Instead, agents perceive, fields communicate, rules constrain,
-          structures emerge, and systems sometimes repair themselves.
+          Install Loom, run a living example, then give your coding agent one clear
+          system to build. The language and validator will keep the result grounded.
         </p>
-        <a class="button button-light" href="../README.md">Explore the technical project <span>↗</span></a>
+        <a class="button button-light" href="#get-started">Build your first Loom program <span>↑</span></a>
         <div class="closing-line">
           <span>LOOM / 2026</span>
           <span>Grow · organize · adapt · repair</span>
