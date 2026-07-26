@@ -12,9 +12,10 @@ A keyboard-controlled Loom/Metal marble experiment with eight GPU-simulated hunt
 - The panel reports measured presentation FPS and current Metal allocations in MiB.
 - Red enemy marbles slowly chase the player.
 - Every marble collides elastically with every other marble and transfers collision energy into the water.
+- Every marble is a 0.884 kg floating body with gravity, spherical-volume buoyancy, vertical drag, and a half-submerged equilibrium.
 - Passing crests and troughs lift every marble, while local surface gradients push their horizontal motion.
-- Drag, gravity, landing detection, speed limits, surface constraints, and bounded movement run on Metal.
-- Marbles stay on top of the enlarged water plane and continuously emit wakes from their horizontal motion.
+- Each floating body continuously displaces the surface; its velocity produces a bow crest and trailing trough rather than a symmetric pulse.
+- Drag, gravity, water-entry detection, speed limits, buoyancy, collisions, and bounded movement run on Metal.
 - Up to 30,704 GPU-resident water particles solve a spacing-aware 2D shallow-water wave equation with an isotropic nine-point stencil.
 - A dropped marble transfers momentum through a volume-balanced crater-and-rim impulse, producing a crest/trough pair that expands from the exact contact point.
 - The outer particle band absorbs outgoing energy to prevent square boundary echoes, while moving marbles still produce gentler continuous wakes.

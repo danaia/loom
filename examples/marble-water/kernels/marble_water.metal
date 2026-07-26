@@ -81,6 +81,20 @@ inline float sample_water_height(
     return mix(mix(h00, h10, blend.x), mix(h01, h11, blend.x), blend.y);
 }
 
+inline float submerged_volume_fraction(
+    float center_height,
+    float water_surface,
+    float radius)
+{
+    const float cap_height = clamp(
+        water_surface - (center_height - radius),
+        0.0,
+        radius * 2.0
+    );
+    return cap_height * cap_height * (3.0 * radius - cap_height)
+        / max(4.0 * radius * radius * radius, 1e-6);
+}
+
 kernel void marble_reset_state(
     device packed_float3 *player_positions [[buffer(0)]],
     device packed_float3 *player_velocities [[buffer(1)]],
@@ -106,7 +120,7 @@ kernel void marble_reset_state(
     if (reset_scene < 0.5) return;
 
     if (index == 0) {
-        player_positions[0] = packed_float3(0.0, surface_height + marble_radius, 0.15);
+        player_positions[0] = packed_float3(0.0, surface_height, 0.15);
         player_velocities[0] = packed_float3(0.0);
     }
     if (index < enemy_count) {
@@ -117,7 +131,7 @@ kernel void marble_reset_state(
             float3(-1.02, 0.0, 0.12), float3(1.08, 0.0, -0.08)
         };
         float3 enemy_position = initial_enemies[index];
-        enemy_position.y = surface_height + marble_radius;
+        enemy_position.y = surface_height;
         enemy_positions[index] = packed_float3(enemy_position);
         enemy_velocities[index] = packed_float3(0.0);
     }
@@ -144,15 +158,30 @@ kernel void marble_player_step(
     constant float &half_extent_x [[buffer(17)]],
     constant float &half_extent_z [[buffer(18)]],
     constant float &dt [[buffer(19)]],
+    const device packed_float3 *water_positions [[buffer(20)]],
+    constant uint &water_width [[buffer(21)]],
+    constant uint &water_height [[buffer(22)]],
+    constant float &water_spacing [[buffer(23)]],
+    constant float &water_density [[buffer(24)]],
+    constant float &density_ratio [[buffer(25)]],
+    constant float &vertical_drag [[buffer(26)]],
     uint index [[thread_position_in_grid]])
 {
     if (index > 0) return;
     float3 position = float3(positions[0]);
     float3 velocity = float3(velocities[0]);
-    const float contact_height = surface_height + radius;
+    float local_water_surface = surface_height + sample_water_height(
+        water_positions,
+        position.xz,
+        water_width,
+        water_height,
+        water_spacing,
+        water_density,
+        plane_scale
+    );
 
     if (grab_active >= 0.5) {
-        position = float3(grab_x, max(grab_y, contact_height), grab_z);
+        position = float3(grab_x, max(grab_y, local_water_surface), grab_z);
         velocity = float3(0.0);
         positions[0] = packed_float3(position);
         velocities[0] = packed_float3(velocity);
@@ -161,53 +190,34 @@ kernel void marble_player_step(
         return;
     }
 
-    const bool airborne =
-        position.y > contact_height + 0.0005 || abs(velocity.y) > 0.0005;
-    if (airborne) {
-        velocity.y += gravity * dt;
-        velocity.xz *= 0.999;
-        position += velocity * dt;
-        contain_marble(
-            position,
-            velocity,
-            half_extent_x * plane_scale,
-            half_extent_z * plane_scale,
-            radius
-        );
-
-        float landing_speed = 0.0;
-        if (position.y <= contact_height) {
-            landing_speed = max(-velocity.y, 0.0);
-            position.y = contact_height;
-            velocity.y = 0.0;
-        }
-        positions[0] = packed_float3(position);
-        velocities[0] = packed_float3(velocity);
-        impact_positions[0] =
-            landing_speed > 0.0
-                ? packed_float3(position.x, surface_height, position.z)
-                : packed_float3(0.0);
-        // A negative speed marks a one-frame vertical drop. Grounded motion
-        // remains positive so the water pass can treat wakes as continuous
-        // forcing without smearing a landing impulse across later frames.
-        impact_speeds[0] = -landing_speed;
-        return;
-    }
-
+    const bool was_above_water =
+        position.y - radius >= local_water_surface;
+    const float submerged_fraction = submerged_volume_fraction(
+        position.y,
+        local_water_surface,
+        radius
+    );
+    // Archimedes buoyancy: at density_ratio=0.5, half of the sphere's
+    // displaced volume exactly balances its weight.
+    const float buoyancy_acceleration =
+        -gravity * submerged_fraction / max(density_ratio, 0.05);
+    velocity.y += (
+        gravity
+        + buoyancy_acceleration
+        - velocity.y * vertical_drag * submerged_fraction
+    ) * dt;
     const float2 input = float2(input_x, input_z);
     const float input_length = length(input);
     if (input_length > 0.0) {
         const float2 direction = input / max(input_length, 1.0);
         velocity.xz += direction * drive_acceleration * dt;
     }
-    velocity.xz *= ground_drag;
+    velocity.xz *= mix(0.9995, ground_drag, submerged_fraction);
     const float horizontal_speed = length(velocity.xz);
     if (horizontal_speed > maximum_speed) {
         velocity.xz *= maximum_speed / horizontal_speed;
     }
-    position.xz += velocity.xz * dt;
-    position.y = contact_height;
-    velocity.y = 0.0;
+    position += velocity * dt;
     contain_marble(
         position,
         velocity,
@@ -215,11 +225,29 @@ kernel void marble_player_step(
         half_extent_z * plane_scale,
         radius
     );
+    local_water_surface = surface_height + sample_water_height(
+        water_positions,
+        position.xz,
+        water_width,
+        water_height,
+        water_spacing,
+        water_density,
+        plane_scale
+    );
+    const bool entered_water =
+        was_above_water && position.y - radius < local_water_surface;
+    const float entry_speed =
+        entered_water ? max(-velocity.y, 0.0) : 0.0;
 
     positions[0] = packed_float3(position);
     velocities[0] = packed_float3(velocity);
-    impact_positions[0] = packed_float3(position.x, surface_height, position.z);
-    impact_speeds[0] = length(velocity.xz);
+    impact_positions[0] =
+        entry_speed > 0.0
+            ? packed_float3(position.x, local_water_surface, position.z)
+            : packed_float3(0.0);
+    // Negative values are one-frame water-entry impulses. Continuous wakes
+    // are derived directly from the body's velocity in the water pass.
+    impact_speeds[0] = -entry_speed;
 }
 
 kernel void marble_enemy_step(
@@ -237,12 +265,43 @@ kernel void marble_enemy_step(
     constant float &half_extent_x [[buffer(11)]],
     constant float &half_extent_z [[buffer(12)]],
     constant float &dt [[buffer(13)]],
+    constant float &gravity [[buffer(14)]],
+    const device packed_float3 *water_positions [[buffer(15)]],
+    constant uint &water_width [[buffer(16)]],
+    constant uint &water_height [[buffer(17)]],
+    constant float &water_spacing [[buffer(18)]],
+    constant float &water_density [[buffer(19)]],
+    constant float &density_ratio [[buffer(20)]],
+    constant float &vertical_drag [[buffer(21)]],
     uint index [[thread_position_in_grid]])
 {
     if (index >= enemy_count) return;
     float3 position = float3(positions[index]);
     float3 velocity = float3(velocities[index]);
     const float3 player = float3(player_positions[0]);
+    float local_water_surface = surface_height + sample_water_height(
+        water_positions,
+        position.xz,
+        water_width,
+        water_height,
+        water_spacing,
+        water_density,
+        plane_scale
+    );
+    const bool was_above_water =
+        position.y - radius >= local_water_surface;
+    const float submerged_fraction = submerged_volume_fraction(
+        position.y,
+        local_water_surface,
+        radius
+    );
+    const float buoyancy_acceleration =
+        -gravity * submerged_fraction / max(density_ratio, 0.05);
+    velocity.y += (
+        gravity
+        + buoyancy_acceleration
+        - velocity.y * vertical_drag * submerged_fraction
+    ) * dt;
     const float2 offset = player.xz - position.xz;
     const float distance = length(offset);
     if (distance > 0.001) {
@@ -251,12 +310,10 @@ kernel void marble_enemy_step(
         const float2 orbit = float2(-direction.y, direction.x) * orbit_direction;
         velocity.xz += (direction + orbit * 0.22) * chase_acceleration * dt;
     }
-    velocity.xz *= 0.995;
+    velocity.xz *= mix(0.9995, 0.995, submerged_fraction);
     const float horizontal_speed = length(velocity.xz);
     if (horizontal_speed > maximum_speed) velocity.xz *= maximum_speed / horizontal_speed;
-    position.xz += velocity.xz * dt;
-    position.y = surface_height + radius;
-    velocity.y = 0.0;
+    position += velocity * dt;
     contain_marble(
         position,
         velocity,
@@ -264,11 +321,27 @@ kernel void marble_enemy_step(
         half_extent_z * plane_scale,
         radius
     );
+    local_water_surface = surface_height + sample_water_height(
+        water_positions,
+        position.xz,
+        water_width,
+        water_height,
+        water_spacing,
+        water_density,
+        plane_scale
+    );
+    const bool entered_water =
+        was_above_water && position.y - radius < local_water_surface;
+    const float entry_speed =
+        entered_water ? max(-velocity.y, 0.0) : 0.0;
 
     positions[index] = packed_float3(position);
     velocities[index] = packed_float3(velocity);
-    impact_positions[index] = packed_float3(position.x, surface_height, position.z);
-    impact_speeds[index] = length(velocity.xz);
+    impact_positions[index] =
+        entry_speed > 0.0
+            ? packed_float3(position.x, local_water_surface, position.z)
+            : packed_float3(0.0);
+    impact_speeds[index] = -entry_speed;
 }
 
 kernel void marble_resolve_interactions(
@@ -285,6 +358,7 @@ kernel void marble_resolve_interactions(
     constant float &radius [[buffer(10)]],
     constant float &restitution [[buffer(11)]],
     constant float &collision_wave_gain [[buffer(12)]],
+    constant float &mass_kg [[buffer(13)]],
     uint index [[thread_position_in_grid]])
 {
     if (index > 0) return;
@@ -333,19 +407,27 @@ kernel void marble_resolve_interactions(
             const float closing_speed =
                 dot(velocities[second].xz - velocities[first].xz, normal);
             if (closing_speed < 0.0) {
-                const float impulse =
-                    -(1.0 + restitution) * closing_speed * 0.5;
-                velocities[first].xz -= normal * impulse;
-                velocities[second].xz += normal * impulse;
+                const float inverse_mass = 1.0 / max(mass_kg, 1e-4);
+                const float impulse_momentum =
+                    -(1.0 + restitution) * closing_speed
+                    / (inverse_mass + inverse_mass);
+                const float delta_speed = impulse_momentum * inverse_mass;
+                velocities[first].xz -= normal * delta_speed;
+                velocities[second].xz += normal * delta_speed;
                 collision_energy[first] =
-                    max(collision_energy[first], impulse * collision_wave_gain);
+                    max(
+                        collision_energy[first],
+                        mass_kg * delta_speed * collision_wave_gain
+                    );
                 collision_energy[second] =
-                    max(collision_energy[second], impulse * collision_wave_gain);
+                    max(
+                        collision_energy[second],
+                        mass_kg * delta_speed * collision_wave_gain
+                    );
             }
         }
     }
 
-    positions[0].y = max(positions[0].y, surface_height + radius);
     player_positions[0] = packed_float3(positions[0]);
     player_velocities[0] = packed_float3(velocities[0]);
     if (collision_energy[0] > 0.0 && player_impact_speeds[0] >= 0.0) {
@@ -356,8 +438,6 @@ kernel void marble_resolve_interactions(
     }
     for (uint enemy = 0; enemy < enemy_count; ++enemy) {
         const uint marble = enemy + 1u;
-        positions[marble].y =
-            max(positions[marble].y, surface_height + radius);
         enemy_positions[enemy] = packed_float3(positions[marble]);
         enemy_velocities[enemy] = packed_float3(velocities[marble]);
         if (collision_energy[marble] > 0.0) {
@@ -374,7 +454,7 @@ kernel void marble_resolve_interactions(
     }
 }
 
-inline float wake_impulse(
+inline float collision_impulse(
     float2 point,
     float3 impact_position,
     float impact_speed,
@@ -384,6 +464,75 @@ inline float wake_impulse(
     const float2 delta = point - impact_position.xz;
     const float normalized_distance = dot(delta, delta) / max(radius * radius, 1e-6);
     return impact_speed * exp(-normalized_distance * 3.0);
+}
+
+inline float directional_body_wake(
+    float2 point,
+    float3 body_position,
+    float3 body_velocity,
+    float radius,
+    float submerged_fraction)
+{
+    const float speed = length(body_velocity.xz);
+    if (speed < 0.003 || submerged_fraction <= 0.0) return 0.0;
+
+    const float2 direction = body_velocity.xz / speed;
+    const float2 lateral_axis = float2(-direction.y, direction.x);
+    const float2 normalized_offset =
+        (point - body_position.xz) / max(radius, 1e-4);
+    const float along = dot(normalized_offset, direction);
+    const float lateral = dot(normalized_offset, lateral_axis);
+    const float envelope = exp(
+        -1.35 * along * along - 2.4 * lateral * lateral
+    );
+
+    // The odd profile is volume-balanced: a compressed bow crest is paired
+    // with a trailing trough. The wave solver carries both away as a wake.
+    return speed
+        * clamp(along * 1.8, -1.0, 1.0)
+        * envelope
+        * submerged_fraction;
+}
+
+inline float floating_body_acceleration(
+    float2 point,
+    float water_height,
+    float3 body_position,
+    float3 body_velocity,
+    float surface_height,
+    float radius,
+    float density_ratio,
+    float body_coupling)
+{
+    const float distance_from_body =
+        length(point - body_position.xz) / max(radius, 1e-4);
+    if (distance_from_body >= 2.4) return 0.0;
+
+    const float local_surface = surface_height + water_height;
+    const float submerged_fraction = submerged_volume_fraction(
+        body_position.y,
+        local_surface,
+        radius
+    );
+    if (submerged_fraction <= 0.0) return 0.0;
+
+    // A floating sphere excludes a depression-sized volume beneath its
+    // waterline and pushes that volume into a surrounding shoulder. Keeping
+    // this as a spring target lets the surface relax and radiate naturally.
+    const float crater =
+        exp(-3.0 * distance_from_body * distance_from_body);
+    const float rim_offset = distance_from_body - 1.15;
+    const float displaced_rim = 0.22 * exp(-9.0 * rim_offset * rim_offset);
+    const float displacement_scale =
+        radius * 0.10 * submerged_fraction / max(density_ratio, 0.05);
+    const float target_height =
+        displacement_scale * (displaced_rim - crater);
+    const float footprint = clamp(crater + displaced_rim, 0.0, 1.0);
+    const float heave_transfer =
+        -body_velocity.y * crater * submerged_fraction * 2.2;
+    return (target_height - water_height)
+            * body_coupling * footprint
+        + heave_transfer;
 }
 
 inline float drop_impulse(
@@ -414,19 +563,27 @@ kernel void marble_water_force(
     const device float *player_impact_speeds [[buffer(3)]],
     const device packed_float3 *enemy_impact_positions [[buffer(4)]],
     const device float *enemy_impact_speeds [[buffer(5)]],
-    constant uint &width [[buffer(6)]],
-    constant uint &height [[buffer(7)]],
-    constant uint &enemy_count [[buffer(8)]],
-    constant float &spacing [[buffer(9)]],
-    constant float &density [[buffer(10)]],
-    constant float &plane_scale [[buffer(11)]],
-    constant float &amplification [[buffer(12)]],
-    constant float &wave_speed [[buffer(13)]],
-    constant float &damping [[buffer(14)]],
-    constant float &impact_radius [[buffer(15)]],
-    constant float &impact_gain [[buffer(16)]],
-    constant float &wake_gain [[buffer(17)]],
-    constant float &dt [[buffer(18)]],
+    const device packed_float3 *player_positions [[buffer(6)]],
+    const device packed_float3 *player_velocities [[buffer(7)]],
+    const device packed_float3 *enemy_positions [[buffer(8)]],
+    const device packed_float3 *enemy_velocities [[buffer(9)]],
+    constant uint &width [[buffer(10)]],
+    constant uint &height [[buffer(11)]],
+    constant uint &enemy_count [[buffer(12)]],
+    constant float &spacing [[buffer(13)]],
+    constant float &density [[buffer(14)]],
+    constant float &plane_scale [[buffer(15)]],
+    constant float &amplification [[buffer(16)]],
+    constant float &wave_speed [[buffer(17)]],
+    constant float &damping [[buffer(18)]],
+    constant float &impact_radius [[buffer(19)]],
+    constant float &impact_gain [[buffer(20)]],
+    constant float &wake_gain [[buffer(21)]],
+    constant float &surface_height [[buffer(22)]],
+    constant float &marble_radius [[buffer(23)]],
+    constant float &density_ratio [[buffer(24)]],
+    constant float &body_coupling [[buffer(25)]],
+    constant float &dt [[buffer(26)]],
     uint index [[thread_position_in_grid]])
 {
     const uint active_width = active_water_width(density, width);
@@ -515,21 +672,75 @@ kernel void marble_water_force(
     // not multiplied by dt. This produces one coherent expanding ring.
     velocity.y += landing_impulse * impact_gain * ripple_gain;
 
-    float continuous_wake = wake_impulse(
+    float collision_wake = collision_impulse(
         rest_point,
         float3(player_impact_positions[0]),
         player_impact_speed,
         ripple_radius
     );
     for (uint enemy = 0; enemy < enemy_count; ++enemy) {
-        continuous_wake += wake_impulse(
+        collision_wake += collision_impulse(
             rest_point,
             float3(enemy_impact_positions[enemy]),
             enemy_impact_speeds[enemy],
             ripple_radius
         );
     }
-    velocity.y += continuous_wake * wake_gain * ripple_gain * dt;
+
+    const float3 player_position = float3(player_positions[0]);
+    const float3 player_velocity = float3(player_velocities[0]);
+    const float player_submerged = submerged_volume_fraction(
+        player_position.y,
+        surface_height + position.y,
+        marble_radius
+    );
+    float motion_wake = directional_body_wake(
+        rest_point,
+        player_position,
+        player_velocity,
+        marble_radius,
+        player_submerged
+    );
+    float body_acceleration = floating_body_acceleration(
+        rest_point,
+        position.y,
+        player_position,
+        player_velocity,
+        surface_height,
+        marble_radius,
+        density_ratio,
+        body_coupling
+    );
+    for (uint enemy = 0; enemy < enemy_count; ++enemy) {
+        const float3 enemy_position = float3(enemy_positions[enemy]);
+        const float3 enemy_velocity = float3(enemy_velocities[enemy]);
+        const float enemy_submerged = submerged_volume_fraction(
+            enemy_position.y,
+            surface_height + position.y,
+            marble_radius
+        );
+        motion_wake += directional_body_wake(
+            rest_point,
+            enemy_position,
+            enemy_velocity,
+            marble_radius,
+            enemy_submerged
+        );
+        body_acceleration += floating_body_acceleration(
+            rest_point,
+            position.y,
+            enemy_position,
+            enemy_velocity,
+            surface_height,
+            marble_radius,
+            density_ratio,
+            body_coupling
+        );
+    }
+    velocity.y += (
+        (collision_wake + motion_wake) * wake_gain * ripple_gain
+        + body_acceleration
+    ) * dt;
     velocity.y = clamp(velocity.y, -1.5, 1.5);
     velocity.xz = 0.0;
     velocities[index] = packed_float3(velocity);
@@ -618,6 +829,7 @@ kernel void marble_compose_scene(
     constant float &density [[buffer(11)]],
     constant float &plane_scale [[buffer(12)]],
     constant float &marble_radius [[buffer(13)]],
+    constant float &surface_height [[buffer(14)]],
     uint index [[thread_position_in_grid]])
 {
     const uint active_width = active_water_width(density, width);
@@ -655,41 +867,57 @@ kernel void marble_compose_scene(
             0.84
         );
     } else if (index == water_capacity) {
-        float3 player_render_position = float3(player_positions[0]);
-        player_render_position.y += clamp(
-            sample_water_height(
-                water_positions,
-                player_render_position.xz,
-                width,
-                height,
-                spacing,
-                density,
-                plane_scale
-            ),
-            -0.06,
-            0.10
-        );
-        render_positions[index] = packed_float3(player_render_position);
+        // The simulated body center already follows the local surface through
+        // gravity and buoyancy, so rendering it directly avoids double-bobbing.
+        render_positions[index] = player_positions[0];
         render_radii[index] = marble_radius;
-        render_colors[index] = float4(1.0, 0.86, 0.08, 1.0);
-    } else if (index <= water_capacity + enemy_count) {
-        float3 enemy_render_position =
-            float3(enemy_positions[index - water_capacity - 1]);
-        enemy_render_position.y += clamp(
-            sample_water_height(
-                water_positions,
-                enemy_render_position.xz,
-                width,
-                height,
-                spacing,
-                density,
-                plane_scale
-            ),
-            -0.06,
-            0.10
+        const float3 player_position = float3(player_positions[0]);
+        const float player_waterline = clamp(
+            (
+                surface_height
+                + sample_water_height(
+                    water_positions,
+                    player_position.xz,
+                    width,
+                    height,
+                    spacing,
+                    density,
+                    plane_scale
+                )
+                - player_position.y
+            ) / max(marble_radius, 1e-4),
+            -1.0,
+            1.0
         );
-        render_positions[index] = packed_float3(enemy_render_position);
+        const float player_immersion_code =
+            player_waterline > -0.999 ? 2.0 + player_waterline : 1.0;
+        render_colors[index] =
+            float4(1.0, 0.86, 0.08, player_immersion_code);
+    } else if (index <= water_capacity + enemy_count) {
+        const float3 enemy_position =
+            float3(enemy_positions[index - water_capacity - 1]);
+        render_positions[index] = packed_float3(enemy_position);
         render_radii[index] = marble_radius * 0.92;
-        render_colors[index] = float4(0.96, 0.08, 0.12, 1.0);
+        const float enemy_waterline = clamp(
+            (
+                surface_height
+                + sample_water_height(
+                    water_positions,
+                    enemy_position.xz,
+                    width,
+                    height,
+                    spacing,
+                    density,
+                    plane_scale
+                )
+                - enemy_position.y
+            ) / max(marble_radius * 0.92, 1e-4),
+            -1.0,
+            1.0
+        );
+        const float enemy_immersion_code =
+            enemy_waterline > -0.999 ? 2.0 + enemy_waterline : 1.0;
+        render_colors[index] =
+            float4(0.96, 0.08, 0.12, enemy_immersion_code);
     }
 }

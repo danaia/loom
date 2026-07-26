@@ -176,7 +176,7 @@ impl State {
             self.cursor,
             self.viewport,
             self.plane_scale,
-            0.016 + 0.075 + self.grab_height,
+            0.075 + self.grab_height,
         ) {
             self.grab_target = target;
         }

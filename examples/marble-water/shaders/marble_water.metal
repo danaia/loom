@@ -6,6 +6,7 @@ struct MarbleVertexOut {
     float2 local;
     float4 color;
     float depth;
+    float radius;
 };
 
 vertex MarbleVertexOut marble_water_pipeline_vertex(
@@ -47,6 +48,7 @@ vertex MarbleVertexOut marble_water_pipeline_vertex(
     out.local = corners[vertex_id];
     out.color = colors[instance_id];
     out.depth = depth;
+    out.radius = radius;
     return out;
 }
 
@@ -63,8 +65,36 @@ fragment float4 marble_water_pipeline_fragment(MarbleVertexOut in [[stage_in]])
         22.0
     );
     const float edge_alpha = smoothstep(1.0, 0.78, radius_squared);
+    float3 shaded_color =
+        in.color.rgb * diffuse + highlight * 0.45;
+    const bool is_marble = in.radius > 0.05;
+    const bool is_immersed = is_marble && in.color.a > 1.001;
+    const float waterline =
+        is_immersed ? clamp(in.color.a - 2.0, -1.0, 1.0) : -1.0;
+    float alpha = (is_marble ? 1.0 : in.color.a) * edge_alpha;
+    if (is_immersed && in.local.y < waterline + 0.04) {
+        const float submerged_amount = clamp(
+            (waterline - in.local.y) / max(waterline + 1.0, 0.08),
+            0.0,
+            1.0
+        );
+        shaded_color = mix(
+            shaded_color,
+            shaded_color * float3(0.18, 0.52, 0.72),
+            0.48 + submerged_amount * 0.22
+        );
+        alpha *= mix(0.72, 0.50, submerged_amount);
+        const float waterline_highlight =
+            1.0 - smoothstep(
+                0.0,
+                0.055,
+                abs(in.local.y - waterline)
+            );
+        shaded_color +=
+            float3(0.32, 0.78, 0.96) * waterline_highlight * 0.32;
+    }
     return float4(
-        in.color.rgb * diffuse + highlight * 0.45,
-        in.color.a * edge_alpha
+        shaded_color,
+        alpha
     );
 }

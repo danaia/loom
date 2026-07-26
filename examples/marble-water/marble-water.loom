@@ -23,9 +23,9 @@ const interaction.reset_water: f32 = 0
 const interaction.hud_fps: f32 = 0
 const interaction.hud_gpu_mb: f32 = 0
 
-// Water particles are centered at y=0 with a visible radius of about 0.013 m.
-// This contact height keeps each marble tangent to the visible top of the plane.
-const world.surface_height: f32<m> = 0.016
+// The height field stores the physical waterline at its particle centers.
+// A half-density sphere equilibrates with its center exactly on this plane.
+const world.surface_height: f32<m> = 0
 const world.half_extent_x: f32<m> = 1.45
 const world.half_extent_z: f32<m> = 1.08
 const world.gravity: f32<m/s^2> = -6.5
@@ -36,6 +36,10 @@ const marble.drive_acceleration: f32<m/s^2> = 2.8
 const marble.maximum_speed: f32<m/s> = 0.82
 const marble.restitution: f32 = 0.58
 const marble.collision_wave_gain: f32 = 8
+// A 0.075 m sphere at half water density has a mass of about 0.884 kg.
+const marble.mass_kg: f32 = 0.884
+const marble.density_ratio: f32 = 0.5
+const marble.vertical_drag: f32<s^-1> = 5
 
 const enemies.count: u32 = 8
 const enemies.chase_acceleration: f32<m/s^2> = 0.34
@@ -51,12 +55,13 @@ const water.wave_speed: f32<m/s> = 0.55
 const water.damping: f32<s^-1> = 0.82
 const water.impact_radius: f32<m> = 0.105
 const water.impact_gain: f32 = 0.24
-const water.wake_gain: f32 = 0.34
+const water.wake_gain: f32 = 0.5
 const water.marble_response: f32<m/s^2> = 6.5
+const water.body_coupling: f32<s^-2> = 22
 
 stream player.position: f32x3<m> {
   cap=1 len=1 buffers=1 access=rw storage=device
-  init=[[0, 0.091, 0.15]]
+  init=[[0, 0, 0.15]]
 }
 stream player.velocity: f32x3<m/s> {
   cap=1 len=1 buffers=1 access=rw storage=device
@@ -73,7 +78,7 @@ stream player.impact_speed: f32<m/s> {
 
 stream enemies.position: f32x3<m> {
   cap=8 len=8 buffers=1 access=rw storage=device
-  init=[[-1.08,0.091,-0.72],[-0.72,0.091,0.72],[-0.34,0.091,-0.82],[0.18,0.091,0.78],[0.58,0.091,-0.70],[0.94,0.091,0.58],[-1.02,0.091,0.12],[1.08,0.091,-0.08]]
+  init=[[-1.08,0,-0.72],[-0.72,0,0.72],[-0.34,0,-0.82],[0.18,0,0.78],[0.58,0,-0.70],[0.94,0,0.58],[-1.02,0,0.12],[1.08,0,-0.08]]
 }
 stream enemies.velocity: f32x3<m/s> {
   cap=8 len=8 buffers=1 access=rw storage=device
@@ -145,7 +150,14 @@ kernel player_step(
   plane_scale: in value<f32>,
   half_extent_x: in value<f32,m>,
   half_extent_z: in value<f32,m>,
-  dt: in value<f32,s>
+  dt: in value<f32,s>,
+  water_position: in all stream<f32x3,m>,
+  water_width: in value<u32>,
+  water_height: in value<u32>,
+  water_spacing: in value<f32,m>,
+  water_density: in value<f32>,
+  density_ratio: in value<f32>,
+  vertical_drag: in value<f32,s^-1>
 ) extern metal {
   source="kernels/marble_water.metal"
   entry="marble_player_step"
@@ -165,7 +177,15 @@ kernel enemy_step(
   plane_scale: in value<f32>,
   half_extent_x: in value<f32,m>,
   half_extent_z: in value<f32,m>,
-  dt: in value<f32,s>
+  dt: in value<f32,s>,
+  gravity: in value<f32,m/s^2>,
+  water_position: in all stream<f32x3,m>,
+  water_width: in value<u32>,
+  water_height: in value<u32>,
+  water_spacing: in value<f32,m>,
+  water_density: in value<f32>,
+  density_ratio: in value<f32>,
+  vertical_drag: in value<f32,s^-1>
 ) extern metal {
   source="kernels/marble_water.metal"
   entry="marble_enemy_step"
@@ -184,7 +204,8 @@ kernel resolve_interactions(
   surface_height: in value<f32,m>,
   radius: in value<f32,m>,
   restitution: in value<f32>,
-  collision_wave_gain: in value<f32>
+  collision_wave_gain: in value<f32>,
+  mass_kg: in value<f32>
 ) extern metal {
   source="kernels/marble_water.metal"
   entry="marble_resolve_interactions"
@@ -197,6 +218,10 @@ kernel water_force(
   player_impact_speed: in all stream<f32,m/s>,
   enemy_impact_position: in all stream<f32x3,m>,
   enemy_impact_speed: in all stream<f32,m/s>,
+  player_position: in all stream<f32x3,m>,
+  player_velocity: in all stream<f32x3,m/s>,
+  enemy_position: in all stream<f32x3,m>,
+  enemy_velocity: in all stream<f32x3,m/s>,
   width: in value<u32>,
   height: in value<u32>,
   enemy_count: in value<u32>,
@@ -209,6 +234,10 @@ kernel water_force(
   impact_radius: in value<f32,m>,
   impact_gain: in value<f32>,
   wake_gain: in value<f32>,
+  surface_height: in value<f32,m>,
+  marble_radius: in value<f32,m>,
+  density_ratio: in value<f32>,
+  body_coupling: in value<f32,s^-2>,
   dt: in value<f32,s>
 ) extern metal {
   source="kernels/marble_water.metal"
@@ -256,7 +285,8 @@ kernel compose_scene(
   spacing: in value<f32,m>,
   density: in value<f32>,
   plane_scale: in value<f32>,
-  marble_radius: in value<f32,m>
+  marble_radius: in value<f32,m>,
+  surface_height: in value<f32,m>
 ) extern metal {
   source="kernels/marble_water.metal"
   entry="marble_compose_scene"
@@ -299,6 +329,13 @@ pass drive_player = player_step(
   half_extent_x=world.half_extent_x
   half_extent_z=world.half_extent_z
   dt=simulation.fixed_dt
+  water_position=water.position
+  water_width=water.width
+  water_height=water.height
+  water_spacing=water.spacing
+  water_density=interaction.water_density
+  density_ratio=marble.density_ratio
+  vertical_drag=marble.vertical_drag
 ) over player.position
 
 pass chase_player = enemy_step(
@@ -316,6 +353,14 @@ pass chase_player = enemy_step(
   half_extent_x=world.half_extent_x
   half_extent_z=world.half_extent_z
   dt=simulation.fixed_dt
+  gravity=world.gravity
+  water_position=water.position
+  water_width=water.width
+  water_height=water.height
+  water_spacing=water.spacing
+  water_density=interaction.water_density
+  density_ratio=marble.density_ratio
+  vertical_drag=marble.vertical_drag
 ) over enemies.position
 
 pass collide_marbles = resolve_interactions(
@@ -332,6 +377,7 @@ pass collide_marbles = resolve_interactions(
   radius=marble.radius
   restitution=marble.restitution
   collision_wave_gain=marble.collision_wave_gain
+  mass_kg=marble.mass_kg
 ) over player.position
 
 pass disturb_water = water_force(
@@ -341,6 +387,10 @@ pass disturb_water = water_force(
   player_impact_speed=player.impact_speed
   enemy_impact_position=enemies.impact_position
   enemy_impact_speed=enemies.impact_speed
+  player_position=player.position
+  player_velocity=player.velocity
+  enemy_position=enemies.position
+  enemy_velocity=enemies.velocity
   width=water.width
   height=water.height
   enemy_count=enemies.count
@@ -353,6 +403,10 @@ pass disturb_water = water_force(
   impact_radius=water.impact_radius
   impact_gain=water.impact_gain
   wake_gain=water.wake_gain
+  surface_height=world.surface_height
+  marble_radius=marble.radius
+  density_ratio=marble.density_ratio
+  body_coupling=water.body_coupling
   dt=simulation.fixed_dt
 ) over water.position
 
@@ -393,6 +447,7 @@ pass stage_scene = compose_scene(
   density=interaction.water_density
   plane_scale=interaction.plane_scale
   marble_radius=marble.radius
+  surface_height=world.surface_height
 ) over render.position
 
 view viewport(
