@@ -1,8 +1,20 @@
 # Hello Crystal
 
-`loom_core::hello_crystal_builder(cell_count)` builds a runnable, parser-independent
-Loom graph for a mesoscopic 3D crystal. One element is a material volume, not an
-atom.
+[`crystal.loom`](crystal.loom) is a directly runnable Loom-language program for a
+32³ mesoscopic crystal. One element is a material volume, not an atom.
+
+```text
+loom examples/hello-crystal/crystal.loom
+```
+
+The installed copy is even shorter to launch:
+
+```text
+loom ~/.loom/examples/crystal.loom
+```
+
+`loom_core::hello_crystal_builder(cell_count)` remains the configurable,
+parser-independent graph builder used for larger development and benchmark runs.
 
 The default demonstration uses `100³ = 1,000,000` cells and includes:
 
@@ -17,7 +29,7 @@ The default demonstration uses `100³ = 1,000,000` cells and includes:
 - GPU-reduced morphology, material, slice, and damage metrics,
 - normal-aware faceted surface extraction into a dedicated isometric renderer.
 
-Run it on Metal:
+Run the configurable builder on Metal:
 
 ```text
 ./scripts/run-hello-particle.sh crystal 1m

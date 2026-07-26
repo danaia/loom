@@ -5,6 +5,7 @@ use loom_syntax::parse;
 use loom_validator::Validator;
 
 const SOURCE: &str = include_str!("../../../examples/hello-particle/hello-particle.agent.loom");
+const CRYSTAL_SOURCE: &str = include_str!("../../../examples/hello-crystal/crystal.loom");
 
 #[test]
 fn native_loom_kernel_generates_compiles_and_executes_metal() {
@@ -42,4 +43,39 @@ fn native_loom_kernel_generates_compiles_and_executes_metal() {
     assert!(result.runtime.shader_hashes.iter().any(|shader| {
         shader.source_path == "loom://generated/hello_particle_agent/integrate.metal"
     }));
+}
+
+#[test]
+fn crystal_loom_source_compiles_and_executes_packaged_metal() {
+    let graph = parse(CRYSTAL_SOURCE).expect("crystal source must parse");
+    let validated = Validator::validate(&graph)
+        .validated
+        .expect("crystal graph must validate");
+    let result = MetalRuntime::benchmark(
+        validated,
+        BenchmarkConfig {
+            mode: BenchmarkMode::Headless,
+            runner: BenchmarkRunner::LoomPlan,
+            warmup_ticks: 0,
+            sample_ticks: 1,
+            ..BenchmarkConfig::default()
+        },
+    )
+    .expect("crystal Metal must compile and execute");
+
+    assert_eq!(result.sample_ticks, 1);
+    assert!(
+        result
+            .runtime
+            .shader_hashes
+            .iter()
+            .any(|shader| shader.source_path == "kernels/crystal.metal")
+    );
+    assert!(
+        result
+            .runtime
+            .shader_hashes
+            .iter()
+            .any(|shader| shader.source_path == "shaders/crystal.metal")
+    );
 }

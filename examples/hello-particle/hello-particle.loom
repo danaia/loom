@@ -1,188 +1,91 @@
-// Loom v0 language specimen.
-// This file locks semantic patterns. The formatter may still refine punctuation.
+// First executable specimen of Loom's canonical agent-native syntax.
+// Integration is native Loom; contact remains an explicit Metal escape hatch.
 
-module hello_particle version "0.1.0" {
-  target metal
+loom 0.1
+module hello_particle
+target metal
 
-  value world.gravity: vec3<f32> unit m/s^2 = [0.0, -9.81, 0.0]
-  value ground.height: f32 unit m = 0.0
+const world.gravity: f32x3<m/s^2> = [0, -9.81, 0]
+const ground.height: f32<m> = 0
 
-  stream particles.position: vec3<f32> unit m {
-    capacity 1
-    buffering 1
-    storage device_private
-    access device_read_write
-    initial [[0.0, 1.0, 0.0]]
-  }
+stream particles.position: f32x3<m> {
+  cap=1 len=1 buffers=1 access=rw storage=device
+  init=[[0, 1, 0]]
+}
 
-  stream particles.velocity: vec3<f32> unit m/s {
-    capacity 1
-    buffering 1
-    storage device_private
-    access device_read_write
-    initial [[0.0, 0.0, 0.0]]
-  }
+stream particles.velocity: f32x3<m/s> {
+  cap=1 len=1 buffers=1 access=rw storage=device
+  init=[[0, 0, 0]]
+}
 
-  stream particles.radius: f32 unit m {
-    capacity 1
-    buffering 1
-    storage device_private
-    access device_read
-    initial [0.004]
-  }
+stream particles.radius: f32<m> {
+  cap=1 len=1 buffers=1 access=r storage=device
+  init=[0.004]
+}
 
-  stream particles.restitution: f32 {
-    capacity 1
-    buffering 1
-    storage device_private
-    access device_read
-    initial [0.8]
-  }
+stream particles.restitution: f32 {
+  cap=1 len=1 buffers=1 access=r storage=device
+  init=[0.8]
+}
 
-  stream particles.friction: f32 {
-    capacity 1
-    buffering 1
-    storage device_private
-    access device_read
-    initial [0.3]
-  }
+stream particles.friction: f32 {
+  cap=1 len=1 buffers=1 access=r storage=device
+  init=[0.3]
+}
 
-  stream particles.color: vec4<f32> {
-    capacity 1
-    buffering 1
-    storage device_private
-    access device_read
-    initial [[1.0, 0.2, 0.4, 1.0]]
-  }
+stream particles.color: f32x4 {
+  cap=1 len=1 buffers=1 access=r storage=device
+  init=[[1, 0.2, 0.4, 1]]
+}
 
-  kernel integrate {
-    slot position: stream<vec3<f32>, m> read_write
-    slot velocity: stream<vec3<f32>, m/s> read_write
-    slot gravity: value<vec3<f32>, m/s^2> read
-    slot dt: value<f32, s> read
+kernel integrate(
+  position: rw stream<f32x3,m>,
+  velocity: rw stream<f32x3,m/s>,
+  gravity: in value<f32x3,m/s^2>,
+  dt: in value<f32,s>
+) each i {
+  velocity[i] += gravity * dt;
+  position[i] += velocity[i] * dt;
+}
 
-    implementation metal {
-      source "kernels/euler_integrate.metal"
-      entry "integrate_main"
-    }
-  }
+kernel contact_ground(
+  position: rw stream<f32x3,m>,
+  velocity: rw stream<f32x3,m/s>,
+  radius: in stream<f32,m>,
+  restitution: in stream<f32>,
+  friction: in stream<f32>,
+  ground_height: in value<f32,m>
+) extern metal {
+  source="kernels/ground_contact.metal"
+  entry="ground_contact_main"
+}
 
-  kernel contact_ground {
-    slot position: stream<vec3<f32>, m> read_write
-    slot velocity: stream<vec3<f32>, m/s> read_write
-    slot radius: stream<f32, m> read
-    slot restitution: stream<f32> read
-    slot friction: stream<f32> read
-    slot ground_height: value<f32, m> read
+pass fall = integrate(
+  position=particles.position
+  velocity=particles.velocity
+  gravity=world.gravity
+  dt=simulation.fixed_dt
+) over particles.position
 
-    implementation metal {
-      source "kernels/ground_contact.metal"
-      entry "ground_contact_main"
-    }
-  }
+pass bounce = contact_ground(
+  position=particles.position
+  velocity=particles.velocity
+  radius=particles.radius
+  restitution=particles.restitution
+  friction=particles.friction
+  ground_height=ground.height
+) over particles.position
 
-  pass fall uses integrate {
-    bind position = particles.position
-    bind velocity = particles.velocity
-    bind gravity = world.gravity
-    bind dt = simulation.fixed_dt
+view viewport(
+  color=particles.color
+  position=particles.position
+  radius=particles.radius
+) extern metal {
+  source="shaders/particle.metal"
+  entry="particle_pipeline"
+}
 
-    dispatch over particles.position
-  }
-
-  pass bounce uses contact_ground {
-    bind position = particles.position
-    bind velocity = particles.velocity
-    bind radius = particles.radius
-    bind restitution = particles.restitution
-    bind friction = particles.friction
-    bind ground_height = ground.height
-
-    dispatch over particles.position
-  }
-
-  view viewport render {
-    read position = particles.position
-    read radius = particles.radius
-    read color = particles.color
-
-    implementation metal {
-      vertex "shaders/particle_vertex.metal" entry "particle_vertex"
-      fragment "shaders/particle_fragment.metal" entry "particle_fragment"
-      topology points
-      depth_test true
-    }
-  }
-
-  capability inspect_particle_state {
-    allow inspect particles.position particles.velocity
-    delivery asynchronous
-  }
-
-  schedule simulation fixed 120 Hz {
-    run fall
-    run bounce after fall
-    show viewport after bounce
-
-    catch_up at_most 4 ticks
-    in_flight {
-      simulation at_most 4 ticks
-      rendering at_most 2 frames
-    }
-    tick_overlap serialize_conflicting_ticks
-    presentation_lifetime block_next_tick_until_views_complete
-
-    overload {
-      preserve fixed_dt
-      drop render
-      discard excess_wall_time
-    }
-  }
-
-  contract physically_valid on simulation {
-    invariant finite particles.position particles.velocity
-    invariant for_each i over particles.position {
-      particles.position[i].y - particles.radius[i]
-        >= ground.height - 0.0001 m
-    }
-  }
-
-  contract realtime on simulation {
-    steady_state after initialization {
-      exclude requested_inspection
-      heap_allocations_per_tick == 0
-      application_copies_per_tick == 0
-      application_blits_per_tick == 0
-    }
-
-    gpu_time_per_tick <= 8.33 ms
-  }
-
-  contract replay on simulation {
-    determinism tier_1
-    fingerprint exact
-  }
-
-  scenario drop_and_bounce {
-    reset to initial
-    run simulation for 5 s
-
-    expect always for_each i over particles.position {
-      particles.position[i].y - particles.radius[i]
-        >= ground.height - 0.0001 m
-    }
-    expect finite particles.position particles.velocity
-  }
-
-  benchmark baseline {
-    warmup 1 s
-    run simulation for 5 s
-
-    measure gpu_time
-    measure heap_allocations
-    measure application_copies
-    measure application_blits
-    measure working_set
-    measure overload_events
-  }
+flow simulation rate=120hz {
+  fall -> bounce
+  draw viewport after bounce
 }

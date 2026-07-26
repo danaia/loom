@@ -78,7 +78,8 @@ not required on the host.
 Run a program directly:
 
 ```text
-loom ~/.loom/examples/hello-particle/hello-particle.loom
+loom ~/.loom/examples/hello-particle.loom
+loom ~/.loom/examples/crystal.loom
 ```
 
 A source path means run. The explicit development and inspection commands remain

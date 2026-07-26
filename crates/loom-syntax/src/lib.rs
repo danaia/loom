@@ -315,6 +315,7 @@ struct KernelAst {
 struct ParameterAst {
     name: String,
     access: SlotAccess,
+    whole_resource: bool,
     resource: ResourceKind,
     typed: TypedAst,
 }
@@ -592,6 +593,12 @@ impl Parser {
                     return Err(self.error("P0020", format!("unknown kernel access `{other}`")));
                 }
             };
+            let whole_resource = if self.peek_word() == Some("all") {
+                self.expect_word("all")?;
+                true
+            } else {
+                false
+            };
             let resource = match self.expect_any_word()?.as_str() {
                 "stream" => ResourceKind::Stream,
                 "value" => ResourceKind::Value,
@@ -612,9 +619,13 @@ impl Parser {
             if matches!(resource, ResourceKind::Value) && access != SlotAccess::Read {
                 return Err(self.error("P0022", "value parameters must use `in` access"));
             }
+            if matches!(resource, ResourceKind::Value) && whole_resource {
+                return Err(self.error("P0028", "`all` applies only to stream parameters"));
+            }
             parameters.push(ParameterAst {
                 name: parameter_name,
                 access,
+                whole_resource,
                 resource,
                 typed: TypedAst { data_type, unit },
             });
@@ -1195,7 +1206,7 @@ fn lower(module: ModuleAst) -> Result<ModuleGraph, SourceDiagnostic> {
             .collect::<Vec<_>>();
         let mut draft = KernelDraft::new(kernel.name);
         for parameter in kernel.parameters {
-            let slot = match parameter.resource {
+            let mut slot = match parameter.resource {
                 ResourceKind::Stream => SlotDraft::stream(
                     parameter.name,
                     parameter.typed.data_type,
@@ -1208,6 +1219,9 @@ fn lower(module: ModuleAst) -> Result<ModuleGraph, SourceDiagnostic> {
                     parameter.typed.unit,
                 ),
             };
+            if parameter.whole_resource {
+                slot = slot.whole_resource();
+            }
             draft = draft.slot(slot);
         }
         draft = draft
@@ -1723,9 +1737,11 @@ fn lower_value(raw: &RawLiteral, data_type: &DataType) -> Result<Literal, String
 #[cfg(test)]
 mod tests {
     use super::parse;
+    use loom_core::StreamIndexing;
     use loom_validator::Validator;
 
     const SOURCE: &str = include_str!("../../../examples/hello-particle/hello-particle.agent.loom");
+    const CRYSTAL_SOURCE: &str = include_str!("../../../examples/hello-crystal/crystal.loom");
 
     #[test]
     fn agent_source_lowers_to_a_valid_graph() {
@@ -1765,5 +1781,27 @@ mod tests {
     fn subtraction_is_distinct_from_a_negative_literal() {
         let source = SOURCE.replace("gravity * dt", "velocity[i] - gravity * dt");
         parse(&source).expect("binary subtraction should remain valid");
+    }
+
+    #[test]
+    fn crystal_source_uses_whole_resource_controls_and_validates() {
+        let graph = parse(CRYSTAL_SOURCE).expect("crystal source should parse");
+        let report = Validator::validate(&graph);
+        assert!(
+            report.is_valid(),
+            "unexpected diagnostics: {:#?}",
+            report.diagnostics
+        );
+        let initialize = graph
+            .kernels
+            .iter()
+            .find(|kernel| kernel.name == "crystal_initialize")
+            .expect("crystal initialization kernel");
+        let tick = initialize
+            .slots
+            .iter()
+            .find(|slot| slot.name == "tick")
+            .expect("tick slot");
+        assert_eq!(tick.indexing, StreamIndexing::WholeResource);
     }
 }

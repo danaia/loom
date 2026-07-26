@@ -42,14 +42,20 @@ cargo build --locked --release --package loom-cli
 
 mkdir -p \
   "${PACKAGE_ROOT}/bin" \
-  "${PACKAGE_ROOT}/examples/hello-particle" \
+  "${PACKAGE_ROOT}/examples" \
   "${PACKAGE_ROOT}/share/loom/docs"
 
 install -m 0755 "${REPO_ROOT}/target/release/loom" "${PACKAGE_ROOT}/bin/loom"
 install -m 0755 "${REPO_ROOT}/uninstall.sh" "${PACKAGE_ROOT}/uninstall"
 install -m 0644 \
-  "${REPO_ROOT}/examples/hello-particle/hello-particle.agent.loom" \
-  "${PACKAGE_ROOT}/examples/hello-particle/hello-particle.loom"
+  "${REPO_ROOT}/examples/hello-particle/hello-particle.loom" \
+  "${PACKAGE_ROOT}/examples/hello-particle.loom"
+install -m 0644 \
+  "${REPO_ROOT}/examples/hello-crystal/crystal.loom" \
+  "${PACKAGE_ROOT}/examples/crystal.loom"
+install -m 0644 \
+  "${REPO_ROOT}/examples/README.md" \
+  "${PACKAGE_ROOT}/examples/README.md"
 cp -R "${REPO_ROOT}/docs/handbook" "${PACKAGE_ROOT}/share/loom/docs/handbook"
 install -m 0644 "${REPO_ROOT}/docs/README.md" "${PACKAGE_ROOT}/share/loom/docs/README.md"
 install -m 0644 \

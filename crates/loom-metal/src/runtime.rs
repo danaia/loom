@@ -46,6 +46,8 @@ use crate::{
 const INTEGRATE_SOURCE: &str = include_str!("../../../kernels/euler_integrate.metal");
 const CONTACT_SOURCE: &str = include_str!("../../../kernels/ground_contact.metal");
 const PARTICLE_SOURCE: &str = include_str!("../../../shaders/particle.metal");
+const CRYSTAL_SOURCE: &str = include_str!("../../../kernels/crystal.metal");
+const CRYSTAL_RENDER_SOURCE: &str = include_str!("../../../shaders/crystal.metal");
 const INDIRECT_ARGUMENT_SOURCE: &str = r#"
 #include <metal_stdlib>
 using namespace metal;
@@ -2618,6 +2620,8 @@ fn shader_source(
         "kernels/euler_integrate.metal" => Ok(Cow::Borrowed(INTEGRATE_SOURCE)),
         "kernels/ground_contact.metal" => Ok(Cow::Borrowed(CONTACT_SOURCE)),
         "shaders/particle.metal" => Ok(Cow::Borrowed(PARTICLE_SOURCE)),
+        "kernels/crystal.metal" => Ok(Cow::Borrowed(CRYSTAL_SOURCE)),
+        "shaders/crystal.metal" => Ok(Cow::Borrowed(CRYSTAL_RENDER_SOURCE)),
         _ => Err(RuntimeDiagnostic::new(
             RuntimeDiagnosticCode::UnsupportedGraph,
             format!("no packaged Metal source for `{}`", implementation.source),
