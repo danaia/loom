@@ -21,3 +21,9 @@ loom ~/.loom/examples/crystal.loom
 Use `loom check FILE` to validate without opening a window and `loom explain
 FILE` to inspect the canonical graph, execution plan, and generated or packaged
 Metal.
+
+Update the installed compiler and runtime with:
+
+```text
+loom update
+```

@@ -120,6 +120,7 @@ echo "  home: ${LOOM_HOME}"
 echo "  command: ${LOOM_LINK}"
 echo "  particle: loom ${LOOM_HOME}/examples/hello-particle.loom"
 echo "  crystal: loom ${LOOM_HOME}/examples/crystal.loom"
+echo "  update: loom update"
 if ! command -v loom >/dev/null 2>&1; then
   echo
   echo "Add ${LOOM_BIN_DIR} to PATH, then open a new terminal:"

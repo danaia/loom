@@ -75,6 +75,12 @@ runtime, examples, handbook, version, and installation manifest. The installer
 adds only a `~/.local/bin/loom` symlink outside that directory. Rust and Cargo are
 not required on the host.
 
+Update to the newest release from any directory:
+
+```text
+loom update
+```
+
 Run a program directly:
 
 ```text

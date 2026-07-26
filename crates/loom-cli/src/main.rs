@@ -1,4 +1,7 @@
-use std::{env, fs, process::ExitCode};
+use std::{
+    env, fs,
+    process::{Command as ProcessCommand, ExitCode, Stdio},
+};
 
 use loom_syntax::parse;
 use loom_validator::Validator;
@@ -15,6 +18,7 @@ enum Command {
 enum CliAction {
     Execute { command: Command, path: String },
     Help,
+    Update,
     Version,
 }
 
@@ -61,6 +65,9 @@ fn run() -> Result<(), u8> {
         CliAction::Help => {
             print_help();
             return Ok(());
+        }
+        CliAction::Update => {
+            return update_installation();
         }
         CliAction::Version => {
             println!("loom {}", env!("CARGO_PKG_VERSION"));
@@ -154,6 +161,7 @@ fn parse_arguments(arguments: &[String]) -> Result<CliAction, String> {
     match arguments {
         [flag] if flag == "--help" || flag == "-h" => Ok(CliAction::Help),
         [flag] if flag == "--version" || flag == "-V" => Ok(CliAction::Version),
+        [command] if command == "update" => Ok(CliAction::Update),
         [path] => Ok(CliAction::Execute {
             command: Command::Run,
             path: path.clone(),
@@ -188,9 +196,91 @@ Usage:
   loom run <source.loom>       Run a Loom program explicitly
   loom check <source.loom>     Parse, validate, and fingerprint
   loom explain <source.loom>   Print the graph, plan, and generated Metal
+  loom update                  Install the latest Loom release
   loom --version               Print the installed version
   loom --help                  Print this help"
     );
+}
+
+#[cfg(target_os = "macos")]
+fn update_installation() -> Result<(), u8> {
+    const INSTALLER_URL: &str = "https://raw.githubusercontent.com/danaia/loom/main/install.sh";
+    let installer_url =
+        env::var("LOOM_UPDATE_INSTALLER_URL").unwrap_or_else(|_| INSTALLER_URL.to_owned());
+
+    println!("Updating Loom from {installer_url}...");
+    let mut download = ProcessCommand::new("curl")
+        .args([
+            "-fsSL",
+            "--retry",
+            "3",
+            "--proto",
+            "=https,file",
+            "--tlsv1.2",
+            &installer_url,
+        ])
+        .stdout(Stdio::piped())
+        .spawn()
+        .map_err(|error| {
+            print_json(&serde_json::json!({
+                "status": "update_error",
+                "stage": "download",
+                "message": error.to_string(),
+            }));
+            2
+        })?;
+    let installer = download
+        .stdout
+        .take()
+        .expect("piped curl output must be available");
+    let install_status = ProcessCommand::new("sh")
+        .stdin(Stdio::from(installer))
+        .status();
+    let download_status = download.wait();
+
+    let download_status = download_status.map_err(|error| {
+        print_json(&serde_json::json!({
+            "status": "update_error",
+            "stage": "download",
+            "message": error.to_string(),
+        }));
+        2
+    })?;
+    if !download_status.success() {
+        print_json(&serde_json::json!({
+            "status": "update_error",
+            "stage": "download",
+            "message": format!("curl exited with {download_status}"),
+        }));
+        return Err(2);
+    }
+
+    let install_status = install_status.map_err(|error| {
+        print_json(&serde_json::json!({
+            "status": "update_error",
+            "stage": "install",
+            "message": error.to_string(),
+        }));
+        2
+    })?;
+    if !install_status.success() {
+        print_json(&serde_json::json!({
+            "status": "update_error",
+            "stage": "install",
+            "message": format!("installer exited with {install_status}"),
+        }));
+        return Err(2);
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn update_installation() -> Result<(), u8> {
+    print_json(&serde_json::json!({
+        "status": "unsupported",
+        "message": "Loom updates currently require an Apple Silicon Mac",
+    }));
+    Err(2)
 }
 
 #[cfg(target_os = "macos")]
@@ -251,11 +341,12 @@ mod tests {
     }
 
     #[test]
-    fn help_and_version_are_host_friendly() {
+    fn help_version_and_update_are_host_friendly() {
         assert_eq!(parse_arguments(&args(&["--help"])), Ok(CliAction::Help));
         assert_eq!(
             parse_arguments(&args(&["--version"])),
             Ok(CliAction::Version)
         );
+        assert_eq!(parse_arguments(&args(&["update"])), Ok(CliAction::Update));
     }
 }
