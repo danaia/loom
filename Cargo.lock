@@ -563,7 +563,7 @@ checksum = "0ceec5bc11778974d1bcb055b18002eba7f4b3518b6a0081b3af5f21666da9ad"
 
 [[package]]
 name = "loom-cli"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "loom-core",
  "loom-metal",
@@ -577,7 +577,7 @@ dependencies = [
 
 [[package]]
 name = "loom-core"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "serde",
  "serde_json",
@@ -586,7 +586,7 @@ dependencies = [
 
 [[package]]
 name = "loom-metal"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "block",
  "core-graphics-types",
@@ -605,7 +605,7 @@ dependencies = [
 
 [[package]]
 name = "loom-syntax"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "loom-core",
  "loom-validator",
@@ -614,7 +614,7 @@ dependencies = [
 
 [[package]]
 name = "loom-validator"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "loom-core",
  "serde",

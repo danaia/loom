@@ -110,6 +110,15 @@ The `.lmp` contains the graph, every referenced Metal file, the Rust extension
 source, and its compiled target library. Running the package requires only the
 global `loom` runtime. Building a project with `src/runtime.rs` requires `rustc`.
 
+`.lmp` is ZIP-compatible, so a package can be reopened for editing:
+
+```sh
+mkdir marble-water
+unzip marble-water.lmp -d marble-water
+cd marble-water
+loom build marble-water.loom
+```
+
 ## What Loom does
 
 A Loom program defines:
@@ -244,7 +253,10 @@ It is currently a compiler-development example:
 
 ```sh
 loom program.loom          # Run
+loom project.lmp           # Run a self-contained package
+loom build program.loom    # Build program.lmp
 loom check program.loom    # Validate
+loom check project.lmp     # Validate a package
 loom explain program.loom  # Inspect the graph and generated Metal
 loom update                # Install the latest release
 loom --version             # Print the version

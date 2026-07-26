@@ -122,6 +122,7 @@ echo "  command: ${LOOM_LINK}"
 echo "  particle: loom ${LOOM_HOME}/examples/hello-particle.loom"
 echo "  neon flock: loom ${LOOM_HOME}/examples/neon-flock.loom"
 echo "  crystal: loom ${LOOM_HOME}/examples/crystal.loom"
+echo "  marble water package: loom ${LOOM_HOME}/examples/marble-water.lmp"
 echo "  update: loom update"
 if ! command -v loom >/dev/null 2>&1; then
   echo

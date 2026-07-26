@@ -9,6 +9,8 @@ From the repository root:
 loom examples/hello-particle/hello-particle.loom
 loom examples/neon-flock/neon-flock.loom
 loom examples/hello-crystal/crystal.loom
+loom build examples/marble-water/marble-water.loom
+loom examples/marble-water/marble-water.lmp
 ```
 
 The Crystal example is interactive: drag across the crystal to slice it, drag
@@ -31,6 +33,7 @@ The installed distribution places the same programs at:
 loom ~/.loom/examples/hello-particle.loom
 loom ~/.loom/examples/neon-flock.loom
 loom ~/.loom/examples/crystal.loom
+loom ~/.loom/examples/marble-water.lmp
 ```
 
 `loom run FILE` is the explicit equivalent of `loom FILE`. Use `loom check FILE`

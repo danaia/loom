@@ -104,6 +104,17 @@ artifact hashes; `explain` includes the normalized graph, generated Metal, and
 resolved execution plan. On macOS, `run` opens a native Metal window driven
 directly by the parsed source graph.
 
+Loom 0.1.5 also supports self-contained `.lmp` projects:
+
+```text
+loom build examples/marble-water/marble-water.loom
+loom examples/marble-water/marble-water.lmp
+```
+
+Running or inspecting `.lmp` requires only the installed runtime. Building a
+project containing `src/runtime.rs` requires `rustc`. Packages are ZIP-compatible
+and can be extracted with `unzip` for editing and rebuilding.
+
 Remove the command, runtime, examples, documentation, and manifest together:
 
 ```text

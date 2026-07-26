@@ -33,3 +33,17 @@ extension ABI, and target triple.
 The global Loom runtime owns validation, scheduling, Metal execution, windowing,
 and host statistics. The package owns all application-specific graphs, shaders,
 input behavior, HUD behavior, and value overrides.
+
+## Extract and edit
+
+`.lmp` is ZIP-compatible. Extract it into a new source directory:
+
+```text
+mkdir marble-water
+unzip marble-water.lmp -d marble-water
+cd marble-water
+```
+
+Edit the primary `.loom`, files under `kernels/` or `shaders/`, or
+`src/runtime.rs`, then run `loom build marble-water.loom` again. The extracted
+target-specific `runtime/` directory is a generated artifact and may be deleted.
