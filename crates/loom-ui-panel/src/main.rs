@@ -9,7 +9,7 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
-use tauri::{WebviewUrl, WebviewWindowBuilder, http};
+use tauri::{Manager, WebviewUrl, WebviewWindowBuilder, http};
 
 #[derive(Clone, Debug)]
 struct PanelArguments {
@@ -69,6 +69,30 @@ fn get_snapshot(state: tauri::State<'_, PanelState>) -> Result<PanelSnapshot, St
         .map_err(|_| "panel snapshot lock was poisoned".to_owned())
 }
 
+#[tauri::command]
+fn open_agents_window(app: tauri::AppHandle) -> Result<(), String> {
+    const LABEL: &str = "loom-project-agents";
+    if let Some(window) = app.get_webview_window(LABEL) {
+        window.show().map_err(|error| error.to_string())?;
+        window.set_focus().map_err(|error| error.to_string())?;
+        return Ok(());
+    }
+
+    let url = tauri::Url::parse("loom-ui://localhost/agents.html")
+        .map_err(|error| format!("invalid agents window URL: {error}"))?;
+    WebviewWindowBuilder::new(&app, LABEL, WebviewUrl::CustomProtocol(url))
+        .title("Loom Agents")
+        .inner_size(680.0, 760.0)
+        .min_inner_size(500.0, 560.0)
+        .resizable(true)
+        .focused(true)
+        .always_on_top(true)
+        .visible_on_all_workspaces(true)
+        .build()
+        .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
 fn main() {
     if let Err(error) = run() {
         eprintln!("loom UI panel: {error}");
@@ -112,7 +136,11 @@ fn run() -> Result<(), String> {
         .register_uri_scheme_protocol("loom-ui", move |_context, request| {
             serve_asset(&asset_root, &asset_entry, request.uri().path())
         })
-        .invoke_handler(tauri::generate_handler![set_control, get_snapshot])
+        .invoke_handler(tauri::generate_handler![
+            set_control,
+            get_snapshot,
+            open_agents_window
+        ])
         .setup(move |app| {
             let url = tauri::Url::parse("loom-ui://localhost/")
                 .map_err(|error| format!("invalid panel URL: {error}"))?;

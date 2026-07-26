@@ -1,0 +1,135 @@
+// Minimal Loom application baseline.
+//
+// One GPU-resident particle, zero gravity, native pointer input, a project UI,
+// runtime telemetry, an explicit compute graph, and an external Metal view.
+
+loom 0.1
+module baseline
+target metal
+
+const interaction.grab_active: f32 = 0
+const interaction.grab_x: f32<m> = 0
+const interaction.grab_y: f32<m> = 0
+const interaction.grab_z: f32<m> = 0
+const interaction.space_drag: f32<s^-1> = 0
+const interaction.reset: f32 = 0
+const interaction.camera_aspect: f32 = 1.333333
+const interaction.hud_fps: f32 = 0
+const interaction.hud_gpu_mb: f32 = 0
+const interaction.hud_gpu_frame_ms: f32 = 0
+const interaction.hud_gpu_budget_ms: f32 = 8.333333
+const interaction.hud_gpu_pressure: f32 = 0
+
+const world.gravity: f32x3<m/s^2> = [0, 0, 0]
+const world.half_extent_x: f32<m> = 1.55
+const world.half_extent_y: f32<m> = 1
+const world.half_extent_z: f32<m> = 1.25
+
+const particle.radius: f32<m> = 0.05
+const particle.grab_spring: f32<s^-2> = 42
+const particle.grab_damping: f32<s^-1> = 11
+
+stream particle.position: f32x3<m> {
+  cap=1 len=1 buffers=1 access=rw storage=device
+  init=[[0, 0, 0]]
+}
+
+stream particle.velocity: f32x3<m/s> {
+  cap=1 len=1 buffers=1 access=rw storage=device
+  init=[[0, 0, 0]]
+}
+
+stream render.position: f32x3<m> {
+  cap=1 len=1 buffers=1 access=rw storage=device
+}
+
+stream render.radius: f32<m> {
+  cap=1 len=1 buffers=1 access=rw storage=device
+}
+
+stream render.color: f32x4 {
+  cap=1 len=1 buffers=1 access=rw storage=device
+}
+
+stream render.aspect: f32 {
+  cap=1 len=1 buffers=1 access=rw storage=device
+}
+
+kernel simulate_particle(
+  position: rw stream<f32x3,m>,
+  velocity: rw stream<f32x3,m/s>,
+  gravity: in value<f32x3,m/s^2>,
+  grab_active: in value<f32>,
+  grab_x: in value<f32,m>,
+  grab_y: in value<f32,m>,
+  grab_z: in value<f32,m>,
+  space_drag: in value<f32,s^-1>,
+  reset: in value<f32>,
+  grab_spring: in value<f32,s^-2>,
+  grab_damping: in value<f32,s^-1>,
+  half_extent_x: in value<f32,m>,
+  half_extent_y: in value<f32,m>,
+  half_extent_z: in value<f32,m>,
+  dt: in value<f32,s>
+) extern metal {
+  source="kernels/baseline.metal"
+  entry="baseline_simulate_particle"
+}
+
+kernel project_particle(
+  particle_position: in stream<f32x3,m>,
+  render_position: out stream<f32x3,m>,
+  render_radius: out stream<f32,m>,
+  render_color: out stream<f32x4>,
+  render_aspect: out stream<f32>,
+  radius: in value<f32,m>,
+  aspect: in value<f32>,
+  grabbed: in value<f32>
+) extern metal {
+  source="kernels/baseline.metal"
+  entry="baseline_project_particle"
+}
+
+pass move = simulate_particle(
+  position=particle.position
+  velocity=particle.velocity
+  gravity=world.gravity
+  grab_active=interaction.grab_active
+  grab_x=interaction.grab_x
+  grab_y=interaction.grab_y
+  grab_z=interaction.grab_z
+  space_drag=interaction.space_drag
+  reset=interaction.reset
+  grab_spring=particle.grab_spring
+  grab_damping=particle.grab_damping
+  half_extent_x=world.half_extent_x
+  half_extent_y=world.half_extent_y
+  half_extent_z=world.half_extent_z
+  dt=simulation.fixed_dt
+) over particle.position
+
+pass project = project_particle(
+  particle_position=particle.position
+  render_position=render.position
+  render_radius=render.radius
+  render_color=render.color
+  render_aspect=render.aspect
+  radius=particle.radius
+  aspect=interaction.camera_aspect
+  grabbed=interaction.grab_active
+) over render.position
+
+view viewport(
+  color=render.color
+  position=render.position
+  radius=render.radius
+  scale=render.aspect
+) extern metal {
+  source="shaders/baseline.metal"
+  entry="baseline_pipeline"
+}
+
+flow simulation rate=120hz {
+  move -> project
+  draw viewport after project
+}
