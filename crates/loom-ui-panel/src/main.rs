@@ -140,10 +140,22 @@ fn open_agents_window(app: tauri::AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn has_agent_api_key() -> bool {
-    keyring::Entry::new(AGENT_KEYCHAIN_SERVICE, AGENT_KEYCHAIN_ACCOUNT)
-        .and_then(|entry| entry.get_password())
-        .is_ok()
+fn has_agent_api_key(state: tauri::State<'_, PanelState>) -> Result<bool, String> {
+    if state
+        .agent_api_key
+        .lock()
+        .map_err(|_| "agent key memory lock was poisoned".to_owned())?
+        .is_some()
+    {
+        return Ok(true);
+    }
+    let entry = keyring::Entry::new(AGENT_KEYCHAIN_SERVICE, AGENT_KEYCHAIN_ACCOUNT)
+        .map_err(|error| format!("could not access the macOS Keychain: {error}"))?;
+    match entry.get_password() {
+        Ok(_) => Ok(true),
+        Err(keyring::Error::NoEntry) => Ok(false),
+        Err(error) => Err(format!("could not read the Loom Agents key: {error}")),
+    }
 }
 
 #[tauri::command]
@@ -198,7 +210,15 @@ fn save_api_key(api_key: &str) -> Result<(), String> {
         .map_err(|error| format!("could not access the macOS Keychain: {error}"))?;
     entry
         .set_password(api_key)
-        .map_err(|error| format!("could not save the API key in the macOS Keychain: {error}"))
+        .map_err(|error| format!("could not save the API key in the macOS Keychain: {error}"))?;
+    let saved = entry
+        .get_password()
+        .map(Zeroizing::new)
+        .map_err(|error| format!("the API key was not readable after saving: {error}"))?;
+    if saved.as_str() != api_key {
+        return Err("the macOS Keychain returned a different API key after saving".to_owned());
+    }
+    Ok(())
 }
 
 fn remember_api_key(state: &PanelState, api_key: &str) -> Result<(), String> {

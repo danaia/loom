@@ -96,7 +96,7 @@ async function saveAndConnect() {
   }
 }
 
-async function startSavedSession(clearThread = false) {
+async function startSavedSession(clearThread = false, promptForKeyOnError = true) {
   connectionPhase.value = 'connecting'
   error.value = ''
   if (clearThread) {
@@ -107,7 +107,7 @@ async function startSavedSession(clearThread = false) {
     acceptReply(await startSavedAgent())
   } catch (reason) {
     connectionPhase.value = 'error'
-    showKeySetup.value = true
+    showKeySetup.value = promptForKeyOnError
     error.value = describeError(reason, 'The saved OpenAI key could not start an agent.')
   }
 }
@@ -149,12 +149,14 @@ function handleComposerKeydown(event: KeyboardEvent) {
 onMounted(async () => {
   try {
     if (await hasAgentApiKey()) {
-      await startSavedSession()
+      await startSavedSession(false, false)
     } else {
       showKeySetup.value = true
     }
-  } catch {
-    showKeySetup.value = true
+  } catch (reason) {
+    connectionPhase.value = 'error'
+    showKeySetup.value = false
+    error.value = describeError(reason, 'The macOS Keychain could not be read.')
   }
 })
 </script>
