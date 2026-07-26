@@ -7,6 +7,7 @@ From the repository root:
 
 ```text
 loom examples/hello-particle/hello-particle.loom
+loom examples/neon-flock/neon-flock.loom
 loom examples/hello-crystal/crystal.loom
 ```
 
@@ -28,6 +29,7 @@ The installed distribution places the same programs at:
 
 ```text
 loom ~/.loom/examples/hello-particle.loom
+loom ~/.loom/examples/neon-flock.loom
 loom ~/.loom/examples/crystal.loom
 ```
 

@@ -21,10 +21,10 @@ use loom_validator::{
     ValidatedModuleGraph,
 };
 use metal::{
-    Buffer, CommandQueue, CompileOptions, ComputePipelineState, Device, MTLClearColor,
-    MTLCommandBufferStatus, MTLLoadAction, MTLPixelFormat, MTLPrimitiveType, MTLResourceOptions,
-    MTLSize, MTLStorageMode, MTLStoreAction, MTLTextureUsage, MetalLayer, RenderPassDescriptor,
-    RenderPipelineDescriptor, RenderPipelineState, TextureDescriptor,
+    Buffer, CommandQueue, CompileOptions, ComputePipelineState, Device, MTLBlendFactor,
+    MTLClearColor, MTLCommandBufferStatus, MTLLoadAction, MTLPixelFormat, MTLPrimitiveType,
+    MTLResourceOptions, MTLSize, MTLStorageMode, MTLStoreAction, MTLTextureUsage, MetalLayer,
+    RenderPassDescriptor, RenderPipelineDescriptor, RenderPipelineState, TextureDescriptor,
 };
 use objc::{msg_send, rc::autoreleasepool, runtime::YES, sel, sel_impl};
 use winit::{
@@ -46,6 +46,8 @@ use crate::{
 const INTEGRATE_SOURCE: &str = include_str!("../../../kernels/euler_integrate.metal");
 const CONTACT_SOURCE: &str = include_str!("../../../kernels/ground_contact.metal");
 const PARTICLE_SOURCE: &str = include_str!("../../../shaders/particle.metal");
+const NEON_FLOCK_SOURCE: &str = include_str!("../../../kernels/neon_flock.metal");
+const NEON_FLOCK_RENDER_SOURCE: &str = include_str!("../../../shaders/neon_flock.metal");
 const CRYSTAL_SOURCE: &str = include_str!("../../../kernels/crystal.metal");
 const CRYSTAL_RENDER_SOURCE: &str = include_str!("../../../shaders/crystal.metal");
 const INDIRECT_ARGUMENT_SOURCE: &str = r#"
@@ -1654,10 +1656,10 @@ impl RuntimeState {
         let attachment = descriptor.color_attachments().object_at(0).unwrap();
         attachment.set_texture(Some(texture));
         attachment.set_load_action(MTLLoadAction::Clear);
-        let clear = if self.validated.graph().name == "hello_worm" {
-            MTLClearColor::new(0.008, 0.018, 0.014, 1.0)
-        } else {
-            MTLClearColor::new(0.025, 0.03, 0.055, 1.0)
+        let clear = match self.validated.graph().name.as_str() {
+            "hello_worm" => MTLClearColor::new(0.008, 0.018, 0.014, 1.0),
+            "neon_flock" => MTLClearColor::new(0.003, 0.005, 0.015, 1.0),
+            _ => MTLClearColor::new(0.025, 0.03, 0.055, 1.0),
         };
         attachment.set_clear_color(clear);
         attachment.set_store_action(MTLStoreAction::Store);
@@ -2468,6 +2470,14 @@ fn build_pipelines(
             .object_at(0)
             .unwrap()
             .set_pixel_format(MTLPixelFormat::BGRA8Unorm);
+        if view.implementation.entry == "neon_flock_pipeline" {
+            let attachment = descriptor.color_attachments().object_at(0).unwrap();
+            attachment.set_blending_enabled(true);
+            attachment.set_source_rgb_blend_factor(MTLBlendFactor::SourceAlpha);
+            attachment.set_destination_rgb_blend_factor(MTLBlendFactor::One);
+            attachment.set_source_alpha_blend_factor(MTLBlendFactor::One);
+            attachment.set_destination_alpha_blend_factor(MTLBlendFactor::One);
+        }
         let pipeline = device
             .new_render_pipeline_state(&descriptor)
             .map_err(|error| {
@@ -2620,6 +2630,8 @@ fn shader_source(
         "kernels/euler_integrate.metal" => Ok(Cow::Borrowed(INTEGRATE_SOURCE)),
         "kernels/ground_contact.metal" => Ok(Cow::Borrowed(CONTACT_SOURCE)),
         "shaders/particle.metal" => Ok(Cow::Borrowed(PARTICLE_SOURCE)),
+        "kernels/neon_flock.metal" => Ok(Cow::Borrowed(NEON_FLOCK_SOURCE)),
+        "shaders/neon_flock.metal" => Ok(Cow::Borrowed(NEON_FLOCK_RENDER_SOURCE)),
         "kernels/crystal.metal" => Ok(Cow::Borrowed(CRYSTAL_SOURCE)),
         "shaders/crystal.metal" => Ok(Cow::Borrowed(CRYSTAL_RENDER_SOURCE)),
         _ => Err(RuntimeDiagnostic::new(

@@ -341,6 +341,8 @@ In the installed Loom 0.1 runtime, executable external sources are packaged:
 ```text
 kernels/ground_contact.metal
 shaders/particle.metal
+kernels/neon_flock.metal
+shaders/neon_flock.metal
 kernels/crystal.metal
 shaders/crystal.metal
 ```

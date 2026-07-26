@@ -1,0 +1,155 @@
+// Testable question:
+// Can a bounded GPU population form a cohesive flock while local separation
+// preserves readable individuals and a native lag stream exposes motion trails?
+//
+// Native Loom owns element-wise integration and trail evolution.
+// Explicit Metal owns unsupported neighborhood search, conditionals, and rendering.
+
+loom 0.1
+module neon_flock
+target metal
+
+const flock.population: u32 = 384
+const flock.initial_radius: f32<m> = 0.42
+const flock.initial_speed: f32<m/s> = 0.16
+const flock.perception_radius: f32<m> = 0.18
+const flock.separation_radius: f32<m> = 0.045
+const flock.cohesion_gain: f32<s^-2> = 0.85
+const flock.alignment_gain: f32<s^-1> = 1.45
+const flock.separation_strength: f32<m^2/s^2> = 0.0045
+const flock.wander_acceleration: f32<m/s^2> = 0.11
+const flock.startup_acceleration: f32<m/s^2> = 7.5
+const flock.swirl_gain: f32<s^-2> = 0.22
+const flock.maximum_acceleration: f32<m/s^2> = 4.0
+const flock.maximum_speed: f32<m/s> = 0.42
+const flock.drag: f32 = 0.9992
+
+const world.half_extent: f32<m> = 0.92
+const world.boundary_margin: f32<m> = 0.18
+const world.boundary_gain: f32<s^-2> = 12.0
+
+const trail.memory: f32 = 0.94
+const trail.follow: f32 = 0.06
+
+stream agents.position: f32x2<m> {
+  cap=384 len=384 buffers=1 access=rw storage=device
+}
+
+stream agents.velocity: f32x2<m/s> {
+  cap=384 len=384 buffers=1 access=rw storage=device
+}
+
+stream agents.acceleration: f32x2<m/s^2> {
+  cap=384 len=384 buffers=1 access=rw storage=device
+}
+
+stream agents.trail_position: f32x2<m> {
+  cap=384 len=384 buffers=1 access=rw storage=device
+}
+
+// EXTERNAL KERNEL: bounded all-agent neighborhood reads, conditional separation,
+// soft boundary steering, deterministic per-agent wander, and speed limiting.
+kernel flock_neighborhood(
+  position: rw all stream<f32x2,m>,
+  velocity: rw all stream<f32x2,m/s>,
+  trail_position: rw stream<f32x2,m>,
+  acceleration: out stream<f32x2,m/s^2>,
+  population: in value<u32>,
+  initial_radius: in value<f32,m>,
+  initial_speed: in value<f32,m/s>,
+  perception_radius: in value<f32,m>,
+  separation_radius: in value<f32,m>,
+  cohesion_gain: in value<f32,s^-2>,
+  alignment_gain: in value<f32,s^-1>,
+  separation_strength: in value<f32,m^2/s^2>,
+  wander_acceleration: in value<f32,m/s^2>,
+  startup_acceleration: in value<f32,m/s^2>,
+  swirl_gain: in value<f32,s^-2>,
+  maximum_acceleration: in value<f32,m/s^2>,
+  maximum_speed: in value<f32,m/s>,
+  half_extent: in value<f32,m>,
+  boundary_margin: in value<f32,m>,
+  boundary_gain: in value<f32,s^-2>,
+  dt: in value<f32,s>
+) extern metal {
+  source="kernels/neon_flock.metal"
+  entry="neon_flock_neighborhood_main"
+}
+
+// NATIVE KERNEL: element-wise f32x2 acceleration, damping, and integration.
+kernel advance_agents(
+  position: rw stream<f32x2,m>,
+  velocity: rw stream<f32x2,m/s>,
+  acceleration: in stream<f32x2,m/s^2>,
+  drag: in value<f32>,
+  dt: in value<f32,s>
+) each i {
+  velocity[i] += acceleration[i] * dt;
+  velocity[i] *= drag;
+  position[i] += velocity[i] * dt;
+}
+
+// NATIVE KERNEL: element-wise exponential lag used by the external renderer.
+kernel evolve_trails(
+  trail_position: rw stream<f32x2,m>,
+  position: in stream<f32x2,m>,
+  memory: in value<f32>,
+  follow: in value<f32>
+) each i {
+  trail_position[i] *= memory;
+  trail_position[i] += position[i] * follow;
+}
+
+pass steer = flock_neighborhood(
+  position=agents.position
+  velocity=agents.velocity
+  trail_position=agents.trail_position
+  acceleration=agents.acceleration
+  population=flock.population
+  initial_radius=flock.initial_radius
+  initial_speed=flock.initial_speed
+  perception_radius=flock.perception_radius
+  separation_radius=flock.separation_radius
+  cohesion_gain=flock.cohesion_gain
+  alignment_gain=flock.alignment_gain
+  separation_strength=flock.separation_strength
+  wander_acceleration=flock.wander_acceleration
+  startup_acceleration=flock.startup_acceleration
+  swirl_gain=flock.swirl_gain
+  maximum_acceleration=flock.maximum_acceleration
+  maximum_speed=flock.maximum_speed
+  half_extent=world.half_extent
+  boundary_margin=world.boundary_margin
+  boundary_gain=world.boundary_gain
+  dt=simulation.fixed_dt
+) over agents.position
+
+pass advance = advance_agents(
+  position=agents.position
+  velocity=agents.velocity
+  acceleration=agents.acceleration
+  drag=flock.drag
+  dt=simulation.fixed_dt
+) over agents.position
+
+pass remember = evolve_trails(
+  trail_position=agents.trail_position
+  position=agents.position
+  memory=trail.memory
+  follow=trail.follow
+) over agents.position
+
+// EXTERNAL RENDER KERNEL: oriented trail quads, procedural neon palette,
+// soft luminous falloff, and additive composition.
+view neon_view(
+  position=agents.position
+  trail_position=agents.trail_position
+) extern metal {
+  source="shaders/neon_flock.metal"
+  entry="neon_flock_pipeline"
+}
+
+flow simulation rate=120hz {
+  steer -> advance -> remember
+  draw neon_view after remember
+}

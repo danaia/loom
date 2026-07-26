@@ -6,6 +6,7 @@ use loom_validator::Validator;
 
 const SOURCE: &str = include_str!("../../../examples/hello-particle/hello-particle.agent.loom");
 const CRYSTAL_SOURCE: &str = include_str!("../../../examples/hello-crystal/crystal.loom");
+const NEON_FLOCK_SOURCE: &str = include_str!("../../../examples/neon-flock/neon-flock.loom");
 
 #[test]
 fn native_loom_kernel_generates_compiles_and_executes_metal() {
@@ -78,4 +79,40 @@ fn crystal_loom_source_compiles_and_executes_packaged_metal() {
             .iter()
             .any(|shader| shader.source_path == "shaders/crystal.metal")
     );
+}
+
+#[test]
+fn neon_flock_compiles_and_executes_native_and_external_metal() {
+    let graph = parse(NEON_FLOCK_SOURCE).expect("neon flock source must parse");
+    let validated = Validator::validate(&graph)
+        .validated
+        .expect("neon flock graph must validate");
+    let result = MetalRuntime::benchmark(
+        validated,
+        BenchmarkConfig {
+            mode: BenchmarkMode::Rendered,
+            runner: BenchmarkRunner::LoomPlan,
+            warmup_ticks: 1,
+            sample_ticks: 1,
+            ..BenchmarkConfig::default()
+        },
+    )
+    .expect("neon flock Metal must compile, execute, and render");
+
+    assert_eq!(result.sample_ticks, 1);
+    for source in [
+        "kernels/neon_flock.metal",
+        "loom://generated/neon_flock/advance_agents.metal",
+        "loom://generated/neon_flock/evolve_trails.metal",
+        "shaders/neon_flock.metal",
+    ] {
+        assert!(
+            result
+                .runtime
+                .shader_hashes
+                .iter()
+                .any(|shader| shader.source_path == source),
+            "missing shader identity for {source}"
+        );
+    }
 }

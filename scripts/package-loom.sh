@@ -54,6 +54,9 @@ install -m 0644 \
   "${REPO_ROOT}/examples/hello-crystal/crystal.loom" \
   "${PACKAGE_ROOT}/examples/crystal.loom"
 install -m 0644 \
+  "${REPO_ROOT}/examples/neon-flock/neon-flock.loom" \
+  "${PACKAGE_ROOT}/examples/neon-flock.loom"
+install -m 0644 \
   "${REPO_ROOT}/examples/README.md" \
   "${PACKAGE_ROOT}/examples/README.md"
 install -m 0644 \
@@ -62,6 +65,9 @@ install -m 0644 \
 install -m 0644 \
   "${REPO_ROOT}/examples/hello-crystal/README.md" \
   "${PACKAGE_ROOT}/examples/crystal.README.md"
+install -m 0644 \
+  "${REPO_ROOT}/examples/neon-flock/README.md" \
+  "${PACKAGE_ROOT}/examples/neon-flock.README.md"
 cp -R "${REPO_ROOT}/docs/handbook" "${PACKAGE_ROOT}/share/loom/docs/handbook"
 install -m 0644 "${REPO_ROOT}/docs/README.md" "${PACKAGE_ROOT}/share/loom/docs/README.md"
 install -m 0644 \

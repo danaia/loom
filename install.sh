@@ -120,6 +120,7 @@ echo "Loom $("${LOOM_HOME}/bin/loom" --version | awk '{ print $2 }') installed."
 echo "  home: ${LOOM_HOME}"
 echo "  command: ${LOOM_LINK}"
 echo "  particle: loom ${LOOM_HOME}/examples/hello-particle.loom"
+echo "  neon flock: loom ${LOOM_HOME}/examples/neon-flock.loom"
 echo "  crystal: loom ${LOOM_HOME}/examples/crystal.loom"
 echo "  update: loom update"
 if ! command -v loom >/dev/null 2>&1; then
