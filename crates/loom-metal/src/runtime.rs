@@ -3203,6 +3203,14 @@ mod tests {
                 .id
         };
         let damage = stream("material.damage");
+        let render_color = stream("render.color");
+        let damage_cell_count = graph
+            .resources
+            .streams
+            .iter()
+            .find(|stream| stream.name == "material.damage")
+            .expect("material.damage stream")
+            .capacity as usize;
         let slice_count = stream("interaction.slice_count");
         let camera_yaw = stream("interaction.camera_yaw");
         let camera_pitch = stream("interaction.camera_pitch");
@@ -3254,11 +3262,26 @@ mod tests {
             unsafe { *(readback.contents().cast::<u32>()) }
         };
         let damaged_cells = |state: &RuntimeState| {
-            let count = 32 * 32 * 32;
+            let count = damage_cell_count;
             let readback = read_bytes(state, damage, (count * std::mem::size_of::<f32>()) as u64);
             let damage =
                 unsafe { std::slice::from_raw_parts(readback.contents().cast::<f32>(), count) };
             damage.iter().filter(|value| **value > 0.0).count()
+        };
+        let red_damage_cells = |state: &RuntimeState| {
+            let component_count = damage_cell_count * 4;
+            let readback = read_bytes(
+                state,
+                render_color,
+                (component_count * std::mem::size_of::<f32>()) as u64,
+            );
+            let colors = unsafe {
+                std::slice::from_raw_parts(readback.contents().cast::<f32>(), component_count)
+            };
+            colors
+                .chunks_exact(4)
+                .filter(|color| color[0] > 0.45 && color[0] > color[1] * 1.5)
+                .count()
         };
 
         assert!(
@@ -3284,6 +3307,10 @@ mod tests {
         state.queue_pointer_slice((250.0, 360.0), (710.0, 360.0), PhysicalSize::new(960, 720));
         state.draw_tick().unwrap();
         assert!(damaged_cells(&state) > 0, "mouse slicing must damage cells");
+        assert!(
+            red_damage_cells(&state) > 0,
+            "the exposed cut must render with a red damage color"
+        );
         assert_eq!(read_scalar_u32(&state, slice_count), 1);
 
         for _ in 0..60 {

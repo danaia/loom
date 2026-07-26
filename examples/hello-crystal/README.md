@@ -1,8 +1,9 @@
 # Hello Crystal
 
 [`crystal.loom`](crystal.loom) is a directly runnable Loom-language program for a
-32³ interactive mesoscopic crystal. It grows on the GPU, can be sliced with the
-mouse, and heals itself. One element is a material volume, not an atom.
+one-million-cell (`100³`) interactive mesoscopic crystal. It grows on the GPU,
+can be sliced with the mouse, and heals itself. One element is a material volume,
+not an atom.
 
 Update Loom first:
 
@@ -45,8 +46,9 @@ loom ~/.loom/examples/crystal.loom
 - Scroll or use a trackpad gesture to zoom.
 
 Nothing damages the crystal until you slice it. A cut removes material and moves
-the separated fragments. Damage then decays, fragments return toward their
-lattice positions, and the seam closes automatically.
+the separated fragments. The exposed cut glows red while damage is active.
+Damage then decays, fragments return toward their lattice positions, and the
+red seam closes automatically.
 
 ## Check and explain
 
@@ -63,9 +65,10 @@ upgrading, run `rehash` in zsh or `hash -r` in bash.
 ## Configurable development runner
 
 `loom_core::hello_crystal_builder(cell_count)` remains the configurable,
-parser-independent graph builder used for larger development and benchmark runs.
+parser-independent graph builder used for development and benchmark runs.
 
-The default demonstration uses `100³ = 1,000,000` cells and includes:
+The language example and default builder demonstration use
+`100³ = 1,000,000` cells and include:
 
 - solute and temperature diffusion,
 - phase-field solidification from one seed,

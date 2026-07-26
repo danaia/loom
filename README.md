@@ -203,8 +203,9 @@ Metal kernels.
 
 ### Hello Crystal
 
-A 32 × 32 × 32 mesoscopic crystal grows on the GPU. Drag across it to slice it,
-drag the black background to spin it, and scroll to zoom. The cut heals itself.
+A one-million-cell, 100 × 100 × 100 mesoscopic crystal grows on the GPU. Drag
+across it to slice it, drag the black background to spin it, and scroll to zoom.
+The cut glows red while damaged, then heals itself.
 
 ```sh
 loom examples/hello-crystal/crystal.loom

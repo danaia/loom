@@ -1,4 +1,5 @@
-// A runnable, interactive 32 x 32 x 32 mesoscopic crystal.
+// A runnable, interactive 100 x 100 x 100 mesoscopic crystal.
+// Its one million cells create a denser, more crystal-like surface.
 // Drag across the crystal to slice it, drag the background to orbit, and scroll
 // to zoom. Damage and displaced fragments heal automatically.
 // Loom owns the graph; the advanced neighborhood kernels remain Metal escape hatches.
@@ -7,8 +8,8 @@ loom 0.1
 module hello_crystal
 target metal
 
-const field.width: u32 = 32
-const crystal.seed_index: u32 = 16912
+const field.width: u32 = 100
+const crystal.seed_index: u32 = 505050
 const growth.rate: f32 = 0.19
 const growth.anisotropy_strength: f32 = 0.68
 const field.solute_diffusion: f32 = 0.075
@@ -32,43 +33,43 @@ stream simulation.tick: u32 {
 }
 
 stream field.phase: f32 {
-  cap=32768 len=32768 buffers=1 access=rw storage=device
+  cap=1000000 len=1000000 buffers=1 access=rw storage=device
 }
 
 stream field.phase_next: f32 {
-  cap=32768 len=32768 buffers=1 access=rw storage=device
+  cap=1000000 len=1000000 buffers=1 access=rw storage=device
 }
 
 stream field.solute: f32 {
-  cap=32768 len=32768 buffers=1 access=rw storage=device
+  cap=1000000 len=1000000 buffers=1 access=rw storage=device
 }
 
 stream field.solute_next: f32 {
-  cap=32768 len=32768 buffers=1 access=rw storage=device
+  cap=1000000 len=1000000 buffers=1 access=rw storage=device
 }
 
 stream field.temperature: f32 {
-  cap=32768 len=32768 buffers=1 access=rw storage=device
+  cap=1000000 len=1000000 buffers=1 access=rw storage=device
 }
 
 stream field.temperature_next: f32 {
-  cap=32768 len=32768 buffers=1 access=rw storage=device
+  cap=1000000 len=1000000 buffers=1 access=rw storage=device
 }
 
 stream material.damage: f32 {
-  cap=32768 len=32768 buffers=1 access=rw storage=device
+  cap=1000000 len=1000000 buffers=1 access=rw storage=device
 }
 
 stream material.component: u32 {
-  cap=32768 len=32768 buffers=1 access=rw storage=device
+  cap=1000000 len=1000000 buffers=1 access=rw storage=device
 }
 
 stream material.position: f32x3 {
-  cap=32768 len=32768 buffers=1 access=rw storage=device
+  cap=1000000 len=1000000 buffers=1 access=rw storage=device
 }
 
 stream material.velocity: f32x3 {
-  cap=32768 len=32768 buffers=1 access=rw storage=device
+  cap=1000000 len=1000000 buffers=1 access=rw storage=device
 }
 
 stream interaction.slice_count: u32 {
@@ -97,19 +98,19 @@ stream interaction.pick_hit: u32 {
 }
 
 stream render.position: f32x3 {
-  cap=32768 len=32768 buffers=1 access=rw storage=device
+  cap=1000000 len=1000000 buffers=1 access=rw storage=device
 }
 
 stream render.normal: f32x3 {
-  cap=32768 len=32768 buffers=1 access=rw storage=device
+  cap=1000000 len=1000000 buffers=1 access=rw storage=device
 }
 
 stream render.color: f32x4 {
-  cap=32768 len=32768 buffers=1 access=rw storage=device
+  cap=1000000 len=1000000 buffers=1 access=rw storage=device
 }
 
 stream render.radius: f32 {
-  cap=32768 len=32768 buffers=1 access=rw storage=device
+  cap=1000000 len=1000000 buffers=1 access=rw storage=device
 }
 
 kernel crystal_initialize(

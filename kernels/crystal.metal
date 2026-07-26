@@ -433,14 +433,14 @@ kernel void crystal_prepare_render(
 
     uint3 cell = coordinate_3d(gid, width);
     float3 outward = float3(0.0f);
-    bool cut_edge = false;
+    float cut_damage = 0.0f;
     for (int axis = 0; axis < 3; ++axis) {
         for (int direction = -1; direction <= 1; direction += 2) {
             uint neighbor = neighbor_index(cell, axis, direction, width);
             bool exposed = phase[neighbor] < 0.55f || damage[neighbor] >= CUT_DAMAGE;
             if (exposed) {
                 outward[axis] += float(direction);
-                cut_edge = cut_edge || damage[neighbor] >= CUT_DAMAGE;
+                cut_damage = max(cut_damage, damage[neighbor]);
             }
         }
     }
@@ -458,7 +458,9 @@ kernel void crystal_prepare_render(
     float3 base = detached
         ? float3(0.20f, 0.67f, 0.94f)
         : float3(0.35f, 0.82f, 1.0f);
-    base = cut_edge ? mix(base, float3(0.82f, 0.96f, 1.0f), 0.72f) : base;
+    float visible_damage = max(damage[gid], cut_damage);
+    float damage_tint = smoothstep(CUT_DAMAGE, 0.45f, visible_damage);
+    base = mix(base, float3(1.0f, 0.035f, 0.015f), damage_tint * 0.94f);
     float depth_light = 0.58f + 0.42f * clamp(world.z + 0.55f, 0.0f, 1.0f);
 
     render_position[gid] =
@@ -466,7 +468,7 @@ kernel void crystal_prepare_render(
             rotate_for_camera(world, camera_yaw[0], camera_pitch[0]) * camera_zoom[0]);
     render_normal[gid] =
         packed_float3(rotate_for_camera(surface_normal, camera_yaw[0], camera_pitch[0]));
-    color[gid] = float4(base * depth_light, cut_edge ? 1.0f : 0.88f);
+    color[gid] = float4(base * depth_light, visible_damage >= CUT_DAMAGE ? 1.0f : 0.88f);
     radius[gid] = (1.46f / float(width)) * camera_zoom[0];
 }
 
