@@ -4,8 +4,11 @@ Every `.loom` entry point in this directory can be checked or launched directly
 with the Loom CLI.
 
 ```text
-loom examples/hello-particle/hello-particle.loom
-loom examples/hello-crystal/crystal.loom
+cd examples/hello-particle
+loom hello-particle.loom
+
+cd ../hello-crystal
+loom crystal.loom
 ```
 
 The installed distribution places the same programs at:

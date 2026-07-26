@@ -1,10 +1,19 @@
 # Hello Crystal
 
 [`crystal.loom`](crystal.loom) is a directly runnable Loom-language program for a
-32³ mesoscopic crystal. One element is a material volume, not an atom.
+32³ mesoscopic crystal. One element is a material volume, not an atom. From the
+repository root:
 
 ```text
-loom examples/hello-crystal/crystal.loom
+cd examples/hello-crystal
+loom crystal.loom
+```
+
+Validate or inspect it without opening the Metal window:
+
+```text
+loom check crystal.loom
+loom explain crystal.loom
 ```
 
 The installed copy is even shorter to launch:
@@ -12,6 +21,10 @@ The installed copy is even shorter to launch:
 ```text
 loom ~/.loom/examples/crystal.loom
 ```
+
+The source requires Loom 0.1.1 or newer. If an older interactive shell still
+selects a previous Loom command after upgrading, run `rehash` in zsh or
+`hash -r` in bash, then confirm with `loom --version`.
 
 `loom_core::hello_crystal_builder(cell_count)` remains the configurable,
 parser-independent graph builder used for larger development and benchmark runs.
