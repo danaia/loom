@@ -15,20 +15,21 @@ The language documents are read in this order:
 4. [`decisions/0002-agent-native-positioning.md`](decisions/0002-agent-native-positioning.md) — the agent-native trust boundary and current language classification.
 5. [`decisions/0004-agent-native-source.md`](decisions/0004-agent-native-source.md) — the compact executable source grammar and its agent-oriented design rules.
 6. [`../examples/hello-particle/hello-particle.agent.loom`](../examples/hello-particle/hello-particle.agent.loom) — first executable agent-native source specimen.
-7. [`04-execution-scheduling.md`](04-execution-scheduling.md) — completion, overlap, observation, view, inspection, ABI, determinism, and overload rules.
-8. [`gpu-authoring-handbook.md`](gpu-authoring-handbook.md) — human- and agent-facing guidance for GPU-resident state, scalable passes, Metal ABI alignment, and performance proof.
-9. [`06-canonical-representation.md`](06-canonical-representation.md) — untrusted graphs, validation, atomic repairs, execution plans, and artifact identity.
-10. [`decisions/0003-emergent-systems-substrate.md`](decisions/0003-emergent-systems-substrate.md) — emergent-computation positioning and authority rules.
-11. [`07-emergent-systems.md`](07-emergent-systems.md) — implemented dynamic populations, fields, and Hello Organism boundary.
-12. [`benchmarks/hello-organism-population-gate-m4-pro.md`](benchmarks/hello-organism-population-gate-m4-pro.md) — scalable population correctness load and declared-capacity timing boundary.
-13. [`benchmarks/hello-organism-neighborhood-gate-m4-pro.md`](benchmarks/hello-organism-neighborhood-gate-m4-pro.md) — developmental neighborhoods, morphology reductions, and their timing boundary.
-14. [`benchmarks/hello-organism-development-gate-m4-pro.md`](benchmarks/hello-organism-development-gate-m4-pro.md) — one-seed procedural development, causal ablations, exact replay, and populated reference timing.
-15. [`benchmarks/hello-organism-homeostasis-gate-m4-pro.md`](benchmarks/hello-organism-homeostasis-gate-m4-pro.md) — sustained equilibrium, energy accounting, nutrient perturbation, and the clean Gate 4 timing.
-16. [`benchmarks/hello-organism-regeneration-gate-m4-pro.md`](benchmarks/hello-organism-regeneration-gate-m4-pro.md) — committed-checkpoint lesion, local repair, sustained recovery, and causal ablations.
-17. [`visuals/hello-organism-gate-5.svg`](visuals/hello-organism-gate-5.svg) — visual evidence summary of development, lesion, local regeneration, and causal ablations.
-18. [`milestones/hello-organism-v0.1.md`](milestones/hello-organism-v0.1.md) — frozen Gate 1–5 proof manifest, hashes, event record, timing, and limitations.
-19. [`../examples/hello-crystal/README.md`](../examples/hello-crystal/README.md) — runnable 3D mesoscopic crystal growth, cleavage, component, fragment, metric, and surface specimen.
-20. [`benchmarks/hello-crystal-1m-m4-pro.md`](benchmarks/hello-crystal-1m-m4-pro.md) — one-million-cell M4 Pro execution smoke proof and its explicit evidence boundary.
+7. [`native-compiler-gates.md`](native-compiler-gates.md) — measured roadmap from element-wise conditionals through native render stages.
+8. [`04-execution-scheduling.md`](04-execution-scheduling.md) — completion, overlap, observation, view, inspection, ABI, determinism, and overload rules.
+9. [`gpu-authoring-handbook.md`](gpu-authoring-handbook.md) — human- and agent-facing guidance for GPU-resident state, scalable passes, Metal ABI alignment, and performance proof.
+10. [`06-canonical-representation.md`](06-canonical-representation.md) — untrusted graphs, validation, atomic repairs, execution plans, and artifact identity.
+11. [`decisions/0003-emergent-systems-substrate.md`](decisions/0003-emergent-systems-substrate.md) — emergent-computation positioning and authority rules.
+12. [`07-emergent-systems.md`](07-emergent-systems.md) — implemented dynamic populations, fields, and Hello Organism boundary.
+13. [`benchmarks/hello-organism-population-gate-m4-pro.md`](benchmarks/hello-organism-population-gate-m4-pro.md) — scalable population correctness load and declared-capacity timing boundary.
+14. [`benchmarks/hello-organism-neighborhood-gate-m4-pro.md`](benchmarks/hello-organism-neighborhood-gate-m4-pro.md) — developmental neighborhoods, morphology reductions, and their timing boundary.
+15. [`benchmarks/hello-organism-development-gate-m4-pro.md`](benchmarks/hello-organism-development-gate-m4-pro.md) — one-seed procedural development, causal ablations, exact replay, and populated reference timing.
+16. [`benchmarks/hello-organism-homeostasis-gate-m4-pro.md`](benchmarks/hello-organism-homeostasis-gate-m4-pro.md) — sustained equilibrium, energy accounting, nutrient perturbation, and the clean Gate 4 timing.
+17. [`benchmarks/hello-organism-regeneration-gate-m4-pro.md`](benchmarks/hello-organism-regeneration-gate-m4-pro.md) — committed-checkpoint lesion, local repair, sustained recovery, and causal ablations.
+18. [`visuals/hello-organism-gate-5.svg`](visuals/hello-organism-gate-5.svg) — visual evidence summary of development, lesion, local regeneration, and causal ablations.
+19. [`milestones/hello-organism-v0.1.md`](milestones/hello-organism-v0.1.md) — frozen Gate 1–5 proof manifest, hashes, event record, timing, and limitations.
+20. [`../examples/hello-crystal/README.md`](../examples/hello-crystal/README.md) — runnable 3D mesoscopic crystal growth, cleavage, component, fragment, metric, and surface specimen.
+21. [`benchmarks/hello-crystal-1m-m4-pro.md`](benchmarks/hello-crystal-1m-m4-pro.md) — one-million-cell M4 Pro execution smoke proof and its explicit evidence boundary.
 
 Planned specifications:
 
