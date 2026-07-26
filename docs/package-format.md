@@ -11,6 +11,11 @@ marble-water/
 │   └── marble_water.metal
 ├── shaders/
 │   └── marble_water.metal
+├── ui/
+│   ├── loom-ui.json
+│   ├── package.json
+│   ├── src/
+│   └── dist/
 └── src/
     └── runtime.rs
 ```
@@ -26,9 +31,26 @@ loom marble-water.lmp
 
 The resulting `.lmp` is a ZIP-compatible archive with a distinct extension. Its
 root contains `loom-package.json`, the primary graph, every referenced external
-source, the project extension source, and a target-specific compiled extension.
-The manifest records the format version, module, entry graph, file inventory,
-extension ABI, and target triple.
+source, the project extension source, a target-specific compiled extension, and
+an optional project UI. The manifest records the format version, module, entry
+graph, file inventory, extension ABI, target triple, and UI entry point.
+
+When `ui/loom-ui.json` exists, `loom build` runs the UI package's `npm run build`
+script and includes both its Vue source and generated assets. Running the `.lmp`
+opens those assets in the installed generic Tauri panel beside the Metal viewer.
+The UI is project-owned; the Tauri shell and authenticated local IPC bridge are
+runtime-owned.
+
+```json
+{
+  "framework": "vue3",
+  "dist": "dist",
+  "entry": "index.html",
+  "title": "Marble Water — Controls",
+  "width": 390,
+  "height": 830
+}
+```
 
 The global Loom runtime owns validation, scheduling, Metal execution, windowing,
 and host statistics. The package owns all application-specific graphs, shaders,
@@ -45,5 +67,6 @@ cd marble-water
 ```
 
 Edit the primary `.loom`, files under `kernels/` or `shaders/`, or
-`src/runtime.rs`, then run `loom build marble-water.loom` again. The extracted
-target-specific `runtime/` directory is a generated artifact and may be deleted.
+`src/runtime.rs`, or the Vue project under `ui/`, then run
+`loom build marble-water.loom` again. The extracted target-specific `runtime/`
+directory and `ui/dist/` are generated artifacts and may be deleted.

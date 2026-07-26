@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <defs>
+    <radialGradient id="water" cx="34%" cy="27%" r="72%">
+      <stop offset="0" stop-color="#f5fdff"/>
+      <stop offset=".1" stop-color="#72efff"/>
+      <stop offset=".52" stop-color="#1779c9"/>
+      <stop offset="1" stop-color="#071c36"/>
+    </radialGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="#071018"/>
+  <circle cx="256" cy="256" r="166" fill="url(#water)" stroke="#8de5ff" stroke-width="5"/>
+  <path d="M102 286c74-42 130 32 205-7 44-23 76-18 103 0v62c-50 39-106 37-169 5-50-25-95-22-139 8z" fill="#8ef4ff" fill-opacity=".27"/>
+  <ellipse cx="205" cy="176" rx="39" ry="19" fill="#fff" fill-opacity=".72" transform="rotate(-28 205 176)"/>
+</svg>

@@ -45,6 +45,7 @@ use crate::{
     PipelineIdentity, PresentationResult, ResourceMetrics, RuntimeDiagnostic,
     RuntimeDiagnosticCode, RuntimeFingerprint, ShaderIdentity, ViewportSize,
     display_link::{DisplayLinkDriver, DisplayUpdate},
+    panel::{PanelBridge, ProjectUi},
     project::{
         EVENT_CURSOR_MOVED, EVENT_KEY, EVENT_LEFT_MOUSE, EVENT_RESIZED, EVENT_SCROLL, KEY_A, KEY_D,
         KEY_DOWN, KEY_LEFT, KEY_RIGHT, KEY_S, KEY_UP, KEY_W, ProjectEventV1, ProjectExtension,
@@ -119,10 +120,20 @@ impl MetalRuntime {
         project_root: Option<PathBuf>,
         extension_path: Option<PathBuf>,
     ) -> Result<(), RuntimeDiagnostic> {
+        Self::run_project_with_ui(validated, project_root, extension_path, None)
+    }
+
+    pub fn run_project_with_ui(
+        validated: ValidatedModuleGraph,
+        project_root: Option<PathBuf>,
+        extension_path: Option<PathBuf>,
+        project_ui: Option<ProjectUi>,
+    ) -> Result<(), RuntimeDiagnostic> {
         let mut project_extension = extension_path
             .as_deref()
             .map(ProjectExtension::load)
             .transpose()?;
+        let mut project_panel = project_ui.map(PanelBridge::launch).transpose()?;
         let interactive_crystal = validated.graph().name == "hello_crystal";
         let interactive_worm = validated.graph().name == "hello_worm";
         let title = if let Some(extension) = project_extension.as_ref() {
@@ -420,6 +431,31 @@ impl MetalRuntime {
                     }
                 }
                 Event::RedrawRequested(_) => {
+                    if let Some(panel) = project_panel.as_ref() {
+                        let controls = panel.drain_controls().collect::<Vec<_>>();
+                        for control in controls {
+                            let result = project_extension
+                                .as_mut()
+                                .ok_or_else(|| {
+                                    RuntimeDiagnostic::new(
+                                        RuntimeDiagnosticCode::ProjectPanelFailed,
+                                        "project panel requires a project extension",
+                                    )
+                                })
+                                .and_then(|extension| {
+                                    extension.control(&control.name, control.value).map(|_| ())
+                                });
+                            if let Err(diagnostic) = result {
+                                eprintln!(
+                                    "{}",
+                                    serde_json::to_string_pretty(&diagnostic)
+                                        .unwrap_or_else(|_| diagnostic.to_string())
+                                );
+                                *control_flow = ControlFlow::Exit;
+                                return;
+                            }
+                        }
+                    }
                     let project_values = if let Some(extension) = project_extension.as_mut() {
                         let size = window.inner_size();
                         match extension.frame(ProjectFrameContextV1 {
@@ -447,6 +483,9 @@ impl MetalRuntime {
                     } else {
                         Vec::new()
                     };
+                    if let Some(panel) = project_panel.as_mut() {
+                        panel.publish(&project_values);
+                    }
                     if let Err(diagnostic) = state.draw_tick_with_project_values(&project_values) {
                         eprintln!(
                             "{}",

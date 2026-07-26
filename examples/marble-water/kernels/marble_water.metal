@@ -327,11 +327,7 @@ kernel void marble_compose_scene(
     constant float &spacing [[buffer(10)]],
     constant float &density [[buffer(11)]],
     constant float &plane_scale [[buffer(12)]],
-    constant float &amplification [[buffer(13)]],
-    constant float &reset_scene [[buffer(14)]],
-    constant float &hud_fps [[buffer(15)]],
-    constant float &hud_gpu_mb [[buffer(16)]],
-    constant float &marble_radius [[buffer(17)]],
+    constant float &marble_radius [[buffer(13)]],
     uint index [[thread_position_in_grid]])
 {
     const uint active_width = active_water_width(density, width);
@@ -367,22 +363,5 @@ kernel void marble_compose_scene(
         render_positions[index] = enemy_positions[index - water_capacity - 1];
         render_radii[index] = marble_radius * 0.92;
         render_colors[index] = float4(0.96, 0.08, 0.12, 1.0);
-    } else {
-        float activity = 0.0;
-        for (uint water_index = 0; water_index < active_count; ++water_index) {
-            activity = max(activity, abs(float3(water_positions[water_index]).y));
-        }
-        render_positions[index] = packed_float3(
-            clamp(density, 0.0, 1.0),
-            clamp(activity * 12.0, 0.0, 1.0),
-            clamp(reset_scene, 0.0, 1.0)
-        );
-        render_radii[index] = -1.0;
-        render_colors[index] = float4(
-            hud_fps,
-            hud_gpu_mb,
-            clamp(amplification, 0.0, 1.0),
-            1.0
-        );
     }
 }

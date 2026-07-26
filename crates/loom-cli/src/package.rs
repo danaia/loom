@@ -24,6 +24,8 @@ struct PackageManifest {
     entry: String,
     files: Vec<String>,
     extension: Option<PackageExtension>,
+    #[serde(default)]
+    ui: Option<PackageUi>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -34,10 +36,44 @@ struct PackageExtension {
     source: String,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct PackageUi {
+    framework: String,
+    root: String,
+    entry: String,
+    title: String,
+    width: f64,
+    height: f64,
+}
+
+#[derive(Debug, Deserialize)]
+struct UiSourceConfig {
+    framework: String,
+    #[serde(default = "default_ui_dist")]
+    dist: String,
+    #[serde(default = "default_ui_entry")]
+    entry: String,
+    title: Option<String>,
+    #[serde(default = "default_ui_width")]
+    width: f64,
+    #[serde(default = "default_ui_height")]
+    height: f64,
+}
+
+#[derive(Clone)]
+pub(crate) struct LoadedUi {
+    pub(crate) asset_root: PathBuf,
+    pub(crate) entry: String,
+    pub(crate) title: String,
+    pub(crate) width: f64,
+    pub(crate) height: f64,
+}
+
 pub(crate) struct LoadedProgram {
     source: String,
     project_root: PathBuf,
     extension_path: Option<PathBuf>,
+    ui: Option<LoadedUi>,
     _extracted: Option<TempDir>,
 }
 
@@ -53,6 +89,10 @@ impl LoadedProgram {
     pub(crate) fn extension_path(&self) -> Option<&Path> {
         self.extension_path.as_deref()
     }
+
+    pub(crate) fn ui(&self) -> Option<&LoadedUi> {
+        self.ui.as_ref()
+    }
 }
 
 pub(crate) fn load(path: &str) -> Result<LoadedProgram, String> {
@@ -61,15 +101,14 @@ pub(crate) fn load(path: &str) -> Result<LoadedProgram, String> {
         load_package(path)
     } else {
         let source = fs::read_to_string(path).map_err(|error| error.to_string())?;
-        let project_root = path
-            .parent()
-            .unwrap_or_else(|| Path::new("."))
+        let project_root = project_parent(path)
             .canonicalize()
             .map_err(|error| error.to_string())?;
         Ok(LoadedProgram {
             source,
             project_root,
             extension_path: None,
+            ui: None,
             _extracted: None,
         })
     }
@@ -80,9 +119,7 @@ pub(crate) fn build(path: &str, graph: &ModuleGraph) -> Result<String, String> {
     if source_path.extension().and_then(|value| value.to_str()) != Some("loom") {
         return Err("`loom build` expects a primary .loom source file".to_owned());
     }
-    let root = source_path
-        .parent()
-        .unwrap_or_else(|| Path::new("."))
+    let root = project_parent(source_path)
         .canonicalize()
         .map_err(|error| format!("could not resolve project directory: {error}"))?;
     let entry_name = source_path
@@ -150,6 +187,7 @@ pub(crate) fn build(path: &str, graph: &ModuleGraph) -> Result<String, String> {
     if root.join("README.md").is_file() {
         source_files.insert("README.md".to_owned());
     }
+    let ui = build_ui(&root, &graph.name, &mut source_files)?;
 
     let mut packaged_files = source_files.iter().cloned().collect::<Vec<_>>();
     if extension.is_some() {
@@ -163,6 +201,7 @@ pub(crate) fn build(path: &str, graph: &ModuleGraph) -> Result<String, String> {
         entry: entry_name,
         files: packaged_files,
         extension,
+        ui,
     };
 
     let output_path = root.join(format!(
@@ -239,6 +278,18 @@ fn load_package(path: &Path) -> Result<LoadedProgram, String> {
             ));
         }
     }
+    if let Some(ui) = manifest.ui.as_ref() {
+        validate_relative_path(&ui.root)?;
+        validate_relative_path(&ui.entry)?;
+        if ui.framework != "vue3" {
+            return Err(format!(
+                "package UI framework `{}` is unsupported; expected `vue3`",
+                ui.framework
+            ));
+        }
+        validate_ui_dimension(ui.width, "width")?;
+        validate_ui_dimension(ui.height, "height")?;
+    }
 
     let extracted =
         tempfile::tempdir().map_err(|error| format!("could not create package cache: {error}"))?;
@@ -272,12 +323,144 @@ fn load_package(path: &Path) -> Result<LoadedProgram, String> {
         .extension
         .as_ref()
         .map(|extension| extracted.path().join(&extension.path));
+    let ui = manifest.ui.as_ref().map(|ui| LoadedUi {
+        asset_root: extracted.path().join(&ui.root),
+        entry: ui.entry.clone(),
+        title: ui.title.clone(),
+        width: ui.width,
+        height: ui.height,
+    });
+    if let Some(ui) = ui.as_ref() {
+        let entry = ui.asset_root.join(&ui.entry);
+        if !entry.is_file() {
+            return Err(format!(
+                "packaged UI entry `{}` is missing",
+                entry.display()
+            ));
+        }
+    }
     Ok(LoadedProgram {
         source,
         project_root: extracted.path().to_owned(),
         extension_path,
+        ui,
         _extracted: Some(extracted),
     })
+}
+
+fn build_ui(
+    root: &Path,
+    module: &str,
+    source_files: &mut BTreeSet<String>,
+) -> Result<Option<PackageUi>, String> {
+    let ui_root = root.join("ui");
+    let config_path = ui_root.join("loom-ui.json");
+    if !config_path.is_file() {
+        return Ok(None);
+    }
+    let config = serde_json::from_slice::<UiSourceConfig>(
+        &fs::read(&config_path)
+            .map_err(|error| format!("could not read `{}`: {error}", config_path.display()))?,
+    )
+    .map_err(|error| format!("invalid `{}`: {error}", config_path.display()))?;
+    if config.framework != "vue3" {
+        return Err(format!(
+            "UI framework `{}` is unsupported; expected `vue3`",
+            config.framework
+        ));
+    }
+    validate_relative_path(&config.dist)?;
+    validate_relative_path(&config.entry)?;
+    validate_ui_dimension(config.width, "width")?;
+    validate_ui_dimension(config.height, "height")?;
+
+    let package_json = ui_root.join("package.json");
+    if package_json.is_file() {
+        let npm = std::env::var_os("LOOM_NPM").unwrap_or_else(|| "npm".into());
+        let output = Command::new(npm)
+            .args(["run", "build", "--prefix"])
+            .arg(&ui_root)
+            .output()
+            .map_err(|error| format!("could not build project UI with npm: {error}"))?;
+        if !output.status.success() {
+            return Err(format!(
+                "project UI failed to build:\n{}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            ));
+        }
+    }
+
+    let asset_root = ui_root.join(&config.dist);
+    let entry_path = asset_root.join(&config.entry);
+    if !entry_path.is_file() {
+        return Err(format!(
+            "project UI entry `{}` is missing after build",
+            entry_path.display()
+        ));
+    }
+    collect_ui_files(root, &ui_root, source_files)?;
+    Ok(Some(PackageUi {
+        framework: config.framework,
+        root: format!("ui/{}", config.dist),
+        entry: config.entry,
+        title: config
+            .title
+            .unwrap_or_else(|| format!("Loom — {}", module.replace('_', " "))),
+        width: config.width,
+        height: config.height,
+    }))
+}
+
+fn collect_ui_files(
+    project_root: &Path,
+    directory: &Path,
+    files: &mut BTreeSet<String>,
+) -> Result<(), String> {
+    for entry in fs::read_dir(directory)
+        .map_err(|error| format!("could not inspect `{}`: {error}", directory.display()))?
+    {
+        let entry = entry.map_err(|error| error.to_string())?;
+        let path = entry.path();
+        let name = entry.file_name();
+        if name == "node_modules" || name == ".DS_Store" {
+            continue;
+        }
+        if path.is_dir() {
+            collect_ui_files(project_root, &path, files)?;
+        } else if path.is_file() {
+            let relative = path
+                .strip_prefix(project_root)
+                .map_err(|error| error.to_string())?
+                .to_string_lossy()
+                .replace('\\', "/");
+            validate_relative_path(&relative)?;
+            files.insert(relative);
+        }
+    }
+    Ok(())
+}
+
+fn validate_ui_dimension(value: f64, field: &str) -> Result<(), String> {
+    if !value.is_finite() || !(200.0..=4096.0).contains(&value) {
+        return Err(format!("project UI {field} must be between 200 and 4096"));
+    }
+    Ok(())
+}
+
+fn default_ui_dist() -> String {
+    "dist".to_owned()
+}
+
+fn default_ui_entry() -> String {
+    "index.html".to_owned()
+}
+
+fn default_ui_width() -> f64 {
+    380.0
+}
+
+fn default_ui_height() -> f64 {
+    720.0
 }
 
 fn add_file(
@@ -311,6 +494,12 @@ fn validate_relative_path(path: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn project_parent(path: &Path) -> &Path {
+    path.parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."))
+}
+
 fn host_target() -> Result<String, String> {
     let output = Command::new("rustc")
         .arg("-vV")
@@ -324,4 +513,23 @@ fn host_target() -> Result<String, String> {
         .find_map(|line| line.strip_prefix("host: "))
         .map(str::to_owned)
         .ok_or_else(|| "`rustc -vV` did not report a host target".to_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use super::project_parent;
+
+    #[test]
+    fn bare_source_filename_uses_current_directory() {
+        assert_eq!(
+            project_parent(Path::new("marble-water.loom")),
+            Path::new(".")
+        );
+        assert_eq!(
+            project_parent(Path::new("./marble-water.loom")),
+            Path::new(".")
+        );
+    }
 }

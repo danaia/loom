@@ -136,6 +136,7 @@ fn run() -> Result<(), u8> {
             validated.clone(),
             loaded.project_root().map(ToOwned::to_owned),
             loaded.extension_path().map(ToOwned::to_owned),
+            loaded.ui().cloned(),
         );
     } else if command == Command::Check {
         print_json(&CheckSuccess {
@@ -317,16 +318,23 @@ fn run_window(
     validated: loom_validator::ValidatedModuleGraph,
     project_root: Option<std::path::PathBuf>,
     extension_path: Option<std::path::PathBuf>,
+    ui: Option<package::LoadedUi>,
 ) -> Result<(), u8> {
-    loom_metal::MetalRuntime::run_project(validated, project_root, extension_path).map_err(
-        |diagnostic| {
+    let ui = ui.map(|ui| loom_metal::ProjectUi {
+        asset_root: ui.asset_root,
+        entry: ui.entry,
+        title: ui.title,
+        width: ui.width,
+        height: ui.height,
+    });
+    loom_metal::MetalRuntime::run_project_with_ui(validated, project_root, extension_path, ui)
+        .map_err(|diagnostic| {
             print_json(&serde_json::json!({
                 "status": "runtime_error",
                 "diagnostic": diagnostic,
             }));
             1
-        },
-    )
+        })
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -334,6 +342,7 @@ fn run_window(
     _validated: loom_validator::ValidatedModuleGraph,
     _project_root: Option<std::path::PathBuf>,
     _extension_path: Option<std::path::PathBuf>,
+    _ui: Option<package::LoadedUi>,
 ) -> Result<(), u8> {
     print_json(&serde_json::json!({
         "status": "unsupported",

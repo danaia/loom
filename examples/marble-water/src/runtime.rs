@@ -18,15 +18,6 @@ const KEY_LEFT: u32 = 6;
 const KEY_DOWN: u32 = 7;
 const KEY_RIGHT: u32 = 8;
 
-const HUD_CENTER: [f32; 2] = [-0.79, 0.76];
-const HUD_HALF_SIZE: [f32; 2] = [0.18, 0.17];
-const SLIDER_START: f32 = -0.65;
-const SLIDER_END: f32 = 0.18;
-const PARTICLE_SLIDER_Y: f32 = 0.70;
-const PLANE_SLIDER_Y: f32 = 0.34;
-const WATER_SLIDER_Y: f32 = -0.02;
-const RESET_CENTER: [f32; 2] = [0.67, 0.70];
-
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
 pub struct ProjectEventV1 {
@@ -52,6 +43,13 @@ pub struct ProjectFrameContextV1 {
 
 #[repr(C)]
 #[derive(Clone, Copy)]
+pub struct ProjectControlV1 {
+    name: [u8; NAME_CAPACITY],
+    value: f32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
 pub struct ProjectF32OverrideV1 {
     name: [u8; NAME_CAPACITY],
     value: f32,
@@ -73,20 +71,6 @@ pub struct ProjectFrameOutputV1 {
     overrides: [ProjectF32OverrideV1; MAX_OVERRIDES],
 }
 
-#[derive(Clone, Copy)]
-enum Slider {
-    Particles,
-    Plane,
-    Water,
-}
-
-#[derive(Clone, Copy)]
-enum HudAction {
-    Slider(Slider, f32),
-    Reset,
-    None,
-}
-
 struct State {
     cursor: [f32; 2],
     viewport: [f32; 2],
@@ -94,7 +78,6 @@ struct State {
     backward: bool,
     left: bool,
     right: bool,
-    slider: Option<Slider>,
     dragging_marble: bool,
     grab_height: f32,
     grab_target: [f32; 3],
@@ -114,7 +97,6 @@ impl Default for State {
             backward: false,
             left: false,
             right: false,
-            slider: None,
             dragging_marble: false,
             grab_height: 0.55,
             grab_target: [0.0, 0.641, 0.15],
@@ -134,32 +116,15 @@ impl State {
         }
         if event.kind == EVENT_CURSOR_MOVED {
             self.cursor = [event.x, event.y];
-            if let Some(slider) = self.slider {
-                self.set_slider(slider, slider_value(self.cursor, self.viewport));
-            } else if self.dragging_marble {
+            if self.dragging_marble {
                 self.update_grab_target();
             }
         } else if event.kind == EVENT_LEFT_MOUSE {
             self.cursor = [event.x, event.y];
             if event.pressed != 0 {
-                match hud_action(self.cursor, self.viewport) {
-                    HudAction::Slider(slider, value) => {
-                        self.slider = Some(slider);
-                        self.set_slider(slider, value);
-                    }
-                    HudAction::Reset => {
-                        self.dragging_marble = false;
-                        self.reset_scene = true;
-                        self.reset_water = true;
-                    }
-                    HudAction::None if !hud_contains(self.cursor, self.viewport) => {
-                        self.dragging_marble = true;
-                        self.update_grab_target();
-                    }
-                    HudAction::None => {}
-                }
+                self.dragging_marble = true;
+                self.update_grab_target();
             } else {
-                self.slider = None;
                 self.dragging_marble = false;
             }
         } else if event.kind == EVENT_SCROLL && self.dragging_marble {
@@ -177,23 +142,33 @@ impl State {
         }
     }
 
-    fn set_slider(&mut self, slider: Slider, value: f32) {
-        match slider {
-            Slider::Particles => {
+    fn set_control(&mut self, name: &str, value: f32) -> bool {
+        match name {
+            "interaction.water_density" => {
+                let value = value.clamp(0.0, 1.0);
                 if (self.density - value).abs() > 0.001 {
                     self.density = value;
                     self.reset_water = true;
                 }
             }
-            Slider::Plane => {
-                let scale = 1.0 + value * 2.0;
-                if (self.plane_scale - scale).abs() > 0.001 {
-                    self.plane_scale = scale;
+            "interaction.plane_scale" => {
+                let value = value.clamp(1.0, 3.0);
+                if (self.plane_scale - value).abs() > 0.001 {
+                    self.plane_scale = value;
                     self.reset_water = true;
                 }
             }
-            Slider::Water => self.amplification = value,
+            "interaction.water_amplification" => {
+                self.amplification = value.clamp(0.0, 1.0);
+            }
+            "interaction.reset_scene" => {
+                self.dragging_marble = false;
+                self.reset_scene = true;
+                self.reset_water = true;
+            }
+            _ => return false,
         }
+        true
     }
 
     fn update_grab_target(&mut self) {
@@ -273,52 +248,6 @@ fn pointer_ndc(point: [f32; 2], viewport: [f32; 2]) -> [f32; 2] {
     ]
 }
 
-fn hud_local(point: [f32; 2], viewport: [f32; 2]) -> [f32; 2] {
-    let ndc = pointer_ndc(point, viewport);
-    [
-        (ndc[0] - HUD_CENTER[0]) / HUD_HALF_SIZE[0],
-        (ndc[1] - HUD_CENTER[1]) / HUD_HALF_SIZE[1],
-    ]
-}
-
-fn slider_value(point: [f32; 2], viewport: [f32; 2]) -> f32 {
-    let local_x = hud_local(point, viewport)[0];
-    ((local_x - SLIDER_START) / (SLIDER_END - SLIDER_START)).clamp(0.0, 1.0)
-}
-
-fn hud_action(point: [f32; 2], viewport: [f32; 2]) -> HudAction {
-    if viewport[0] <= 0.0 || viewport[1] <= 0.0 {
-        return HudAction::None;
-    }
-    let local = hud_local(point, viewport);
-    let reset_delta = [local[0] - RESET_CENTER[0], local[1] - RESET_CENTER[1]];
-    if reset_delta[0] * reset_delta[0] + reset_delta[1] * reset_delta[1] <= 0.24 * 0.24 {
-        HudAction::Reset
-    } else if (local[1] - PARTICLE_SLIDER_Y).abs() <= 0.15
-        && (SLIDER_START - 0.10..=SLIDER_END + 0.10).contains(&local[0])
-    {
-        HudAction::Slider(Slider::Particles, slider_value(point, viewport))
-    } else if (local[1] - PLANE_SLIDER_Y).abs() <= 0.15
-        && (SLIDER_START - 0.10..=SLIDER_END + 0.10).contains(&local[0])
-    {
-        HudAction::Slider(Slider::Plane, slider_value(point, viewport))
-    } else if (local[1] - WATER_SLIDER_Y).abs() <= 0.15
-        && (SLIDER_START - 0.10..=SLIDER_END + 0.10).contains(&local[0])
-    {
-        HudAction::Slider(Slider::Water, slider_value(point, viewport))
-    } else {
-        HudAction::None
-    }
-}
-
-fn hud_contains(point: [f32; 2], viewport: [f32; 2]) -> bool {
-    if viewport[0] <= 0.0 || viewport[1] <= 0.0 {
-        return false;
-    }
-    let local = hud_local(point, viewport);
-    local[0].abs() <= 1.0 && local[1].abs() <= 1.0
-}
-
 fn cursor_target(
     point: [f32; 2],
     viewport: [f32; 2],
@@ -385,7 +314,7 @@ pub extern "C" fn loom_project_title_v1() -> *const c_char {
 
 #[no_mangle]
 pub extern "C" fn loom_project_help_v1() -> *const c_char {
-    b"left-drag the yellow marble in X/Z, scroll while held to change height, and release to drop; WASD/arrow keys steer; cyan: particles; purple: plane; amber: ripple intensity; reset restarts\0"
+    b"left-drag the yellow marble in X/Z, scroll while held to change height, and release to drop; WASD/arrow keys steer; the separate Loom panel controls water and scene settings\0"
         .as_ptr() as *const c_char
 }
 
@@ -414,6 +343,26 @@ pub unsafe extern "C" fn loom_project_event_v1(
 }
 
 #[no_mangle]
+pub unsafe extern "C" fn loom_project_control_v1(
+    state: *mut c_void,
+    control: *const ProjectControlV1,
+) -> u32 {
+    if state.is_null() || control.is_null() {
+        return 0;
+    }
+    let control = &*control;
+    let length = control
+        .name
+        .iter()
+        .position(|byte| *byte == 0)
+        .unwrap_or(NAME_CAPACITY);
+    let Ok(name) = std::str::from_utf8(&control.name[..length]) else {
+        return 0;
+    };
+    u32::from((*(state as *mut State)).set_control(name, control.value))
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn loom_project_frame_v1(
     state: *mut c_void,
     context: *const ProjectFrameContextV1,
@@ -428,4 +377,31 @@ pub unsafe extern "C" fn loom_project_frame_v1(
     output.overrides = [ProjectF32OverrideV1::default(); MAX_OVERRIDES];
     (*(state as *mut State)).write_frame(*context, output);
     1
+}
+
+#[cfg(test)]
+mod tests {
+    use super::State;
+
+    #[test]
+    fn panel_controls_update_water_state() {
+        let mut state = State::default();
+        assert!(state.set_control("interaction.water_density", 0.75));
+        assert!(state.set_control("interaction.plane_scale", 2.25));
+        assert!(state.set_control("interaction.water_amplification", 0.6));
+        assert_eq!(state.density, 0.75);
+        assert_eq!(state.plane_scale, 2.25);
+        assert_eq!(state.amplification, 0.6);
+        assert!(state.reset_water);
+    }
+
+    #[test]
+    fn reset_action_resets_scene_and_water() {
+        let mut state = State::default();
+        state.dragging_marble = true;
+        assert!(state.set_control("interaction.reset_scene", 1.0));
+        assert!(!state.dragging_marble);
+        assert!(state.reset_scene);
+        assert!(state.reset_water);
+    }
 }

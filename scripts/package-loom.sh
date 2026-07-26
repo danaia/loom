@@ -38,7 +38,7 @@ cleanup() {
 trap cleanup EXIT
 
 cd "${REPO_ROOT}"
-cargo build --locked --release --package loom-cli
+cargo build --locked --release --package loom-cli --package loom-ui-panel
 "${REPO_ROOT}/target/release/loom" build \
   "${REPO_ROOT}/examples/marble-water/marble-water.loom"
 
@@ -48,6 +48,9 @@ mkdir -p \
   "${PACKAGE_ROOT}/share/loom/docs/releases"
 
 install -m 0755 "${REPO_ROOT}/target/release/loom" "${PACKAGE_ROOT}/bin/loom"
+install -m 0755 \
+  "${REPO_ROOT}/target/release/loom-ui-panel" \
+  "${PACKAGE_ROOT}/bin/loom-ui-panel"
 install -m 0755 "${REPO_ROOT}/uninstall.sh" "${PACKAGE_ROOT}/uninstall"
 install -m 0644 \
   "${REPO_ROOT}/examples/hello-particle/hello-particle.loom" \

@@ -51,6 +51,22 @@ pub(crate) struct ProjectFrameContextV1 {
 
 #[repr(C)]
 #[derive(Clone, Copy)]
+pub(crate) struct ProjectControlV1 {
+    pub name: [u8; PROJECT_OVERRIDE_NAME_CAPACITY],
+    pub value: f32,
+}
+
+impl Default for ProjectControlV1 {
+    fn default() -> Self {
+        Self {
+            name: [0; PROJECT_OVERRIDE_NAME_CAPACITY],
+            value: 0.0,
+        }
+    }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
 pub(crate) struct ProjectF32OverrideV1 {
     pub name: [u8; PROJECT_OVERRIDE_NAME_CAPACITY],
     pub value: f32,
@@ -93,6 +109,7 @@ type FrameFn = unsafe extern "C" fn(
     *const ProjectFrameContextV1,
     *mut ProjectFrameOutputV1,
 ) -> u32;
+type ControlFn = unsafe extern "C" fn(*mut c_void, *const ProjectControlV1) -> u32;
 
 pub(crate) struct ProjectExtension {
     _library: Library,
@@ -100,6 +117,7 @@ pub(crate) struct ProjectExtension {
     destroy: DestroyFn,
     event: EventFn,
     frame: FrameFn,
+    control: Option<ControlFn>,
     title: String,
     help: String,
 }
@@ -140,6 +158,12 @@ impl ProjectExtension {
             .map_err(|error| missing_symbol(path, "loom_project_event_v1", error))?;
         let frame = *unsafe { library.get::<FrameFn>(b"loom_project_frame_v1\0") }
             .map_err(|error| missing_symbol(path, "loom_project_frame_v1", error))?;
+        let control = unsafe {
+            library
+                .get::<ControlFn>(b"loom_project_control_v1\0")
+                .ok()
+                .map(|symbol| *symbol)
+        };
         let title = unsafe { copy_text(title_fn(), "title", path)? };
         let help = unsafe { copy_text(help_fn(), "help", path)? };
         let state = unsafe { create() };
@@ -158,6 +182,7 @@ impl ProjectExtension {
             destroy,
             event,
             frame,
+            control,
             title,
             help,
         })
@@ -173,6 +198,27 @@ impl ProjectExtension {
 
     pub(crate) fn event(&mut self, event: ProjectEventV1) -> bool {
         unsafe { (self.event)(self.state, &event) != 0 }
+    }
+
+    pub(crate) fn control(&mut self, name: &str, value: f32) -> Result<bool, RuntimeDiagnostic> {
+        let Some(control) = self.control else {
+            return Err(RuntimeDiagnostic::new(
+                RuntimeDiagnosticCode::ProjectExtensionFailed,
+                "the project panel requires `loom_project_control_v1` in its extension",
+            ));
+        };
+        if name.is_empty() || name.len() >= PROJECT_OVERRIDE_NAME_CAPACITY || !value.is_finite() {
+            return Err(RuntimeDiagnostic::new(
+                RuntimeDiagnosticCode::ProjectExtensionFailed,
+                format!("the project panel emitted invalid control `{name}`"),
+            ));
+        }
+        let mut input = ProjectControlV1 {
+            value,
+            ..ProjectControlV1::default()
+        };
+        input.name[..name.len()].copy_from_slice(name.as_bytes());
+        Ok(unsafe { control(self.state, &input) != 0 })
     }
 
     pub(crate) fn frame(

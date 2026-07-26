@@ -88,16 +88,16 @@ stream water.velocity: f32x3<m/s> {
 }
 
 stream render.position: f32x3<m> {
-  cap=30714 len=30714 buffers=1 access=rw storage=device
+  cap=30713 len=30713 buffers=1 access=rw storage=device
 }
 stream render.radius: f32<m> {
-  cap=30714 len=30714 buffers=1 access=rw storage=device
+  cap=30713 len=30713 buffers=1 access=rw storage=device
 }
 stream render.color: f32x4 {
-  cap=30714 len=30714 buffers=1 access=rw storage=device
+  cap=30713 len=30713 buffers=1 access=rw storage=device
 }
 stream render.scale: f32 {
-  cap=30714 len=30714 buffers=1 access=rw storage=device
+  cap=30713 len=30713 buffers=1 access=rw storage=device
 }
 
 kernel reset_state(
@@ -212,10 +212,6 @@ kernel compose_scene(
   spacing: in value<f32,m>,
   density: in value<f32>,
   plane_scale: in value<f32>,
-  amplification: in value<f32>,
-  reset_scene: in value<f32>,
-  hud_fps: in value<f32>,
-  hud_gpu_mb: in value<f32>,
   marble_radius: in value<f32,m>
 ) extern metal {
   source="kernels/marble_water.metal"
@@ -320,10 +316,6 @@ pass stage_scene = compose_scene(
   spacing=water.spacing
   density=interaction.water_density
   plane_scale=interaction.plane_scale
-  amplification=interaction.water_amplification
-  reset_scene=interaction.reset_scene
-  hud_fps=interaction.hud_fps
-  hud_gpu_mb=interaction.hud_gpu_mb
   marble_radius=marble.radius
 ) over render.position
 

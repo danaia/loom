@@ -11,6 +11,7 @@ pub enum RuntimeDiagnosticCode {
     CommandBufferFailed,
     WindowCreationFailed,
     ProjectExtensionFailed,
+    ProjectPanelFailed,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

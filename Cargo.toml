@@ -3,6 +3,7 @@ members = [
     "crates/loom-cli",
     "crates/loom-core",
     "crates/loom-metal",
+    "crates/loom-ui-panel",
     "crates/loom-syntax",
     "crates/loom-validator",
 ]

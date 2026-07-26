@@ -1,0 +1,8 @@
+{
+  "framework": "vue3",
+  "dist": "dist",
+  "entry": "index.html",
+  "title": "Marble Water — Controls",
+  "width": 390,
+  "height": 830
+}
