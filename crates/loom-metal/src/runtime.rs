@@ -98,8 +98,11 @@ pub struct ScenarioRunResult {
 impl MetalRuntime {
     pub fn run(validated: ValidatedModuleGraph) -> Result<(), RuntimeDiagnostic> {
         let interactive_crystal = validated.graph().name == "hello_crystal";
+        let interactive_worm = validated.graph().name == "hello_worm";
         let title = if interactive_crystal {
             "Loom — Crystal — left: slice/orbit · scroll: zoom · self-healing".to_owned()
+        } else if interactive_worm {
+            "Loom — Scent Weaver — click: feed · drag: orbit · scroll: zoom".to_owned()
         } else {
             format!("Loom — {}", display_name(validated.graph().name.as_str()))
         };
@@ -139,6 +142,11 @@ impl MetalRuntime {
                 "interaction: left-drag crystal to slice; left-drag space to orbit; \
                  scroll to zoom; cuts self-heal automatically"
             );
+        } else if interactive_worm {
+            println!(
+                "interaction: click the plane to drop food; left-drag to orbit; \
+                 scroll to zoom; the Scent Weaver will smell, pursue, and eat"
+            );
         }
 
         #[derive(Clone, Copy)]
@@ -147,10 +155,17 @@ impl MetalRuntime {
             Orbit((f64, f64)),
         }
 
+        #[derive(Clone, Copy)]
+        struct WormGesture {
+            previous: (f64, f64),
+            dragged: bool,
+        }
+
         let tick_interval = Duration::from_nanos(1_000_000_000 / state.rate_hz as u64);
         let mut next_tick = Instant::now();
         let mut cursor = (0.0_f64, 0.0_f64);
         let mut crystal_gesture = None::<CrystalGesture>;
+        let mut worm_gesture = None::<WormGesture>;
         event_loop.run(move |event, _, control_flow| {
             *control_flow = ControlFlow::WaitUntil(next_tick);
             autoreleasepool(|| match event {
@@ -187,6 +202,17 @@ impl MetalRuntime {
                                 }
                             }
                         }
+                        if let Some(mut gesture) = worm_gesture {
+                            let dx = cursor.0 - gesture.previous.0;
+                            let dy = cursor.1 - gesture.previous.1;
+                            if dx * dx + dy * dy >= 1.0 {
+                                state.queue_pointer_orbit(gesture.previous, cursor);
+                                gesture.previous = cursor;
+                                gesture.dragged = true;
+                                worm_gesture = Some(gesture);
+                                window.request_redraw();
+                            }
+                        }
                     }
                     WindowEvent::MouseInput {
                         state: ElementState::Pressed,
@@ -211,13 +237,31 @@ impl MetalRuntime {
                         }
                     }
                     WindowEvent::MouseInput {
+                        state: ElementState::Pressed,
+                        button: MouseButton::Left,
+                        ..
+                    } if interactive_worm => {
+                        worm_gesture = Some(WormGesture {
+                            previous: cursor,
+                            dragged: false,
+                        });
+                    }
+                    WindowEvent::MouseInput {
                         state: ElementState::Released,
                         button: MouseButton::Left,
                         ..
                     } => {
                         crystal_gesture = None;
+                        if let Some(gesture) = worm_gesture.take()
+                            && !gesture.dragged
+                        {
+                            state.queue_pointer_drop(cursor, window.inner_size());
+                            window.request_redraw();
+                        }
                     }
-                    WindowEvent::MouseWheel { delta, .. } if interactive_crystal => {
+                    WindowEvent::MouseWheel { delta, .. }
+                        if interactive_crystal || interactive_worm =>
+                    {
                         let zoom_delta = match delta {
                             MouseScrollDelta::LineDelta(_, vertical) => vertical * 0.12,
                             MouseScrollDelta::PixelDelta(position) => position.y as f32 * 0.003,
@@ -434,6 +478,7 @@ struct RuntimeState {
     pending_pointer_slices: VecDeque<PointerSlice>,
     pending_pointer_orbits: VecDeque<PointerOrbit>,
     pending_pointer_zooms: VecDeque<f32>,
+    pending_pointer_drops: VecDeque<PointerDrop>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -446,6 +491,11 @@ struct PointerSlice {
 struct PointerOrbit {
     delta_yaw: f32,
     delta_pitch: f32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct PointerDrop {
+    point: [f32; 2],
 }
 
 struct IndirectSupport {
@@ -513,6 +563,7 @@ impl RuntimeState {
             pending_pointer_slices: VecDeque::new(),
             pending_pointer_orbits: VecDeque::new(),
             pending_pointer_zooms: VecDeque::new(),
+            pending_pointer_drops: VecDeque::new(),
         })
     }
 
@@ -569,6 +620,24 @@ impl RuntimeState {
         self.pending_pointer_zooms.push_back(delta.clamp(-0.5, 0.5));
         while self.pending_pointer_zooms.len() > 64 {
             self.pending_pointer_zooms.pop_front();
+        }
+    }
+
+    fn queue_pointer_drop(&mut self, point: (f64, f64), viewport: PhysicalSize<u32>) {
+        let supports_food = self
+            .validated
+            .execution_plan()
+            .intervention_passes
+            .iter()
+            .any(|pass| self.validated.graph().pass(pass.pass).unwrap().name == "drop_food");
+        if !supports_food || viewport.width == 0 || viewport.height == 0 {
+            return;
+        }
+        self.pending_pointer_drops.push_back(PointerDrop {
+            point: pointer_ndc(point, viewport),
+        });
+        while self.pending_pointer_drops.len() > 32 {
+            self.pending_pointer_drops.pop_front();
         }
     }
 
@@ -687,8 +756,10 @@ impl RuntimeState {
         let pending_zooms = self.pending_pointer_zooms.drain(..).collect::<Vec<_>>();
         let pending_orbits = self.pending_pointer_orbits.drain(..).collect::<Vec<_>>();
         let pending_slices = self.pending_pointer_slices.drain(..).collect::<Vec<_>>();
-        let mut interaction_buffers =
-            Vec::with_capacity(pending_zooms.len() + pending_orbits.len() + pending_slices.len());
+        let pending_drops = self.pending_pointer_drops.drain(..).collect::<Vec<_>>();
+        let mut interaction_buffers = Vec::with_capacity(
+            pending_zooms.len() + pending_orbits.len() + pending_slices.len() + pending_drops.len(),
+        );
         if !pending_zooms.is_empty()
             && let Some(zoom_pass) = self
                 .validated
@@ -733,6 +804,23 @@ impl RuntimeState {
             for slice in pending_slices {
                 let overrides = self.pointer_slice_overrides(slice)?;
                 self.encode_compute_with_overrides(command_buffer, slice_pass, Some(&overrides))?;
+                interaction_buffers.push(overrides);
+            }
+        }
+        if !pending_drops.is_empty()
+            && let Some(drop_pass) = self
+                .validated
+                .execution_plan()
+                .intervention_passes
+                .iter()
+                .find(|pass| self.validated.graph().pass(pass.pass).unwrap().name == "drop_food")
+        {
+            for drop in pending_drops {
+                let overrides = self.f32_value_overrides([
+                    ("interaction.drop_x", drop.point[0]),
+                    ("interaction.drop_y", drop.point[1]),
+                ])?;
+                self.encode_compute_with_overrides(command_buffer, drop_pass, Some(&overrides))?;
                 interaction_buffers.push(overrides);
             }
         }
@@ -1564,7 +1652,12 @@ impl RuntimeState {
         let attachment = descriptor.color_attachments().object_at(0).unwrap();
         attachment.set_texture(Some(texture));
         attachment.set_load_action(MTLLoadAction::Clear);
-        attachment.set_clear_color(MTLClearColor::new(0.025, 0.03, 0.055, 1.0));
+        let clear = if self.validated.graph().name == "hello_worm" {
+            MTLClearColor::new(0.008, 0.018, 0.014, 1.0)
+        } else {
+            MTLClearColor::new(0.025, 0.03, 0.055, 1.0)
+        };
+        attachment.set_clear_color(clear);
         attachment.set_store_action(MTLStoreAction::Store);
 
         let encoder = command_buffer.new_render_command_encoder(descriptor);

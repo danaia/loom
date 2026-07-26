@@ -7,6 +7,7 @@ pub mod emergent;
 pub mod ids;
 pub mod model;
 pub mod organism;
+pub mod worm;
 
 pub use builder::*;
 pub use canonical::*;
@@ -16,3 +17,4 @@ pub use emergent::*;
 pub use ids::*;
 pub use model::*;
 pub use organism::*;
+pub use worm::*;
