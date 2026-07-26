@@ -1,6 +1,6 @@
 use std::{
     borrow::Cow,
-    collections::BTreeMap,
+    collections::{BTreeMap, VecDeque},
     process::Command,
     sync::{
         Arc, Mutex,
@@ -28,8 +28,8 @@ use metal::{
 };
 use objc::{msg_send, rc::autoreleasepool, runtime::YES, sel, sel_impl};
 use winit::{
-    dpi::LogicalSize,
-    event::{Event, WindowEvent},
+    dpi::{LogicalSize, PhysicalSize},
+    event::{ElementState, Event, MouseButton, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
     platform::macos::WindowExtMacOS,
     window::WindowBuilder,
@@ -97,13 +97,16 @@ pub struct ScenarioRunResult {
 
 impl MetalRuntime {
     pub fn run(validated: ValidatedModuleGraph) -> Result<(), RuntimeDiagnostic> {
+        let interactive_crystal = validated.graph().name == "hello_crystal";
+        let title = if interactive_crystal {
+            "Loom — Hello Crystal — drag to slice".to_owned()
+        } else {
+            format!("Loom — {}", display_name(validated.graph().name.as_str()))
+        };
         let event_loop = EventLoop::new();
         let window = WindowBuilder::new()
             .with_inner_size(LogicalSize::new(960.0, 720.0))
-            .with_title(format!(
-                "Loom — {}",
-                display_name(validated.graph().name.as_str())
-            ))
+            .with_title(title)
             .build(&event_loop)
             .map_err(|error| {
                 RuntimeDiagnostic::new(
@@ -131,9 +134,16 @@ impl MetalRuntime {
             serde_json::to_string_pretty(&state.fingerprint)
                 .expect("runtime fingerprint serialization")
         );
+        if interactive_crystal {
+            println!(
+                "interaction: hold the left mouse button and drag across the crystal to slice"
+            );
+        }
 
         let tick_interval = Duration::from_nanos(1_000_000_000 / state.rate_hz as u64);
         let mut next_tick = Instant::now();
+        let mut cursor = (0.0_f64, 0.0_f64);
+        let mut slice_last = None::<(f64, f64)>;
         event_loop.run(move |event, _, control_flow| {
             *control_flow = ControlFlow::WaitUntil(next_tick);
             autoreleasepool(|| match event {
@@ -141,6 +151,32 @@ impl MetalRuntime {
                     WindowEvent::CloseRequested => *control_flow = ControlFlow::Exit,
                     WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. } => {
                         resize_layer(&window, &state.layer);
+                    }
+                    WindowEvent::CursorMoved { position, .. } => {
+                        cursor = (position.x, position.y);
+                        if let Some(previous) = slice_last {
+                            let dx = cursor.0 - previous.0;
+                            let dy = cursor.1 - previous.1;
+                            if dx * dx + dy * dy >= 4.0 {
+                                state.queue_pointer_slice(previous, cursor, window.inner_size());
+                                slice_last = Some(cursor);
+                                window.request_redraw();
+                            }
+                        }
+                    }
+                    WindowEvent::MouseInput {
+                        state: ElementState::Pressed,
+                        button: MouseButton::Left,
+                        ..
+                    } if interactive_crystal => {
+                        slice_last = Some(cursor);
+                    }
+                    WindowEvent::MouseInput {
+                        state: ElementState::Released,
+                        button: MouseButton::Left,
+                        ..
+                    } => {
+                        slice_last = None;
                     }
                     _ => {}
                 },
@@ -336,6 +372,7 @@ impl DirectMetalEncoding {
 
 struct RuntimeState {
     validated: ValidatedModuleGraph,
+    device: Device,
     queue: CommandQueue,
     layer: MetalLayer,
     stream_buffers: Vec<Vec<Buffer>>,
@@ -347,6 +384,13 @@ struct RuntimeState {
     fingerprint: RuntimeFingerprint,
     max_in_flight_command_buffers: u32,
     direct_metal: Option<DirectMetalEncoding>,
+    pending_pointer_slices: VecDeque<PointerSlice>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct PointerSlice {
+    start: [f32; 2],
+    end: [f32; 2],
 }
 
 struct IndirectSupport {
@@ -399,6 +443,7 @@ impl RuntimeState {
 
         Ok(Self {
             validated,
+            device,
             queue,
             layer,
             stream_buffers,
@@ -410,7 +455,75 @@ impl RuntimeState {
             fingerprint,
             max_in_flight_command_buffers,
             direct_metal,
+            pending_pointer_slices: VecDeque::new(),
         })
+    }
+
+    fn queue_pointer_slice(
+        &mut self,
+        start: (f64, f64),
+        end: (f64, f64),
+        viewport: PhysicalSize<u32>,
+    ) {
+        let supports_slicing = self
+            .validated
+            .execution_plan()
+            .intervention_passes
+            .iter()
+            .any(|pass| self.validated.graph().pass(pass.pass).unwrap().name == "slice_material");
+        if !supports_slicing || viewport.width == 0 || viewport.height == 0 {
+            return;
+        }
+        let to_ndc = |point: (f64, f64)| {
+            [
+                (2.0 * point.0 / f64::from(viewport.width) - 1.0) as f32,
+                (1.0 - 2.0 * point.1 / f64::from(viewport.height)) as f32,
+            ]
+        };
+        self.pending_pointer_slices.push_back(PointerSlice {
+            start: to_ndc(start),
+            end: to_ndc(end),
+        });
+        while self.pending_pointer_slices.len() > 64 {
+            self.pending_pointer_slices.pop_front();
+        }
+    }
+
+    fn pointer_slice_overrides(
+        &self,
+        slice: PointerSlice,
+    ) -> Result<BTreeMap<ValueId, Buffer>, RuntimeDiagnostic> {
+        let mut overrides = BTreeMap::new();
+        for (name, value) in [
+            ("interaction.slice_start_x", slice.start[0]),
+            ("interaction.slice_start_y", slice.start[1]),
+            ("interaction.slice_end_x", slice.end[0]),
+            ("interaction.slice_end_y", slice.end[1]),
+        ] {
+            let resource = self
+                .validated
+                .graph()
+                .resources
+                .values
+                .iter()
+                .find(|candidate| candidate.name == name)
+                .ok_or_else(|| {
+                    RuntimeDiagnostic::new(
+                        RuntimeDiagnosticCode::UnsupportedGraph,
+                        format!("pointer slicing requires value `{name}`"),
+                    )
+                })?;
+            let bytes = value.to_le_bytes();
+            overrides.insert(
+                resource.id,
+                self.device.new_buffer_with_data(
+                    bytes.as_ptr().cast(),
+                    bytes.len() as u64,
+                    MTLResourceOptions::StorageModeShared,
+                ),
+            );
+        }
+        Ok(overrides)
     }
 
     fn draw_tick(&mut self) -> Result<(), RuntimeDiagnostic> {
@@ -419,6 +532,24 @@ impl RuntimeState {
         command_buffer.set_label("loom.tick");
         let drawable = self.layer.next_drawable();
         let mut wait_before_next_tick = false;
+        let pending_slices = self.pending_pointer_slices.drain(..).collect::<Vec<_>>();
+        let mut interaction_buffers = Vec::with_capacity(pending_slices.len());
+        if !pending_slices.is_empty()
+            && let Some(slice_pass) = self
+                .validated
+                .execution_plan()
+                .intervention_passes
+                .iter()
+                .find(|pass| {
+                    self.validated.graph().pass(pass.pass).unwrap().name == "slice_material"
+                })
+        {
+            for slice in pending_slices {
+                let overrides = self.pointer_slice_overrides(slice)?;
+                self.encode_compute_with_overrides(command_buffer, slice_pass, Some(&overrides))?;
+                interaction_buffers.push(overrides);
+            }
+        }
 
         for item in &schedule.order {
             match item {
@@ -457,6 +588,7 @@ impl RuntimeState {
                 .at("schedules.simulation"));
             }
         }
+        drop(interaction_buffers);
         Ok(())
     }
 
@@ -2378,6 +2510,7 @@ mod tests {
     };
     use loom_validator::Validator;
     use std::time::Duration;
+    use winit::dpi::PhysicalSize;
 
     #[test]
     fn rational_pacing_has_no_one_second_drift() {
@@ -2562,11 +2695,9 @@ mod tests {
     }
 
     #[test]
-    fn packaged_crystal_grows_and_records_impact_damage() {
+    fn packaged_crystal_grows_undamaged_until_a_pointer_slice() {
         let graph = hello_crystal_builder_with_config(HelloCrystalConfig {
             cell_count: 32 * 32 * 32,
-            impact_tick: 24,
-            impact_magnitude: 4.0,
         })
         .build()
         .unwrap();
@@ -2599,23 +2730,72 @@ mod tests {
             .expect("crystal specimen must execute through Metal");
 
         let byte_count = (16 * std::mem::size_of::<u32>()) as u64;
-        let readback = device.new_buffer(byte_count, metal::MTLResourceOptions::StorageModeShared);
+        let read_metrics = |state: &RuntimeState| {
+            let readback =
+                device.new_buffer(byte_count, metal::MTLResourceOptions::StorageModeShared);
+            let command_buffer = state.queue.new_command_buffer();
+            let blit = command_buffer.new_blit_command_encoder();
+            blit.copy_from_buffer(
+                &state.stream_buffers[metrics.0 as usize][0],
+                0,
+                &readback,
+                0,
+                byte_count,
+            );
+            blit.end_encoding();
+            command_buffer.commit();
+            command_buffer.wait_until_completed();
+            unsafe { std::slice::from_raw_parts(readback.contents().cast::<u32>(), 16).to_vec() }
+        };
+        let before = read_metrics(&state);
+        assert!(before[0] > 56, "solid phase must grow beyond the seed");
+        assert!(before[2] > 0, "the grown crystal must expose a surface");
+        assert_eq!(before[3], 0, "autonomous growth must never damage crystal");
+        assert_eq!(before[8], 0, "no slice intervention has occurred");
+
+        let texture_descriptor = metal::TextureDescriptor::new();
+        texture_descriptor.set_width(256);
+        texture_descriptor.set_height(256);
+        texture_descriptor.set_pixel_format(metal::MTLPixelFormat::BGRA8Unorm);
+        texture_descriptor.set_storage_mode(metal::MTLStorageMode::Private);
+        texture_descriptor.set_usage(metal::MTLTextureUsage::RenderTarget);
+        let texture = device.new_texture(&texture_descriptor);
+        let render_readback =
+            device.new_buffer(256 * 256 * 4, metal::MTLResourceOptions::StorageModeShared);
         let command_buffer = state.queue.new_command_buffer();
+        let view = &state.validated.execution_plan().schedules[0].views[0];
+        state.encode_render(command_buffer, view, &texture).unwrap();
         let blit = command_buffer.new_blit_command_encoder();
-        blit.copy_from_buffer(
-            &state.stream_buffers[metrics.0 as usize][0],
+        blit.copy_from_texture_to_buffer(
+            &texture,
             0,
-            &readback,
             0,
-            byte_count,
+            metal::MTLOrigin::default(),
+            metal::MTLSize::new(256, 256, 1),
+            &render_readback,
+            0,
+            256 * 4,
+            256 * 256 * 4,
+            metal::MTLBlitOption::None,
         );
         blit.end_encoding();
         command_buffer.commit();
         command_buffer.wait_until_completed();
-        let snapshot = unsafe { std::slice::from_raw_parts(readback.contents().cast::<u32>(), 16) };
-        assert!(snapshot[0] > 56, "solid phase must grow beyond the seed");
-        assert!(snapshot[2] > 0, "the grown crystal must expose a surface");
-        assert!(snapshot[3] > 0, "the impact must nucleate cleavage damage");
+        let pixels = unsafe {
+            std::slice::from_raw_parts(render_readback.contents().cast::<u8>(), 256 * 256 * 4)
+        };
+        assert!(
+            pixels.chunks_exact(4).any(|pixel| pixel[0] > 64),
+            "the crystal renderer must emit visible blue surface pixels"
+        );
+
+        state.queue_pointer_slice((250.0, 360.0), (710.0, 360.0), PhysicalSize::new(960, 720));
+        for _ in 0..20 {
+            state.draw_tick().unwrap();
+        }
+        let after = read_metrics(&state);
+        assert!(after[3] > 0, "the pointer slice must remove material");
+        assert_eq!(after[8], 1, "one drag segment must record one slice");
     }
 
     #[test]

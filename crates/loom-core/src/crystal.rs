@@ -7,20 +7,14 @@ const RENDER_SOURCE: &str = include_str!("../../../shaders/crystal.metal");
 const METRIC_COUNT: u32 = 16;
 const RELAXATION_ROUNDS: u32 = 8;
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct HelloCrystalConfig {
     pub cell_count: u32,
-    pub impact_tick: u32,
-    pub impact_magnitude: f32,
 }
 
 impl HelloCrystalConfig {
     pub const fn reference(cell_count: u32) -> Self {
-        Self {
-            cell_count,
-            impact_tick: 240,
-            impact_magnitude: 2.8,
-        }
+        Self { cell_count }
     }
 }
 
@@ -101,14 +95,11 @@ pub fn hello_crystal_builder(cell_count: u32) -> ModuleBuilder {
 ///
 /// A cell represents a mesoscopic material volume, not an atom. Solute and heat
 /// diffuse through the environment; a cubic orientation law advances the phase
-/// boundary; impact stress evolves cleavage damage; connected solid is labeled
-/// and detached material receives independent motion.
+/// boundary. Damage is absent from autonomous ticks: a mouse drag enters as an
+/// explicit slice intervention, after which connected solid is relabeled and
+/// detached material receives independent motion.
 pub fn hello_crystal_builder_with_config(config: HelloCrystalConfig) -> ModuleBuilder {
     let width = cube_axis(config.cell_count);
-    assert!(
-        config.impact_magnitude.is_finite() && config.impact_magnitude >= 0.0,
-        "impact magnitude must be finite and non-negative"
-    );
     let count = config.cell_count;
     let seed_index = ((width / 2) * width + width / 2) * width + width / 2;
     let f32t = DataType::f32();
@@ -147,7 +138,7 @@ pub fn hello_crystal_builder_with_config(config: HelloCrystalConfig) -> ModuleBu
             "growth.anisotropy_strength",
             f32t.clone(),
             Unit::DIMENSIONLESS,
-            Literal::f32(0.46),
+            Literal::f32(0.68),
         ))
         .value(ValueDraft::constant(
             "field.solute_diffusion",
@@ -162,16 +153,34 @@ pub fn hello_crystal_builder_with_config(config: HelloCrystalConfig) -> ModuleBu
             Literal::f32(0.065),
         ))
         .value(ValueDraft::constant(
-            "impact.tick",
-            u32t.clone(),
-            Unit::DIMENSIONLESS,
-            Literal::U32(config.impact_tick),
-        ))
-        .value(ValueDraft::constant(
-            "impact.magnitude",
+            "interaction.slice_start_x",
             f32t.clone(),
             Unit::DIMENSIONLESS,
-            Literal::f32(config.impact_magnitude),
+            Literal::f32(0.0),
+        ))
+        .value(ValueDraft::constant(
+            "interaction.slice_start_y",
+            f32t.clone(),
+            Unit::DIMENSIONLESS,
+            Literal::f32(0.0),
+        ))
+        .value(ValueDraft::constant(
+            "interaction.slice_end_x",
+            f32t.clone(),
+            Unit::DIMENSIONLESS,
+            Literal::f32(0.0),
+        ))
+        .value(ValueDraft::constant(
+            "interaction.slice_end_y",
+            f32t.clone(),
+            Unit::DIMENSIONLESS,
+            Literal::f32(0.0),
+        ))
+        .value(ValueDraft::constant(
+            "interaction.slice_radius",
+            f32t.clone(),
+            Unit::DIMENSIONLESS,
+            Literal::f32(0.024),
         ))
         .stream(
             StreamDraft::new("simulation.tick", u32t.clone(), Unit::DIMENSIONLESS)
@@ -189,7 +198,6 @@ pub fn hello_crystal_builder_with_config(config: HelloCrystalConfig) -> ModuleBu
         "field.temperature",
         "field.temperature_next",
         "material.damage",
-        "material.stress",
         "render.radius",
     ] {
         builder = builder.stream(state_stream(name, f32t.clone(), Literal::f32(0.0), count));
@@ -214,6 +222,7 @@ pub fn hello_crystal_builder_with_config(config: HelloCrystalConfig) -> ModuleBu
             count,
         ))
         .stream(state_stream("render.position", v3t.clone(), zero3(), count))
+        .stream(state_stream("render.normal", v3t.clone(), zero3(), count))
         .stream(state_stream(
             "render.color",
             v4t.clone(),
@@ -230,7 +239,14 @@ pub fn hello_crystal_builder_with_config(config: HelloCrystalConfig) -> ModuleBu
             u32t.clone(),
             Literal::U32(0),
             METRIC_COUNT,
-        ));
+        ))
+        .stream(
+            StreamDraft::new("interaction.slice_count", u32t.clone(), Unit::DIMENSIONLESS)
+                .capacity(1)
+                .length(1)
+                .write_authority("mutate_crystal_state")
+                .initial(Literal::Array(vec![Literal::U32(0)])),
+        );
 
     builder = builder
         .kernel(kernel(
@@ -243,7 +259,6 @@ pub fn hello_crystal_builder_with_config(config: HelloCrystalConfig) -> ModuleBu
                 sw("temperature", f32t.clone()),
                 sw("temperature_next", f32t.clone()),
                 sw("damage", f32t.clone()),
-                sw("stress", f32t.clone()),
                 sw("component", u32t.clone()),
                 sw("position", v3t.clone()),
                 sw("velocity", v3t.clone()),
@@ -281,16 +296,18 @@ pub fn hello_crystal_builder_with_config(config: HelloCrystalConfig) -> ModuleBu
             ],
         ))
         .kernel(kernel(
-            "crystal_apply_impact",
+            "crystal_slice_material",
             vec![
                 sr("phase", f32t.clone()),
+                sr("position", v3t.clone()),
                 srw("damage", f32t.clone()),
-                srw("stress", f32t.clone()),
                 srw("velocity", v3t.clone()),
-                sr_all("tick", u32t.clone()),
-                value("width", u32t.clone()),
-                value("impact_tick", u32t.clone()),
-                value("impact_magnitude", f32t.clone()),
+                srw_all("slice_count", u32t.clone()),
+                value("start_x", f32t.clone()),
+                value("start_y", f32t.clone()),
+                value("end_x", f32t.clone()),
+                value("end_y", f32t.clone()),
+                value("radius", f32t.clone()),
             ],
         ))
         .kernel(kernel(
@@ -321,9 +338,8 @@ pub fn hello_crystal_builder_with_config(config: HelloCrystalConfig) -> ModuleBu
                     sr_all("component", u32t.clone()),
                     srw("position", v3t.clone()),
                     srw("velocity", v3t.clone()),
-                    sr_all("tick", u32t.clone()),
+                    sr_all("slice_count", u32t.clone()),
                     value("seed_index", u32t.clone()),
-                    value("impact_tick", u32t.clone()),
                     fixed_dt,
                 ],
             )
@@ -333,10 +349,10 @@ pub fn hello_crystal_builder_with_config(config: HelloCrystalConfig) -> ModuleBu
             vec![
                 sr_all("phase", f32t.clone()),
                 sr_all("damage", f32t.clone()),
-                sr("stress", f32t.clone()),
                 sr_all("component", u32t.clone()),
                 sr("position", v3t.clone()),
                 sw("render_position", v3t.clone()),
+                sw("render_normal", v3t.clone()),
                 sw("color", v4t.clone()),
                 sw("radius", f32t.clone()),
                 value("width", u32t.clone()),
@@ -354,9 +370,9 @@ pub fn hello_crystal_builder_with_config(config: HelloCrystalConfig) -> ModuleBu
                 sr("solute", f32t.clone()),
                 sr("temperature", f32t.clone()),
                 sr("damage", f32t.clone()),
-                sr("stress", f32t.clone()),
                 sr_all("component", u32t.clone()),
                 sr("radius", f32t.clone()),
+                sr_all("slice_count", u32t.clone()),
                 srw_all("metrics", u32t.clone()),
                 value("seed_index", u32t.clone()),
             ],
@@ -376,7 +392,6 @@ pub fn hello_crystal_builder_with_config(config: HelloCrystalConfig) -> ModuleBu
                 .bind("temperature", "field.temperature")
                 .bind("temperature_next", "field.temperature_next")
                 .bind("damage", "material.damage")
-                .bind("stress", "material.stress")
                 .bind("component", "material.component")
                 .bind("position", "material.position")
                 .bind("velocity", "material.velocity")
@@ -415,15 +430,17 @@ pub fn hello_crystal_builder_with_config(config: HelloCrystalConfig) -> ModuleBu
                 .grant("mutate_crystal_state"),
         )
         .pass(
-            PassDraft::new("apply_reference_impact", "crystal_apply_impact")
+            PassDraft::new("slice_material", "crystal_slice_material")
                 .bind("phase", "field.phase")
+                .bind("position", "material.position")
                 .bind("damage", "material.damage")
-                .bind("stress", "material.stress")
                 .bind("velocity", "material.velocity")
-                .bind("tick", "simulation.tick")
-                .bind("width", "field.width")
-                .bind("impact_tick", "impact.tick")
-                .bind("impact_magnitude", "impact.magnitude")
+                .bind("slice_count", "interaction.slice_count")
+                .bind("start_x", "interaction.slice_start_x")
+                .bind("start_y", "interaction.slice_start_y")
+                .bind("end_x", "interaction.slice_end_x")
+                .bind("end_y", "interaction.slice_end_y")
+                .bind("radius", "interaction.slice_radius")
                 .dispatch_over("field.phase")
                 .grant("mutate_crystal_state"),
         )
@@ -462,9 +479,8 @@ pub fn hello_crystal_builder_with_config(config: HelloCrystalConfig) -> ModuleBu
                 .bind("component", "material.component")
                 .bind("position", "material.position")
                 .bind("velocity", "material.velocity")
-                .bind("tick", "simulation.tick")
+                .bind("slice_count", "interaction.slice_count")
                 .bind("seed_index", "crystal.seed_index")
-                .bind("impact_tick", "impact.tick")
                 .bind("fixed_dt", "simulation.fixed_dt")
                 .dispatch_over("field.phase")
                 .grant("mutate_crystal_state"),
@@ -473,10 +489,10 @@ pub fn hello_crystal_builder_with_config(config: HelloCrystalConfig) -> ModuleBu
             PassDraft::new("extract_crystal_surface", "crystal_prepare_render")
                 .bind("phase", "field.phase")
                 .bind("damage", "material.damage")
-                .bind("stress", "material.stress")
                 .bind("component", "material.component")
                 .bind("position", "material.position")
                 .bind("render_position", "render.position")
+                .bind("render_normal", "render.normal")
                 .bind("color", "render.color")
                 .bind("radius", "render.radius")
                 .bind("width", "field.width")
@@ -496,9 +512,9 @@ pub fn hello_crystal_builder_with_config(config: HelloCrystalConfig) -> ModuleBu
                 .bind("solute", "field.solute")
                 .bind("temperature", "field.temperature")
                 .bind("damage", "material.damage")
-                .bind("stress", "material.stress")
                 .bind("component", "material.component")
                 .bind("radius", "render.radius")
+                .bind("slice_count", "interaction.slice_count")
                 .bind("metrics", "metrics.snapshot")
                 .bind("seed_index", "crystal.seed_index")
                 .dispatch_over("field.phase")
@@ -514,8 +530,7 @@ pub fn hello_crystal_builder_with_config(config: HelloCrystalConfig) -> ModuleBu
         .run("initialize_crystal")
         .run_after("evolve_growth_fields", "initialize_crystal")
         .run_after("commit_growth_fields", "evolve_growth_fields")
-        .run_after("apply_reference_impact", "commit_growth_fields")
-        .run_after("initialize_solid_components", "apply_reference_impact");
+        .run_after("initialize_solid_components", "commit_growth_fields");
     let mut predecessor = "initialize_solid_components".to_owned();
     for round in 0..RELAXATION_ROUNDS {
         let pass = format!("relax_solid_components_{round}");
@@ -545,7 +560,8 @@ pub fn hello_crystal_builder_with_config(config: HelloCrystalConfig) -> ModuleBu
             )
             .read("color", "render.color")
             .read("position", "render.position")
-            .read("radius", "render.radius"),
+            .read("radius", "render.radius")
+            .read("z_normal", "render.normal"),
         )
         .schedule(schedule)
         .contract(ContractDraft::new("crystal_finite", "simulation").clause(
@@ -561,12 +577,7 @@ pub fn hello_crystal_builder_with_config(config: HelloCrystalConfig) -> ModuleBu
             },
         ))
         .scenario(
-            ScenarioDraft::new(
-                "growth_impact_cleavage",
-                "simulation",
-                u64::from(config.impact_tick.saturating_add(360)),
-            )
-            .expect(
+            ScenarioDraft::new("growth_without_damage", "simulation", 600).expect(
                 ObservationDraft::AfterTickExecution("simulation".to_owned()),
                 PredicateDraft::FiniteStreams(vec![
                     "field.phase".to_owned(),
@@ -574,6 +585,28 @@ pub fn hello_crystal_builder_with_config(config: HelloCrystalConfig) -> ModuleBu
                     "material.position".to_owned(),
                 ]),
             ),
+        )
+        .scenario(
+            ScenarioDraft::new("slice_interaction_probe", "simulation", 180)
+                .intervene(
+                    100,
+                    "slice_material",
+                    [
+                        ("interaction.slice_start_x", Literal::f32(-0.65)),
+                        ("interaction.slice_start_y", Literal::f32(0.0)),
+                        ("interaction.slice_end_x", Literal::f32(0.65)),
+                        ("interaction.slice_end_y", Literal::f32(0.0)),
+                        ("interaction.slice_radius", Literal::f32(0.024)),
+                    ],
+                )
+                .expect(
+                    ObservationDraft::AfterTickExecution("simulation".to_owned()),
+                    PredicateDraft::FiniteStreams(vec![
+                        "field.phase".to_owned(),
+                        "material.damage".to_owned(),
+                        "material.position".to_owned(),
+                    ]),
+                ),
         )
         .capability(CapabilityDraft::state_mutate(
             "mutate_crystal_state",
@@ -586,11 +619,12 @@ pub fn hello_crystal_builder_with_config(config: HelloCrystalConfig) -> ModuleBu
                 "field.temperature",
                 "field.temperature_next",
                 "material.damage",
-                "material.stress",
                 "material.component",
                 "material.position",
                 "material.velocity",
+                "interaction.slice_count",
                 "render.position",
+                "render.normal",
                 "render.color",
                 "render.radius",
                 "metrics.snapshot",

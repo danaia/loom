@@ -10,7 +10,7 @@ constant uint METRIC_DETACHED = 4u;
 constant uint METRIC_COMPONENT_ROOTS = 5u;
 constant uint METRIC_SOLUTE_Q10 = 6u;
 constant uint METRIC_TEMPERATURE_Q10 = 7u;
-constant uint METRIC_STRESS_Q10 = 8u;
+constant uint METRIC_SLICE_COUNT = 8u;
 constant uint METRIC_PHASE_Q10 = 9u;
 
 inline uint index_3d(uint3 p, uint width) {
@@ -36,12 +36,11 @@ kernel void crystal_initialize(
     device float* temperature [[buffer(4)]],
     device float* temperature_next [[buffer(5)]],
     device float* damage [[buffer(6)]],
-    device float* stress [[buffer(7)]],
-    device uint* component [[buffer(8)]],
-    device packed_float3* position [[buffer(9)]],
-    device packed_float3* velocity [[buffer(10)]],
-    const device uint* tick [[buffer(11)]],
-    constant uint& width [[buffer(12)]],
+    device uint* component [[buffer(7)]],
+    device packed_float3* position [[buffer(8)]],
+    device packed_float3* velocity [[buffer(9)]],
+    const device uint* tick [[buffer(10)]],
+    constant uint& width [[buffer(11)]],
     uint gid [[thread_position_in_grid]])
 {
     if (tick[0] != 0u) {
@@ -51,17 +50,30 @@ kernel void crystal_initialize(
     uint3 cell = coordinate_3d(gid, width);
     float3 center = (float3(cell) + 0.5f) - float(width) * 0.5f;
     float seeded = length(center) <= 2.35f ? 1.0f : 0.0f;
+    float3 q = center / float(width);
+    constexpr float reservoir_angle = 0.39f;
+    float reservoir_cs = cos(reservoir_angle);
+    float reservoir_sn = sin(reservoir_angle);
+    float3 crystal_q = float3(
+        reservoir_cs * q.x + reservoir_sn * q.z,
+        q.y,
+        -reservoir_sn * q.x + reservoir_cs * q.z);
+    float3 absolute_q = abs(crystal_q);
+    float axial_extent = max(absolute_q.x, max(absolute_q.y, absolute_q.z)) / 0.205f;
+    float diagonal_extent =
+        (absolute_q.x + absolute_q.y + absolute_q.z) / 0.345f;
+    float wulff_extent = max(axial_extent, diagonal_extent);
+    float reservoir = 1.0f - smoothstep(0.90f, 1.04f, wulff_extent);
     float cell_scale = 1.55f / float(width);
     float3 world = center * cell_scale;
 
     phase[gid] = seeded;
     phase_next[gid] = seeded;
-    solute[gid] = seeded > 0.5f ? 0.42f : 1.0f;
+    solute[gid] = seeded > 0.5f ? 0.42f : mix(0.27f, 1.0f, reservoir);
     solute_next[gid] = solute[gid];
     temperature[gid] = seeded > 0.5f ? 0.18f : 0.02f;
     temperature_next[gid] = temperature[gid];
     damage[gid] = 0.0f;
-    stress[gid] = 0.0f;
     component[gid] = seeded > 0.5f ? gid : EMPTY_COMPONENT;
     position[gid] = packed_float3(world);
     velocity[gid] = packed_float3(0.0f);
@@ -165,50 +177,51 @@ kernel void crystal_commit_fields(
     temperature[gid] = temperature_next[gid];
 }
 
-kernel void crystal_apply_impact(
+inline float2 project_crystal(float3 world) {
+    float2 center = float2(
+        0.84f * world.x + 0.42f * world.z,
+        world.y - 0.24f * world.x + 0.34f * world.z);
+    float perspective = 1.0f / (1.12f + 0.24f * world.z);
+    return center * perspective;
+}
+
+inline float distance_to_segment(float2 point, float2 start, float2 end) {
+    float2 span = end - start;
+    float denominator = max(dot(span, span), 1.0e-7f);
+    float along = clamp(dot(point - start, span) / denominator, 0.0f, 1.0f);
+    return length(point - (start + span * along));
+}
+
+kernel void crystal_slice_material(
     const device float* phase [[buffer(0)]],
-    device float* damage [[buffer(1)]],
-    device float* stress [[buffer(2)]],
+    const device packed_float3* position [[buffer(1)]],
+    device float* damage [[buffer(2)]],
     device packed_float3* velocity [[buffer(3)]],
-    const device uint* tick [[buffer(4)]],
-    constant uint& width [[buffer(5)]],
-    constant uint& impact_tick [[buffer(6)]],
-    constant float& impact_magnitude [[buffer(7)]],
+    device atomic_uint* slice_count [[buffer(4)]],
+    constant float& start_x [[buffer(5)]],
+    constant float& start_y [[buffer(6)]],
+    constant float& end_x [[buffer(7)]],
+    constant float& end_y [[buffer(8)]],
+    constant float& radius [[buffer(9)]],
     uint gid [[thread_position_in_grid]])
 {
-    if (phase[gid] < 0.55f) {
-        stress[gid] = 0.0f;
+    if (gid == 0u) {
+        atomic_fetch_add_explicit(&slice_count[0], 1u, memory_order_relaxed);
+    }
+    if (phase[gid] < 0.55f || damage[gid] >= 0.98f) {
         return;
     }
 
-    uint now = tick[0];
-    uint3 cell = coordinate_3d(gid, width);
-    float3 local = (float3(cell) + 0.5f) / float(width) - 0.5f;
-    float3 source = float3(-0.31f, 0.08f, 0.04f);
-    float distance_from_impact = length(local - source);
-    float elapsed = now >= impact_tick ? float(now - impact_tick) : -1.0f;
-    float wave_radius = elapsed * 0.018f;
-    float wave = elapsed >= 0.0f
-        ? exp(-900.0f * pow(distance_from_impact - wave_radius, 2.0f)) *
-          exp(-0.035f * elapsed)
-        : 0.0f;
-    float next_stress = max(stress[gid] * 0.91f, wave * impact_magnitude);
-
-    // Cleavage resistance is lower on one crystal-local {110}-like plane.
-    float cleavage_distance = abs(local.x + 0.72f * local.z - 0.015f);
-    float within_body = smoothstep(0.34f, 0.08f, length(local.yz));
-    float toughness = 0.74f + 5.4f * cleavage_distance;
-    float next_damage = damage[gid];
-    if (next_stress * within_body > toughness && now >= impact_tick) {
-        next_damage = clamp(next_damage + 0.34f * (next_stress - toughness), 0.0f, 1.0f);
+    float2 start = float2(start_x, start_y);
+    float2 end = float2(end_x, end_y);
+    float2 screen = project_crystal(float3(position[gid]));
+    if (distance_to_segment(screen, start, end) <= radius) {
+        float2 tangent = normalize((end - start) + float2(1.0e-5f, 0.0f));
+        float2 normal = float2(-tangent.y, tangent.x);
+        float side = dot(screen - start, normal) >= 0.0f ? 1.0f : -1.0f;
+        damage[gid] = 1.0f;
+        velocity[gid] = packed_float3(float3(normal.x * side, 0.08f, normal.y * side) * 0.11f);
     }
-
-    if (next_damage >= 0.98f && damage[gid] < 0.98f) {
-        float side = local.x + 0.72f * local.z >= 0.015f ? 1.0f : -0.18f;
-        velocity[gid] = packed_float3(float3(0.34f * side, 0.20f + 0.08f * side, 0.12f * side));
-    }
-    damage[gid] = next_damage;
-    stress[gid] = next_stress;
 }
 
 kernel void crystal_initialize_components(
@@ -257,13 +270,12 @@ kernel void crystal_integrate_fragments(
     const device uint* component [[buffer(2)]],
     device packed_float3* position [[buffer(3)]],
     device packed_float3* velocity [[buffer(4)]],
-    const device uint* tick [[buffer(5)]],
+    const device uint* slice_count [[buffer(5)]],
     constant uint& seed_index [[buffer(6)]],
-    constant uint& impact_tick [[buffer(7)]],
-    constant float& fixed_dt [[buffer(8)]],
+    constant float& fixed_dt [[buffer(7)]],
     uint gid [[thread_position_in_grid]])
 {
-    if (tick[0] <= impact_tick || phase[gid] < 0.55f || damage[gid] >= 0.98f) {
+    if (slice_count[0] == 0u || phase[gid] < 0.55f || damage[gid] >= 0.98f) {
         return;
     }
     uint main_component = component[seed_index];
@@ -288,10 +300,10 @@ kernel void crystal_integrate_fragments(
 kernel void crystal_prepare_render(
     const device float* phase [[buffer(0)]],
     const device float* damage [[buffer(1)]],
-    const device float* stress [[buffer(2)]],
-    const device uint* component [[buffer(3)]],
-    const device packed_float3* position [[buffer(4)]],
-    device packed_float3* render_position [[buffer(5)]],
+    const device uint* component [[buffer(2)]],
+    const device packed_float3* position [[buffer(3)]],
+    device packed_float3* render_position [[buffer(4)]],
+    device packed_float3* render_normal [[buffer(5)]],
     device float4* color [[buffer(6)]],
     device float* radius [[buffer(7)]],
     constant uint& width [[buffer(8)]],
@@ -301,39 +313,46 @@ kernel void crystal_prepare_render(
     float p = phase[gid];
     if (p < 0.55f || damage[gid] >= 0.98f) {
         render_position[gid] = packed_float3(0.0f);
+        render_normal[gid] = packed_float3(0.0f);
         color[gid] = float4(0.0f);
         radius[gid] = 0.0f;
         return;
     }
 
     uint3 cell = coordinate_3d(gid, width);
-    bool surface = false;
+    float3 outward = float3(0.0f);
+    bool cut_edge = false;
     for (int axis = 0; axis < 3; ++axis) {
         for (int direction = -1; direction <= 1; direction += 2) {
             uint neighbor = neighbor_index(cell, axis, direction, width);
-            surface = surface || phase[neighbor] < 0.55f || damage[neighbor] >= 0.98f;
+            bool exposed = phase[neighbor] < 0.55f || damage[neighbor] >= 0.98f;
+            if (exposed) {
+                outward[axis] += float(direction);
+                cut_edge = cut_edge || damage[neighbor] >= 0.98f;
+            }
         }
     }
-    if (!surface) {
+    float3 surface_normal = normalize(outward);
+    if (length_squared(outward) < 0.5f) {
         render_position[gid] = packed_float3(0.0f);
+        render_normal[gid] = packed_float3(0.0f);
         color[gid] = float4(0.0f);
         radius[gid] = 0.0f;
         return;
     }
 
     float3 world = float3(position[gid]);
-    float stress_glow = clamp(stress[gid] * 0.22f, 0.0f, 1.0f);
-    float fracture_edge = smoothstep(0.05f, 0.8f, damage[gid]);
     bool detached = component[gid] != component[seed_index];
     float3 base = detached
-        ? float3(0.30f, 0.78f, 0.96f)
-        : float3(0.47f, 0.91f, 1.0f);
-    base = mix(base, float3(1.0f, 0.34f, 0.12f), max(stress_glow, fracture_edge));
-    float depth_light = 0.72f + 0.28f * clamp(world.z + 0.5f, 0.0f, 1.0f);
+        ? float3(0.20f, 0.67f, 0.94f)
+        : float3(0.35f, 0.82f, 1.0f);
+    base = cut_edge ? mix(base, float3(0.82f, 0.96f, 1.0f), 0.72f) : base;
+    float depth_light = 0.58f + 0.42f * clamp(world.z + 0.55f, 0.0f, 1.0f);
 
     render_position[gid] = position[gid];
-    color[gid] = float4(base * depth_light, 0.82f);
-    radius[gid] = 1.35f / float(width);
+    render_normal[gid] = packed_float3(surface_normal);
+    color[gid] = float4(base * depth_light, cut_edge ? 1.0f : 0.88f);
+    radius[gid] = 1.46f / float(width);
 }
 
 kernel void crystal_clear_metrics(
@@ -348,9 +367,9 @@ kernel void crystal_reduce_metrics(
     const device float* solute [[buffer(1)]],
     const device float* temperature [[buffer(2)]],
     const device float* damage [[buffer(3)]],
-    const device float* stress [[buffer(4)]],
-    const device uint* component [[buffer(5)]],
-    const device float* radius [[buffer(6)]],
+    const device uint* component [[buffer(4)]],
+    const device float* radius [[buffer(5)]],
+    const device uint* slice_count [[buffer(6)]],
     device atomic_uint* metrics [[buffer(7)]],
     constant uint& seed_index [[buffer(8)]],
     uint gid [[thread_position_in_grid]])
@@ -382,9 +401,9 @@ kernel void crystal_reduce_metrics(
         &metrics[METRIC_TEMPERATURE_Q10],
         uint(clamp(temperature[gid], 0.0f, 4.0f) * 1024.0f),
         memory_order_relaxed);
-    atomic_fetch_add_explicit(
-        &metrics[METRIC_STRESS_Q10], uint(clamp(stress[gid], 0.0f, 4.0f) * 1024.0f),
-        memory_order_relaxed);
+    if (gid == 0u) {
+        atomic_store_explicit(&metrics[METRIC_SLICE_COUNT], slice_count[0], memory_order_relaxed);
+    }
     atomic_fetch_add_explicit(
         &metrics[METRIC_PHASE_Q10], uint(clamp(p, 0.0f, 1.0f) * 1024.0f),
         memory_order_relaxed);

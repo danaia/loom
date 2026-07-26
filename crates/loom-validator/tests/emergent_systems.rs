@@ -229,7 +229,7 @@ fn organism_specimen_separates_decision_state_field_and_membership_authority() {
 }
 
 #[test]
-fn crystal_specimen_declares_growth_fracture_components_metrics_and_surface_order() {
+fn crystal_specimen_keeps_damage_interactive_and_orders_components_metrics_and_surface() {
     let graph = loom_core::hello_crystal_builder(32 * 32 * 32)
         .build()
         .unwrap();
@@ -247,6 +247,8 @@ fn crystal_specimen_declares_growth_fracture_components_metrics_and_surface_orde
         "material.damage",
         "material.component",
         "material.position",
+        "interaction.slice_count",
+        "render.normal",
         "metrics.snapshot",
     ] {
         assert!(
@@ -275,8 +277,15 @@ fn crystal_specimen_declares_growth_fracture_components_metrics_and_surface_orde
             .position(|candidate| *candidate == name)
             .unwrap()
     };
-    assert!(at("evolve_growth_fields") < at("apply_reference_impact"));
-    assert!(at("apply_reference_impact") < at("relax_solid_components_0"));
+    assert!(at("evolve_growth_fields") < at("initialize_solid_components"));
+    assert!(!names.contains(&"slice_material"));
+    assert!(
+        validated
+            .execution_plan()
+            .intervention_passes
+            .iter()
+            .any(|pass| graph.pass(pass.pass).unwrap().name == "slice_material")
+    );
     assert!(at("relax_solid_components_7") < at("integrate_fragments"));
     assert!(at("extract_crystal_surface") < at("reduce_crystal_metrics"));
 }

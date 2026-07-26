@@ -14,18 +14,20 @@ Observed on Apple M4 Pro:
 
 ```text
 declared elements:             1,000,000
-GPU stream buffers:           92,000,068 bytes
-peak resident set:            147,980,288 bytes
-GPU time min / mean / p95:    2.03 / 3.24 / 5.42 ms
-end-to-end min / mean / p95:  5.01 / 6.34 / 8.38 ms
+GPU stream buffers:           100,000,072 bytes
+peak resident set:            153,747,456 bytes
+GPU time min / mean / p95:    1.84 / 2.87 / 4.54 ms
+end-to-end min / mean / p95:  4.46 / 5.44 / 7.14 ms
 steady-state app copies:      0 per tick
 steady-state app blits:       0 per tick
 ```
 
 The populated `32³` correctness probe separately ran 100 ticks, read the GPU metric
-buffer back, and proved that the solid phase grew beyond the seed, exposed a
-surface, and accumulated impact-driven cleavage damage.
+buffer and rendered texture back, and proved that the solid phase grew beyond the
+seed, exposed visible shaded surface pixels, and accumulated no autonomous damage.
+It then injected one pointer slice and proved that material was removed and exactly
+one slice event was recorded.
 
 The short sample is intentionally described as a smoke proof. A publishable gate
-still needs a clean-tree, long-duration, paced run that spans growth, impact,
-component convergence, and detached-fragment motion.
+still needs a clean-tree, long-duration, paced run that spans growth, interactive
+slicing, component convergence, and detached-fragment motion.
