@@ -11,6 +11,8 @@ A keyboard-controlled Loom/Metal marble experiment with eight GPU-simulated hunt
 - Reset every marble and calm the water from the panel.
 - The panel reports measured presentation FPS and current Metal allocations in MiB.
 - Red enemy marbles slowly chase the player.
+- Every marble collides elastically with every other marble and transfers collision energy into the water.
+- Passing crests and troughs lift every marble, while local surface gradients push their horizontal motion.
 - Drag, gravity, landing detection, speed limits, surface constraints, and bounded movement run on Metal.
 - Marbles stay on top of the enlarged water plane and continuously emit wakes from their horizontal motion.
 - Up to 30,704 GPU-resident water particles solve a spacing-aware 2D shallow-water wave equation with an isotropic nine-point stencil.

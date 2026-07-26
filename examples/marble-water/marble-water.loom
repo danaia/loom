@@ -34,6 +34,8 @@ const marble.radius: f32<m> = 0.075
 const marble.ground_drag: f32 = 0.992
 const marble.drive_acceleration: f32<m/s^2> = 2.8
 const marble.maximum_speed: f32<m/s> = 0.82
+const marble.restitution: f32 = 0.58
+const marble.collision_wave_gain: f32 = 8
 
 const enemies.count: u32 = 8
 const enemies.chase_acceleration: f32<m/s^2> = 0.34
@@ -50,6 +52,7 @@ const water.damping: f32<s^-1> = 0.82
 const water.impact_radius: f32<m> = 0.105
 const water.impact_gain: f32 = 0.24
 const water.wake_gain: f32 = 0.34
+const water.marble_response: f32<m/s^2> = 6.5
 
 stream player.position: f32x3<m> {
   cap=1 len=1 buffers=1 access=rw storage=device
@@ -168,6 +171,25 @@ kernel enemy_step(
   entry="marble_enemy_step"
 }
 
+kernel resolve_interactions(
+  player_position: rw all stream<f32x3,m>,
+  player_velocity: rw all stream<f32x3,m/s>,
+  enemy_position: rw all stream<f32x3,m>,
+  enemy_velocity: rw all stream<f32x3,m/s>,
+  player_impact_position: rw all stream<f32x3,m>,
+  player_impact_speed: rw all stream<f32,m/s>,
+  enemy_impact_position: rw all stream<f32x3,m>,
+  enemy_impact_speed: rw all stream<f32,m/s>,
+  enemy_count: in value<u32>,
+  surface_height: in value<f32,m>,
+  radius: in value<f32,m>,
+  restitution: in value<f32>,
+  collision_wave_gain: in value<f32>
+) extern metal {
+  source="kernels/marble_water.metal"
+  entry="marble_resolve_interactions"
+}
+
 kernel water_force(
   position: in all stream<f32x3,m>,
   velocity: rw stream<f32x3,m/s>,
@@ -191,6 +213,25 @@ kernel water_force(
 ) extern metal {
   source="kernels/marble_water.metal"
   entry="marble_water_force"
+}
+
+kernel wave_response(
+  player_position: in all stream<f32x3,m>,
+  player_velocity: rw all stream<f32x3,m/s>,
+  enemy_position: in all stream<f32x3,m>,
+  enemy_velocity: rw all stream<f32x3,m/s>,
+  water_position: in all stream<f32x3,m>,
+  enemy_count: in value<u32>,
+  width: in value<u32>,
+  height: in value<u32>,
+  spacing: in value<f32,m>,
+  density: in value<f32>,
+  plane_scale: in value<f32>,
+  response_acceleration: in value<f32,m/s^2>,
+  dt: in value<f32,s>
+) extern metal {
+  source="kernels/marble_water.metal"
+  entry="marble_wave_response"
 }
 
 kernel integrate_water(
@@ -277,6 +318,22 @@ pass chase_player = enemy_step(
   dt=simulation.fixed_dt
 ) over enemies.position
 
+pass collide_marbles = resolve_interactions(
+  player_position=player.position
+  player_velocity=player.velocity
+  enemy_position=enemies.position
+  enemy_velocity=enemies.velocity
+  player_impact_position=player.impact_position
+  player_impact_speed=player.impact_speed
+  enemy_impact_position=enemies.impact_position
+  enemy_impact_speed=enemies.impact_speed
+  enemy_count=enemies.count
+  surface_height=world.surface_height
+  radius=marble.radius
+  restitution=marble.restitution
+  collision_wave_gain=marble.collision_wave_gain
+) over player.position
+
 pass disturb_water = water_force(
   position=water.position
   velocity=water.velocity
@@ -304,6 +361,22 @@ pass move_water = integrate_water(
   velocity=water.velocity
   dt=simulation.fixed_dt
 ) over water.position
+
+pass move_marbles_with_waves = wave_response(
+  player_position=player.position
+  player_velocity=player.velocity
+  enemy_position=enemies.position
+  enemy_velocity=enemies.velocity
+  water_position=water.position
+  enemy_count=enemies.count
+  width=water.width
+  height=water.height
+  spacing=water.spacing
+  density=interaction.water_density
+  plane_scale=interaction.plane_scale
+  response_acceleration=water.marble_response
+  dt=simulation.fixed_dt
+) over player.position
 
 pass stage_scene = compose_scene(
   render_position=render.position
@@ -333,6 +406,6 @@ view viewport(
 }
 
 flow simulation rate=120hz {
-  reset_simulation -> drive_player -> chase_player -> disturb_water -> move_water -> stage_scene
+  reset_simulation -> drive_player -> chase_player -> collide_marbles -> disturb_water -> move_water -> move_marbles_with_waves -> stage_scene
   draw viewport after stage_scene
 }
