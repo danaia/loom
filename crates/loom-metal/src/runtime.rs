@@ -29,7 +29,10 @@ use metal::{
 use objc::{msg_send, rc::autoreleasepool, runtime::YES, sel, sel_impl};
 use winit::{
     dpi::{LogicalSize, PhysicalSize},
-    event::{ElementState, Event, MouseButton, MouseScrollDelta, WindowEvent},
+    event::{
+        ElementState, Event, KeyboardInput, MouseButton, MouseScrollDelta, VirtualKeyCode,
+        WindowEvent,
+    },
     event_loop::{ControlFlow, EventLoop},
     platform::macos::WindowExtMacOS,
     window::WindowBuilder,
@@ -50,6 +53,8 @@ const NEON_FLOCK_SOURCE: &str = include_str!("../../../kernels/neon_flock.metal"
 const NEON_FLOCK_RENDER_SOURCE: &str = include_str!("../../../shaders/neon_flock.metal");
 const CRYSTAL_SOURCE: &str = include_str!("../../../kernels/crystal.metal");
 const CRYSTAL_RENDER_SOURCE: &str = include_str!("../../../shaders/crystal.metal");
+const MARBLE_WATER_SOURCE: &str = include_str!("../../../kernels/marble_water.metal");
+const MARBLE_WATER_RENDER_SOURCE: &str = include_str!("../../../shaders/marble_water.metal");
 const INDIRECT_ARGUMENT_SOURCE: &str = r#"
 #include <metal_stdlib>
 using namespace metal;
@@ -84,6 +89,158 @@ kernel void loom_prepare_draw(
 
 pub struct MetalRuntime;
 
+#[derive(Default)]
+struct MarbleControls {
+    forward: bool,
+    backward: bool,
+    left: bool,
+    right: bool,
+}
+
+impl MarbleControls {
+    fn update(&mut self, key: VirtualKeyCode, state: ElementState) {
+        let pressed = state == ElementState::Pressed;
+        match key {
+            VirtualKeyCode::W | VirtualKeyCode::Up => self.forward = pressed,
+            VirtualKeyCode::S | VirtualKeyCode::Down => self.backward = pressed,
+            VirtualKeyCode::A | VirtualKeyCode::Left => self.left = pressed,
+            VirtualKeyCode::D | VirtualKeyCode::Right => self.right = pressed,
+            _ => {}
+        }
+    }
+
+    fn axis(&self) -> [f32; 2] {
+        [
+            f32::from(self.right) - f32::from(self.left),
+            f32::from(self.backward) - f32::from(self.forward),
+        ]
+    }
+}
+
+const MARBLE_HUD_CENTER: [f32; 2] = [-0.79, 0.76];
+const MARBLE_HUD_HALF_SIZE: [f32; 2] = [0.18, 0.17];
+const MARBLE_SLIDER_START: f32 = -0.65;
+const MARBLE_SLIDER_END: f32 = 0.18;
+const MARBLE_PARTICLE_SLIDER_Y: f32 = 0.70;
+const MARBLE_PLANE_SLIDER_Y: f32 = 0.34;
+const MARBLE_RESET_CENTER: [f32; 2] = [0.67, 0.70];
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum MarbleSlider {
+    Particles,
+    Plane,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum MarbleHudAction {
+    Slider(MarbleSlider, f32),
+    Reset,
+    None,
+}
+
+fn marble_slider_value(local_x: f32) -> f32 {
+    ((local_x - MARBLE_SLIDER_START) / (MARBLE_SLIDER_END - MARBLE_SLIDER_START)).clamp(0.0, 1.0)
+}
+
+fn marble_hud_action(point: (f64, f64), viewport: PhysicalSize<u32>) -> MarbleHudAction {
+    if viewport.width == 0 || viewport.height == 0 {
+        return MarbleHudAction::None;
+    }
+    let ndc = pointer_ndc(point, viewport);
+    let local = [
+        (ndc[0] - MARBLE_HUD_CENTER[0]) / MARBLE_HUD_HALF_SIZE[0],
+        (ndc[1] - MARBLE_HUD_CENTER[1]) / MARBLE_HUD_HALF_SIZE[1],
+    ];
+    let reset_delta = [
+        local[0] - MARBLE_RESET_CENTER[0],
+        local[1] - MARBLE_RESET_CENTER[1],
+    ];
+    if reset_delta[0] * reset_delta[0] + reset_delta[1] * reset_delta[1] <= 0.24 * 0.24 {
+        MarbleHudAction::Reset
+    } else if (local[1] - MARBLE_PARTICLE_SLIDER_Y).abs() <= 0.15
+        && (MARBLE_SLIDER_START - 0.10..=MARBLE_SLIDER_END + 0.10).contains(&local[0])
+    {
+        MarbleHudAction::Slider(MarbleSlider::Particles, marble_slider_value(local[0]))
+    } else if (local[1] - MARBLE_PLANE_SLIDER_Y).abs() <= 0.15
+        && (MARBLE_SLIDER_START - 0.10..=MARBLE_SLIDER_END + 0.10).contains(&local[0])
+    {
+        MarbleHudAction::Slider(MarbleSlider::Plane, marble_slider_value(local[0]))
+    } else {
+        MarbleHudAction::None
+    }
+}
+
+fn marble_hud_contains(point: (f64, f64), viewport: PhysicalSize<u32>) -> bool {
+    if viewport.width == 0 || viewport.height == 0 {
+        return false;
+    }
+    let ndc = pointer_ndc(point, viewport);
+    let local = [
+        (ndc[0] - MARBLE_HUD_CENTER[0]) / MARBLE_HUD_HALF_SIZE[0],
+        (ndc[1] - MARBLE_HUD_CENTER[1]) / MARBLE_HUD_HALF_SIZE[1],
+    ];
+    local[0].abs() <= 1.0 && local[1].abs() <= 1.0
+}
+
+fn marble_cursor_target(
+    point: (f64, f64),
+    viewport: PhysicalSize<u32>,
+    plane_scale: f32,
+    target_y: f32,
+) -> Option<[f32; 3]> {
+    if viewport.width == 0 || viewport.height == 0 {
+        return None;
+    }
+
+    fn dot(a: [f32; 3], b: [f32; 3]) -> f32 {
+        a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+    }
+    fn cross(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
+        [
+            a[1] * b[2] - a[2] * b[1],
+            a[2] * b[0] - a[0] * b[2],
+            a[0] * b[1] - a[1] * b[0],
+        ]
+    }
+    fn normalize(value: [f32; 3]) -> [f32; 3] {
+        let length = dot(value, value).sqrt().max(1.0e-6);
+        [value[0] / length, value[1] / length, value[2] / length]
+    }
+
+    let ndc = pointer_ndc(point, viewport);
+    let plane_scale = plane_scale.max(1.0);
+    let camera_scale = 1.0 + (plane_scale - 1.0) * 0.72;
+    let camera = [0.0, 2.10 * camera_scale, 3.55 * camera_scale];
+    let forward = normalize([-camera[0], 0.02 - camera[1], -camera[2]]);
+    let right = normalize(cross(forward, [0.0, 1.0, 0.0]));
+    let camera_up = cross(right, forward);
+    let aspect = viewport.width as f32 / viewport.height as f32;
+    let focal = 1.85;
+    let direction = normalize([
+        forward[0] + right[0] * ndc[0] * aspect / focal + camera_up[0] * ndc[1] / focal,
+        forward[1] + right[1] * ndc[0] * aspect / focal + camera_up[1] * ndc[1] / focal,
+        forward[2] + right[2] * ndc[0] * aspect / focal + camera_up[2] * ndc[1] / focal,
+    ]);
+    if direction[1].abs() < 1.0e-5 {
+        return None;
+    }
+    // X/Z comes from the cursor's ray against the water surface. Keeping this
+    // intersection independent of target_y makes the wheel control only height.
+    let distance = (0.02 - camera[1]) / direction[1];
+    if distance <= 0.0 {
+        return None;
+    }
+
+    let radius = 0.075;
+    let limit_x = 1.45 * plane_scale - radius;
+    let limit_z = 1.08 * plane_scale - radius;
+    Some([
+        (camera[0] + direction[0] * distance).clamp(-limit_x, limit_x),
+        target_y,
+        (camera[2] + direction[2] * distance).clamp(-limit_z, limit_z),
+    ])
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ScenarioEventRecord {
     pub tick: u64,
@@ -103,10 +260,13 @@ impl MetalRuntime {
     pub fn run(validated: ValidatedModuleGraph) -> Result<(), RuntimeDiagnostic> {
         let interactive_crystal = validated.graph().name == "hello_crystal";
         let interactive_worm = validated.graph().name == "hello_worm";
+        let interactive_marble = validated.graph().name == "marble_water";
         let title = if interactive_crystal {
             "Loom — Crystal — left: slice/orbit · scroll: zoom · self-healing".to_owned()
         } else if interactive_worm {
             "Loom — Scent Weaver — click: feed · drag: orbit · scroll: zoom".to_owned()
+        } else if interactive_marble {
+            "Loom — Marble Water — drag/drop · scroll: height · WASD: steer".to_owned()
         } else {
             format!("Loom — {}", display_name(validated.graph().name.as_str()))
         };
@@ -151,6 +311,12 @@ impl MetalRuntime {
                 "interaction: click the plane to drop food; left-drag to orbit; \
                  scroll to zoom; the Scent Weaver will smell, pursue, and eat"
             );
+        } else if interactive_marble {
+            println!(
+                "interaction: left-drag the yellow marble in X/Z, scroll while held to change \
+                 height, and release to drop; WASD/arrow keys steer after landing; cyan slider: \
+                 particles; purple slider: plane size; click reset to restart"
+            );
         }
 
         #[derive(Clone, Copy)]
@@ -170,6 +336,10 @@ impl MetalRuntime {
         let mut cursor = (0.0_f64, 0.0_f64);
         let mut crystal_gesture = None::<CrystalGesture>;
         let mut worm_gesture = None::<WormGesture>;
+        let mut marble_controls = MarbleControls::default();
+        let mut marble_slider_dragging = None::<MarbleSlider>;
+        let mut marble_dragging = false;
+        let mut marble_grab_height = 0.55_f32;
         event_loop.run(move |event, _, control_flow| {
             *control_flow = ControlFlow::WaitUntil(next_tick);
             autoreleasepool(|| match event {
@@ -217,6 +387,23 @@ impl MetalRuntime {
                                 window.request_redraw();
                             }
                         }
+                        if let Some(slider) = marble_slider_dragging {
+                            let ndc = pointer_ndc(cursor, window.inner_size());
+                            let local_x = (ndc[0] - MARBLE_HUD_CENTER[0]) / MARBLE_HUD_HALF_SIZE[0];
+                            let value = marble_slider_value(local_x);
+                            match slider {
+                                MarbleSlider::Particles => state.set_marble_density(value),
+                                MarbleSlider::Plane => state.set_marble_plane_scale(value),
+                            }
+                            window.request_redraw();
+                        } else if marble_dragging {
+                            state.set_marble_grab_from_cursor(
+                                cursor,
+                                window.inner_size(),
+                                marble_grab_height,
+                            );
+                            window.request_redraw();
+                        }
                     }
                     WindowEvent::MouseInput {
                         state: ElementState::Pressed,
@@ -251,11 +438,48 @@ impl MetalRuntime {
                         });
                     }
                     WindowEvent::MouseInput {
+                        state: ElementState::Pressed,
+                        button: MouseButton::Left,
+                        ..
+                    } if interactive_marble => {
+                        match marble_hud_action(cursor, window.inner_size()) {
+                            MarbleHudAction::Slider(slider, value) => {
+                                marble_slider_dragging = Some(slider);
+                                match slider {
+                                    MarbleSlider::Particles => state.set_marble_density(value),
+                                    MarbleSlider::Plane => state.set_marble_plane_scale(value),
+                                }
+                            }
+                            MarbleHudAction::Reset => {
+                                marble_dragging = false;
+                                state.request_marble_reset();
+                            }
+                            MarbleHudAction::None
+                                if !marble_hud_contains(cursor, window.inner_size()) =>
+                            {
+                                marble_dragging = true;
+                                state.set_marble_grab_from_cursor(
+                                    cursor,
+                                    window.inner_size(),
+                                    marble_grab_height,
+                                );
+                            }
+                            MarbleHudAction::None => {}
+                        }
+                        window.request_redraw();
+                    }
+                    WindowEvent::MouseInput {
                         state: ElementState::Released,
                         button: MouseButton::Left,
                         ..
                     } => {
                         crystal_gesture = None;
+                        marble_slider_dragging = None;
+                        if marble_dragging {
+                            marble_dragging = false;
+                            state.release_marble_grab();
+                            window.request_redraw();
+                        }
                         if let Some(gesture) = worm_gesture.take()
                             && !gesture.dragged
                         {
@@ -271,6 +495,34 @@ impl MetalRuntime {
                             MouseScrollDelta::PixelDelta(position) => position.y as f32 * 0.003,
                         };
                         state.queue_pointer_zoom(zoom_delta);
+                        window.request_redraw();
+                    }
+                    WindowEvent::MouseWheel { delta, .. }
+                        if interactive_marble && marble_dragging =>
+                    {
+                        let height_delta = match delta {
+                            MouseScrollDelta::LineDelta(_, vertical) => vertical * 0.08,
+                            MouseScrollDelta::PixelDelta(position) => position.y as f32 * 0.002,
+                        };
+                        marble_grab_height = (marble_grab_height + height_delta).clamp(0.03, 1.75);
+                        state.set_marble_grab_from_cursor(
+                            cursor,
+                            window.inner_size(),
+                            marble_grab_height,
+                        );
+                        window.request_redraw();
+                    }
+                    WindowEvent::KeyboardInput {
+                        input:
+                            KeyboardInput {
+                                state: key_state,
+                                virtual_keycode: Some(key),
+                                ..
+                            },
+                        ..
+                    } if interactive_marble => {
+                        marble_controls.update(key, key_state);
+                        state.set_marble_axis(marble_controls.axis());
                         window.request_redraw();
                     }
                     _ => {}
@@ -483,6 +735,16 @@ struct RuntimeState {
     pending_pointer_orbits: VecDeque<PointerOrbit>,
     pending_pointer_zooms: VecDeque<f32>,
     pending_pointer_drops: VecDeque<PointerDrop>,
+    marble_axis: [f32; 2],
+    marble_density: f32,
+    marble_plane_scale: f32,
+    marble_grab_active: bool,
+    marble_grab_target: [f32; 3],
+    marble_reset_pending: bool,
+    marble_water_reset_pending: bool,
+    marble_hud_fps: f32,
+    marble_fps_sample_started: Instant,
+    marble_presented_frames: u32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -568,7 +830,75 @@ impl RuntimeState {
             pending_pointer_orbits: VecDeque::new(),
             pending_pointer_zooms: VecDeque::new(),
             pending_pointer_drops: VecDeque::new(),
+            marble_axis: [0.0; 2],
+            marble_density: 0.0,
+            marble_plane_scale: 1.0,
+            marble_grab_active: false,
+            marble_grab_target: [0.0, 0.641, 0.15],
+            marble_reset_pending: false,
+            marble_water_reset_pending: false,
+            marble_hud_fps: 0.0,
+            marble_fps_sample_started: Instant::now(),
+            marble_presented_frames: 0,
         })
+    }
+
+    fn set_marble_axis(&mut self, axis: [f32; 2]) {
+        self.marble_axis = axis;
+    }
+
+    fn set_marble_density(&mut self, density: f32) {
+        let density = density.clamp(0.0, 1.0);
+        if (density - self.marble_density).abs() > 0.001 {
+            self.marble_density = density;
+            self.marble_water_reset_pending = true;
+        }
+    }
+
+    fn set_marble_plane_scale(&mut self, slider_value: f32) {
+        let plane_scale = 1.0 + slider_value.clamp(0.0, 1.0) * 2.0;
+        if (plane_scale - self.marble_plane_scale).abs() > 0.001 {
+            self.marble_plane_scale = plane_scale;
+            self.marble_water_reset_pending = true;
+        }
+    }
+
+    fn set_marble_grab_from_cursor(
+        &mut self,
+        cursor: (f64, f64),
+        viewport: PhysicalSize<u32>,
+        height: f32,
+    ) {
+        let contact_y = 0.016 + 0.075;
+        if let Some(target) = marble_cursor_target(
+            cursor,
+            viewport,
+            self.marble_plane_scale,
+            contact_y + height,
+        ) {
+            self.marble_grab_target = target;
+            self.marble_grab_active = true;
+        }
+    }
+
+    fn release_marble_grab(&mut self) {
+        self.marble_grab_active = false;
+    }
+
+    fn request_marble_reset(&mut self) {
+        self.marble_grab_active = false;
+        self.marble_reset_pending = true;
+        self.marble_water_reset_pending = true;
+    }
+
+    fn record_marble_presented_frame(&mut self) {
+        self.marble_presented_frames += 1;
+        let elapsed = self.marble_fps_sample_started.elapsed();
+        if elapsed >= Duration::from_millis(500) {
+            self.marble_hud_fps = self.marble_presented_frames as f32 / elapsed.as_secs_f32();
+            self.marble_presented_frames = 0;
+            self.marble_fps_sample_started = Instant::now();
+        }
     }
 
     fn queue_pointer_slice(
@@ -756,14 +1086,45 @@ impl RuntimeState {
         let command_buffer = self.queue.new_command_buffer();
         command_buffer.set_label("loom.tick");
         let drawable = self.layer.next_drawable();
+        let presented_frame = drawable.is_some();
         let mut wait_before_next_tick = false;
         let pending_zooms = self.pending_pointer_zooms.drain(..).collect::<Vec<_>>();
         let pending_orbits = self.pending_pointer_orbits.drain(..).collect::<Vec<_>>();
         let pending_slices = self.pending_pointer_slices.drain(..).collect::<Vec<_>>();
         let pending_drops = self.pending_pointer_drops.drain(..).collect::<Vec<_>>();
         let mut interaction_buffers = Vec::with_capacity(
-            pending_zooms.len() + pending_orbits.len() + pending_slices.len() + pending_drops.len(),
+            pending_zooms.len()
+                + pending_orbits.len()
+                + pending_slices.len()
+                + pending_drops.len()
+                + usize::from(self.validated.graph().name == "marble_water"),
         );
+        let marble_overrides = if self.validated.graph().name == "marble_water" {
+            let reset_scene = f32::from(self.marble_reset_pending);
+            let reset_water = f32::from(self.marble_water_reset_pending);
+            let gpu_memory_mb = self.device.current_allocated_size() as f32 / (1024.0 * 1024.0);
+            self.marble_reset_pending = false;
+            self.marble_water_reset_pending = false;
+            Some(self.f32_value_overrides([
+                ("interaction.input_x", self.marble_axis[0]),
+                ("interaction.input_z", self.marble_axis[1]),
+                (
+                    "interaction.grab_active",
+                    f32::from(self.marble_grab_active),
+                ),
+                ("interaction.grab_x", self.marble_grab_target[0]),
+                ("interaction.grab_y", self.marble_grab_target[1]),
+                ("interaction.grab_z", self.marble_grab_target[2]),
+                ("interaction.water_density", self.marble_density),
+                ("interaction.plane_scale", self.marble_plane_scale),
+                ("interaction.reset_scene", reset_scene),
+                ("interaction.reset_water", reset_water),
+                ("interaction.hud_fps", self.marble_hud_fps),
+                ("interaction.hud_gpu_mb", gpu_memory_mb),
+            ])?)
+        } else {
+            None
+        };
         if !pending_zooms.is_empty()
             && let Some(zoom_pass) = self
                 .validated
@@ -836,7 +1197,15 @@ impl RuntimeState {
                         .iter()
                         .find(|pass| pass.pass == *pass_id)
                         .expect("validated plan pass");
-                    self.encode_compute(command_buffer, pass)?;
+                    if marble_overrides.is_some() {
+                        self.encode_compute_with_overrides(
+                            command_buffer,
+                            pass,
+                            marble_overrides.as_ref(),
+                        )?;
+                    } else {
+                        self.encode_compute(command_buffer, pass)?;
+                    }
                     wait_before_next_tick |= requires_wait_after(schedule, *item);
                 }
                 ScheduleItemId::View(view_id) => {
@@ -854,6 +1223,10 @@ impl RuntimeState {
             }
         }
 
+        if let Some(overrides) = marble_overrides {
+            interaction_buffers.push(overrides);
+        }
+
         command_buffer.commit();
         if wait_before_next_tick {
             command_buffer.wait_until_completed();
@@ -864,6 +1237,9 @@ impl RuntimeState {
                 )
                 .at("schedules.simulation"));
             }
+        }
+        if presented_frame && self.validated.graph().name == "marble_water" {
+            self.record_marble_presented_frame();
         }
         drop(interaction_buffers);
         Ok(())
@@ -2477,6 +2853,13 @@ fn build_pipelines(
             attachment.set_destination_rgb_blend_factor(MTLBlendFactor::One);
             attachment.set_source_alpha_blend_factor(MTLBlendFactor::One);
             attachment.set_destination_alpha_blend_factor(MTLBlendFactor::One);
+        } else if view.implementation.entry == "marble_water_pipeline" {
+            let attachment = descriptor.color_attachments().object_at(0).unwrap();
+            attachment.set_blending_enabled(true);
+            attachment.set_source_rgb_blend_factor(MTLBlendFactor::SourceAlpha);
+            attachment.set_destination_rgb_blend_factor(MTLBlendFactor::OneMinusSourceAlpha);
+            attachment.set_source_alpha_blend_factor(MTLBlendFactor::One);
+            attachment.set_destination_alpha_blend_factor(MTLBlendFactor::OneMinusSourceAlpha);
         }
         let pipeline = device
             .new_render_pipeline_state(&descriptor)
@@ -2634,6 +3017,8 @@ fn shader_source(
         "shaders/neon_flock.metal" => Ok(Cow::Borrowed(NEON_FLOCK_RENDER_SOURCE)),
         "kernels/crystal.metal" => Ok(Cow::Borrowed(CRYSTAL_SOURCE)),
         "shaders/crystal.metal" => Ok(Cow::Borrowed(CRYSTAL_RENDER_SOURCE)),
+        "kernels/marble_water.metal" => Ok(Cow::Borrowed(MARBLE_WATER_SOURCE)),
+        "shaders/marble_water.metal" => Ok(Cow::Borrowed(MARBLE_WATER_RENDER_SOURCE)),
         _ => Err(RuntimeDiagnostic::new(
             RuntimeDiagnosticCode::UnsupportedGraph,
             format!("no packaged Metal source for `{}`", implementation.source),
@@ -2800,7 +3185,11 @@ fn command_output(program: &str, arguments: &[&str]) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{MetalRuntime, RuntimeState, encode_f32_initializer, pacing_offset};
+    use super::{
+        MarbleControls, MarbleHudAction, MarbleSlider, MetalRuntime, RuntimeState,
+        encode_f32_initializer, marble_cursor_target, marble_hud_action, marble_hud_contains,
+        pacing_offset,
+    };
     use crate::fingerprint::sha256;
     use crate::{BenchmarkConfig, BenchmarkMode, BenchmarkRunner};
     use loom_core::{
@@ -2813,9 +3202,75 @@ mod tests {
     use loom_validator::Validator;
     use std::time::Duration;
     use winit::dpi::PhysicalSize;
+    use winit::event::{ElementState, VirtualKeyCode};
 
     const CRYSTAL_LANGUAGE_SOURCE: &str =
         include_str!("../../../examples/hello-crystal/crystal.loom");
+
+    #[test]
+    fn marble_controls_combine_wasd_and_release_each_axis_independently() {
+        let mut controls = MarbleControls::default();
+
+        controls.update(VirtualKeyCode::W, ElementState::Pressed);
+        controls.update(VirtualKeyCode::D, ElementState::Pressed);
+        assert_eq!(controls.axis(), [1.0, -1.0]);
+
+        controls.update(VirtualKeyCode::W, ElementState::Released);
+        assert_eq!(controls.axis(), [1.0, 0.0]);
+
+        controls.update(VirtualKeyCode::A, ElementState::Pressed);
+        assert_eq!(controls.axis(), [0.0, 0.0]);
+    }
+
+    #[test]
+    fn marble_hud_maps_slider_and_reset_hit_targets() {
+        let viewport = PhysicalSize::new(960, 720);
+
+        match marble_hud_action((44.64, 43.56), viewport) {
+            MarbleHudAction::Slider(MarbleSlider::Particles, density) => {
+                assert!(density < 0.001)
+            }
+            action => panic!("expected particle-slider start, got {action:?}"),
+        }
+        match marble_hud_action((116.352, 43.56), viewport) {
+            MarbleHudAction::Slider(MarbleSlider::Particles, density) => {
+                assert!(density > 0.999)
+            }
+            action => panic!("expected particle-slider end, got {action:?}"),
+        }
+        match marble_hud_action((80.496, 65.592), viewport) {
+            MarbleHudAction::Slider(MarbleSlider::Plane, scale) => {
+                assert!((scale - 0.5).abs() < 0.001)
+            }
+            action => panic!("expected plane-slider midpoint, got {action:?}"),
+        }
+        assert_eq!(
+            marble_hud_action((158.688, 43.56), viewport),
+            MarbleHudAction::Reset
+        );
+        assert_eq!(
+            marble_hud_action((480.0, 360.0), viewport),
+            MarbleHudAction::None
+        );
+        assert!(marble_hud_contains((80.0, 65.0), viewport));
+        assert!(!marble_hud_contains((480.0, 360.0), viewport));
+    }
+
+    #[test]
+    fn marble_cursor_ray_maps_to_requested_height_and_plane_bounds() {
+        let viewport = PhysicalSize::new(960, 720);
+        let center = marble_cursor_target((480.0, 360.0), viewport, 1.0, 0.641)
+            .expect("center cursor should intersect the marble-height plane");
+        assert!(center[0].abs() < 0.001);
+        assert!((center[1] - 0.641).abs() < 0.001);
+        assert!(center[2].abs() < 0.001);
+
+        let corner = marble_cursor_target((960.0, 720.0), viewport, 3.0, 1.2)
+            .expect("corner cursor should intersect the marble-height plane");
+        assert!(corner[0].abs() <= 1.45 * 3.0 - 0.075);
+        assert!(corner[2].abs() <= 1.08 * 3.0 - 0.075);
+        assert!(marble_cursor_target((0.0, 0.0), PhysicalSize::new(0, 0), 1.0, 0.5).is_none());
+    }
 
     #[test]
     fn rational_pacing_has_no_one_second_drift() {

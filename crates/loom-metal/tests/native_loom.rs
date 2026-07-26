@@ -7,6 +7,7 @@ use loom_validator::Validator;
 const SOURCE: &str = include_str!("../../../examples/hello-particle/hello-particle.agent.loom");
 const CRYSTAL_SOURCE: &str = include_str!("../../../examples/hello-crystal/crystal.loom");
 const NEON_FLOCK_SOURCE: &str = include_str!("../../../examples/neon-flock/neon-flock.loom");
+const MARBLE_WATER_SOURCE: &str = include_str!("../../../examples/marble-water/marble-water.loom");
 
 #[test]
 fn native_loom_kernel_generates_compiles_and_executes_metal() {
@@ -105,6 +106,41 @@ fn neon_flock_compiles_and_executes_native_and_external_metal() {
         "loom://generated/neon_flock/advance_agents.metal",
         "loom://generated/neon_flock/evolve_trails.metal",
         "shaders/neon_flock.metal",
+    ] {
+        assert!(
+            result
+                .runtime
+                .shader_hashes
+                .iter()
+                .any(|shader| shader.source_path == source),
+            "missing shader identity for {source}"
+        );
+    }
+}
+
+#[test]
+fn marble_water_compiles_and_executes_the_particle_simulation() {
+    let graph = parse(MARBLE_WATER_SOURCE).expect("marble water source must parse");
+    let validated = Validator::validate(&graph)
+        .validated
+        .expect("marble water graph must validate");
+    let result = MetalRuntime::benchmark(
+        validated,
+        BenchmarkConfig {
+            mode: BenchmarkMode::Headless,
+            runner: BenchmarkRunner::LoomPlan,
+            warmup_ticks: 1,
+            sample_ticks: 2,
+            ..BenchmarkConfig::default()
+        },
+    )
+    .expect("marble water Metal must compile and execute");
+
+    assert_eq!(result.sample_ticks, 2);
+    for source in [
+        "kernels/marble_water.metal",
+        "loom://generated/marble_water/integrate_water.metal",
+        "shaders/marble_water.metal",
     ] {
         assert!(
             result

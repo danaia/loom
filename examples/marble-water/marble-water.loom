@@ -1,0 +1,338 @@
+// Testable question:
+// Can player and enemy marbles drive visible, propagating splashes through a
+// GPU-resident water-particle layer while the player remains keyboard-controlled?
+//
+// Metal owns conditional collision, neighborhood wave forces, AI, and 3D rendering.
+// Loom owns the explicit streams, bindings, pass order, and 120 Hz schedule.
+
+loom 0.1
+module marble_water
+target metal
+
+const interaction.input_x: f32 = 0
+const interaction.input_z: f32 = 0
+const interaction.grab_active: f32 = 0
+const interaction.grab_x: f32<m> = 0
+const interaction.grab_y: f32<m> = 0.641
+const interaction.grab_z: f32<m> = 0.15
+const interaction.water_density: f32 = 0
+const interaction.plane_scale: f32 = 1
+const interaction.reset_scene: f32 = 0
+const interaction.reset_water: f32 = 0
+const interaction.hud_fps: f32 = 0
+const interaction.hud_gpu_mb: f32 = 0
+
+// Water particles are centered at y=0 with a visible radius of about 0.013 m.
+// This contact height keeps each marble tangent to the visible top of the plane.
+const world.surface_height: f32<m> = 0.016
+const world.half_extent_x: f32<m> = 1.45
+const world.half_extent_z: f32<m> = 1.08
+const world.gravity: f32<m/s^2> = -6.5
+
+const marble.radius: f32<m> = 0.075
+const marble.ground_drag: f32 = 0.992
+const marble.drive_acceleration: f32<m/s^2> = 2.8
+const marble.maximum_speed: f32<m/s> = 0.82
+
+const enemies.count: u32 = 8
+const enemies.chase_acceleration: f32<m/s^2> = 0.34
+const enemies.maximum_speed: f32<m/s> = 0.22
+
+const water.width: u32 = 202
+const water.height: u32 = 152
+const water.spacing: f32<m> = 0.01443
+const water.spring: f32<s^-2> = 28
+const water.coupling: f32<s^-2> = 72
+const water.damping: f32<s^-1> = 2.2
+const water.impact_radius: f32<m> = 0.24
+const water.impact_gain: f32 = 2.4
+
+stream player.position: f32x3<m> {
+  cap=1 len=1 buffers=1 access=rw storage=device
+  init=[[0, 0.091, 0.15]]
+}
+stream player.velocity: f32x3<m/s> {
+  cap=1 len=1 buffers=1 access=rw storage=device
+  init=[[0, 0, 0]]
+}
+stream player.impact_position: f32x3<m> {
+  cap=1 len=1 buffers=1 access=rw storage=device
+  init=[[0, 0, 0]]
+}
+stream player.impact_speed: f32<m/s> {
+  cap=1 len=1 buffers=1 access=rw storage=device
+  init=[0]
+}
+
+stream enemies.position: f32x3<m> {
+  cap=8 len=8 buffers=1 access=rw storage=device
+  init=[[-1.08,0.091,-0.72],[-0.72,0.091,0.72],[-0.34,0.091,-0.82],[0.18,0.091,0.78],[0.58,0.091,-0.70],[0.94,0.091,0.58],[-1.02,0.091,0.12],[1.08,0.091,-0.08]]
+}
+stream enemies.velocity: f32x3<m/s> {
+  cap=8 len=8 buffers=1 access=rw storage=device
+  init=[[0,0,0],[0,0,0],[0,0,0],[0,0,0],[0,0,0],[0,0,0],[0,0,0],[0,0,0]]
+}
+stream enemies.impact_position: f32x3<m> {
+  cap=8 len=8 buffers=1 access=rw storage=device
+}
+stream enemies.impact_speed: f32<m/s> {
+  cap=8 len=8 buffers=1 access=rw storage=device
+}
+
+stream water.position: f32x3<m> {
+  cap=30704 len=30704 buffers=1 access=rw storage=device
+}
+stream water.velocity: f32x3<m/s> {
+  cap=30704 len=30704 buffers=1 access=rw storage=device
+}
+
+stream render.position: f32x3<m> {
+  cap=30714 len=30714 buffers=1 access=rw storage=device
+}
+stream render.radius: f32<m> {
+  cap=30714 len=30714 buffers=1 access=rw storage=device
+}
+stream render.color: f32x4 {
+  cap=30714 len=30714 buffers=1 access=rw storage=device
+}
+stream render.scale: f32 {
+  cap=30714 len=30714 buffers=1 access=rw storage=device
+}
+
+kernel reset_state(
+  player_position: rw all stream<f32x3,m>,
+  player_velocity: rw all stream<f32x3,m/s>,
+  enemy_position: rw all stream<f32x3,m>,
+  enemy_velocity: rw all stream<f32x3,m/s>,
+  water_position: rw stream<f32x3,m>,
+  water_velocity: rw stream<f32x3,m/s>,
+  reset_scene: in value<f32>,
+  reset_water: in value<f32>,
+  enemy_count: in value<u32>,
+  width: in value<u32>,
+  height: in value<u32>,
+  surface_height: in value<f32,m>,
+  marble_radius: in value<f32,m>
+) extern metal {
+  source="kernels/marble_water.metal"
+  entry="marble_reset_state"
+}
+
+kernel player_step(
+  position: rw stream<f32x3,m>,
+  velocity: rw stream<f32x3,m/s>,
+  impact_position: out stream<f32x3,m>,
+  impact_speed: out stream<f32,m/s>,
+  input_x: in value<f32>,
+  input_z: in value<f32>,
+  grab_active: in value<f32>,
+  grab_x: in value<f32,m>,
+  grab_y: in value<f32,m>,
+  grab_z: in value<f32,m>,
+  gravity: in value<f32,m/s^2>,
+  surface_height: in value<f32,m>,
+  radius: in value<f32,m>,
+  ground_drag: in value<f32>,
+  drive_acceleration: in value<f32,m/s^2>,
+  maximum_speed: in value<f32,m/s>,
+  plane_scale: in value<f32>,
+  half_extent_x: in value<f32,m>,
+  half_extent_z: in value<f32,m>,
+  dt: in value<f32,s>
+) extern metal {
+  source="kernels/marble_water.metal"
+  entry="marble_player_step"
+}
+
+kernel enemy_step(
+  position: rw all stream<f32x3,m>,
+  velocity: rw all stream<f32x3,m/s>,
+  player_position: in all stream<f32x3,m>,
+  impact_position: out stream<f32x3,m>,
+  impact_speed: out stream<f32,m/s>,
+  enemy_count: in value<u32>,
+  surface_height: in value<f32,m>,
+  radius: in value<f32,m>,
+  chase_acceleration: in value<f32,m/s^2>,
+  maximum_speed: in value<f32,m/s>,
+  plane_scale: in value<f32>,
+  half_extent_x: in value<f32,m>,
+  half_extent_z: in value<f32,m>,
+  dt: in value<f32,s>
+) extern metal {
+  source="kernels/marble_water.metal"
+  entry="marble_enemy_step"
+}
+
+kernel water_force(
+  position: in all stream<f32x3,m>,
+  velocity: rw stream<f32x3,m/s>,
+  player_impact_position: in all stream<f32x3,m>,
+  player_impact_speed: in all stream<f32,m/s>,
+  enemy_impact_position: in all stream<f32x3,m>,
+  enemy_impact_speed: in all stream<f32,m/s>,
+  width: in value<u32>,
+  height: in value<u32>,
+  enemy_count: in value<u32>,
+  spacing: in value<f32,m>,
+  density: in value<f32>,
+  plane_scale: in value<f32>,
+  spring: in value<f32,s^-2>,
+  coupling: in value<f32,s^-2>,
+  damping: in value<f32,s^-1>,
+  impact_radius: in value<f32,m>,
+  impact_gain: in value<f32>,
+  dt: in value<f32,s>
+) extern metal {
+  source="kernels/marble_water.metal"
+  entry="marble_water_force"
+}
+
+kernel integrate_water(
+  position: rw stream<f32x3,m>,
+  velocity: in stream<f32x3,m/s>,
+  dt: in value<f32,s>
+) each i {
+  position[i] += velocity[i] * dt;
+}
+
+kernel compose_scene(
+  render_position: out stream<f32x3,m>,
+  render_radius: out stream<f32,m>,
+  render_color: out stream<f32x4>,
+  render_scale: out stream<f32>,
+  player_position: in all stream<f32x3,m>,
+  enemy_position: in all stream<f32x3,m>,
+  water_position: in all stream<f32x3,m>,
+  enemy_count: in value<u32>,
+  width: in value<u32>,
+  height: in value<u32>,
+  spacing: in value<f32,m>,
+  density: in value<f32>,
+  plane_scale: in value<f32>,
+  reset_scene: in value<f32>,
+  hud_fps: in value<f32>,
+  hud_gpu_mb: in value<f32>,
+  marble_radius: in value<f32,m>
+) extern metal {
+  source="kernels/marble_water.metal"
+  entry="marble_compose_scene"
+}
+
+pass reset_simulation = reset_state(
+  player_position=player.position
+  player_velocity=player.velocity
+  enemy_position=enemies.position
+  enemy_velocity=enemies.velocity
+  water_position=water.position
+  water_velocity=water.velocity
+  reset_scene=interaction.reset_scene
+  reset_water=interaction.reset_water
+  enemy_count=enemies.count
+  width=water.width
+  height=water.height
+  surface_height=world.surface_height
+  marble_radius=marble.radius
+) over water.position
+
+pass drive_player = player_step(
+  position=player.position
+  velocity=player.velocity
+  impact_position=player.impact_position
+  impact_speed=player.impact_speed
+  input_x=interaction.input_x
+  input_z=interaction.input_z
+  grab_active=interaction.grab_active
+  grab_x=interaction.grab_x
+  grab_y=interaction.grab_y
+  grab_z=interaction.grab_z
+  gravity=world.gravity
+  surface_height=world.surface_height
+  radius=marble.radius
+  ground_drag=marble.ground_drag
+  drive_acceleration=marble.drive_acceleration
+  maximum_speed=marble.maximum_speed
+  plane_scale=interaction.plane_scale
+  half_extent_x=world.half_extent_x
+  half_extent_z=world.half_extent_z
+  dt=simulation.fixed_dt
+) over player.position
+
+pass chase_player = enemy_step(
+  position=enemies.position
+  velocity=enemies.velocity
+  player_position=player.position
+  impact_position=enemies.impact_position
+  impact_speed=enemies.impact_speed
+  enemy_count=enemies.count
+  surface_height=world.surface_height
+  radius=marble.radius
+  chase_acceleration=enemies.chase_acceleration
+  maximum_speed=enemies.maximum_speed
+  plane_scale=interaction.plane_scale
+  half_extent_x=world.half_extent_x
+  half_extent_z=world.half_extent_z
+  dt=simulation.fixed_dt
+) over enemies.position
+
+pass disturb_water = water_force(
+  position=water.position
+  velocity=water.velocity
+  player_impact_position=player.impact_position
+  player_impact_speed=player.impact_speed
+  enemy_impact_position=enemies.impact_position
+  enemy_impact_speed=enemies.impact_speed
+  width=water.width
+  height=water.height
+  enemy_count=enemies.count
+  spacing=water.spacing
+  density=interaction.water_density
+  plane_scale=interaction.plane_scale
+  spring=water.spring
+  coupling=water.coupling
+  damping=water.damping
+  impact_radius=water.impact_radius
+  impact_gain=water.impact_gain
+  dt=simulation.fixed_dt
+) over water.position
+
+pass move_water = integrate_water(
+  position=water.position
+  velocity=water.velocity
+  dt=simulation.fixed_dt
+) over water.position
+
+pass stage_scene = compose_scene(
+  render_position=render.position
+  render_radius=render.radius
+  render_color=render.color
+  render_scale=render.scale
+  player_position=player.position
+  enemy_position=enemies.position
+  water_position=water.position
+  enemy_count=enemies.count
+  width=water.width
+  height=water.height
+  spacing=water.spacing
+  density=interaction.water_density
+  plane_scale=interaction.plane_scale
+  reset_scene=interaction.reset_scene
+  hud_fps=interaction.hud_fps
+  hud_gpu_mb=interaction.hud_gpu_mb
+  marble_radius=marble.radius
+) over render.position
+
+view viewport(
+  color=render.color
+  position=render.position
+  radius=render.radius
+  scale=render.scale
+) extern metal {
+  source="shaders/marble_water.metal"
+  entry="marble_water_pipeline"
+}
+
+flow simulation rate=120hz {
+  reset_simulation -> drive_player -> chase_player -> disturb_water -> move_water -> stage_scene
+  draw viewport after stage_scene
+}
