@@ -141,6 +141,7 @@ pub fn hello_organism_builder_with_config(config: HelloOrganismConfig) -> Module
         "perception.inhibitor_bin",
         "perception.nutrient_bin",
         "perception.density_bin",
+        "perception.injury_bin",
         "perception.energy_bin",
         "perception.local_density_bin",
         "perception.neighbor_count",
@@ -152,8 +153,10 @@ pub fn hello_organism_builder_with_config(config: HelloOrganismConfig) -> Module
         "intent.requested_health",
         "intent.divide",
         "intent.death",
+        "intent.repair",
         "intent.activator_deposit",
         "intent.inhibitor_deposit",
+        "intent.injury_deposit",
     ];
     let ledger_cells = [
         "ledger.cell_absorbed",
@@ -207,6 +210,42 @@ pub fn hello_organism_builder_with_config(config: HelloOrganismConfig) -> Module
             Literal::f32(1.0),
         ))
         .value(ValueDraft::constant(
+            "environment.requested_injury_transport",
+            f32_type.clone(),
+            Unit::DIMENSIONLESS,
+            Literal::f32(1.0),
+        ))
+        .value(ValueDraft::constant(
+            "environment.requested_repair_enabled",
+            u32_type.clone(),
+            Unit::DIMENSIONLESS,
+            Literal::U32(1),
+        ))
+        .value(ValueDraft::constant(
+            "lesion.reference_center_x_q16",
+            DataType::Scalar(ScalarType::I32),
+            Unit::DIMENSIONLESS,
+            Literal::I32(5_571),
+        ))
+        .value(ValueDraft::constant(
+            "lesion.reference_center_y_q16",
+            DataType::Scalar(ScalarType::I32),
+            Unit::DIMENSIONLESS,
+            Literal::I32(0),
+        ))
+        .value(ValueDraft::constant(
+            "lesion.reference_radius_q16",
+            u32_type.clone(),
+            Unit::DIMENSIONLESS,
+            Literal::U32(3_932),
+        ))
+        .value(ValueDraft::constant(
+            "lesion.reference_injury",
+            f32_type.clone(),
+            Unit::DIMENSIONLESS,
+            Literal::f32(4.0),
+        ))
+        .value(ValueDraft::constant(
             "population.scan_block_count",
             u32_type.clone(),
             Unit::DIMENSIONLESS,
@@ -249,6 +288,28 @@ pub fn hello_organism_builder_with_config(config: HelloOrganismConfig) -> Module
             .initial(Literal::Array(vec![Literal::f32(1.0)])),
         )
         .stream(
+            StreamDraft::new(
+                "environment.injury_transport",
+                f32_type.clone(),
+                Unit::DIMENSIONLESS,
+            )
+            .capacity(1)
+            .length(1)
+            .write_authority("mutate_environment")
+            .initial(Literal::Array(vec![Literal::f32(1.0)])),
+        )
+        .stream(
+            StreamDraft::new(
+                "environment.repair_enabled",
+                u32_type.clone(),
+                Unit::DIMENSIONLESS,
+            )
+            .capacity(1)
+            .length(1)
+            .write_authority("mutate_environment")
+            .initial(Literal::Array(vec![Literal::U32(1)])),
+        )
+        .stream(
             StreamDraft::new("homeostasis.window", u32_type.clone(), Unit::DIMENSIONLESS)
                 .capacity(4)
                 .length(4)
@@ -271,6 +332,16 @@ pub fn hello_organism_builder_with_config(config: HelloOrganismConfig) -> Module
                 Literal::U32(12_000),
                 Literal::U32(14_000),
             ])),
+        )
+        .stream(
+            StreamDraft::new("regeneration.window", u32_type.clone(), Unit::DIMENSIONLESS)
+                .capacity(3)
+                .length(3)
+                .initial(Literal::Array(vec![
+                    Literal::U32(30_000),
+                    Literal::U32(50_000),
+                    Literal::U32(500),
+                ])),
         );
 
     for (name, data_type, unit, initial) in [
@@ -487,6 +558,7 @@ pub fn hello_organism_builder_with_config(config: HelloOrganismConfig) -> Module
         "deposit.activator_q16",
         "deposit.inhibitor_q16",
         "deposit.density_q16",
+        "deposit.injury_q16",
     ] {
         builder = builder.stream(
             StreamDraft::new(name, u32_type.clone(), Unit::DIMENSIONLESS)
@@ -620,6 +692,51 @@ pub fn hello_organism_builder_with_config(config: HelloOrganismConfig) -> Module
         .capacity(8)
         .length(8)
         .initial_repeat(Literal::U32(0), 8),
+    );
+    builder = builder
+        .stream(
+            StreamDraft::new("lesion.removed_ids", u32_type.clone(), Unit::DIMENSIONLESS)
+                .capacity(64)
+                .length(64)
+                .initial_repeat(Literal::U32(0), 64),
+        )
+        .stream(
+            StreamDraft::new(
+                "lesion.center_q16",
+                DataType::Scalar(ScalarType::I32),
+                Unit::DIMENSIONLESS,
+            )
+            .capacity(2)
+            .length(2)
+            .initial_repeat(Literal::I32(0), 2),
+        );
+    for name in [
+        "lesion.radius_q16",
+        "lesion.removed_count",
+        "lesion.damaged_count",
+        "lesion.region_occupancy",
+        "regeneration.injury_total_q16",
+        "regeneration.injury_peak_q16",
+        "regeneration.post_lesion_peak_q16",
+        "regeneration.consecutive_ticks",
+        "regeneration.success_tick",
+    ] {
+        builder = builder.stream(
+            StreamDraft::new(name, u32_type.clone(), Unit::DIMENSIONLESS)
+                .capacity(1)
+                .length(1)
+                .initial(Literal::Array(vec![Literal::U32(0)])),
+        );
+    }
+    builder = builder.stream(
+        StreamDraft::new(
+            "lesion.removed_energy",
+            f32_type.clone(),
+            Unit::DIMENSIONLESS,
+        )
+        .capacity(1)
+        .length(1)
+        .initial(Literal::Array(vec![Literal::f32(0.0)])),
     );
     for name in ["spatial.living_bin_count", "spatial.candidate_bin_count"] {
         builder = builder.stream(
@@ -932,6 +1049,64 @@ pub fn hello_organism_builder_with_config(config: HelloOrganismConfig) -> Module
                 .bind("radial_density", "morphology.radial_density")
                 .bind("active_count", "cells.active_count")
                 .dispatch_over("cells.stable_id"),
+        )
+        .pass(
+            PassDraft::new(
+                "clear_regeneration_metrics",
+                "organism_clear_regeneration_metrics",
+            )
+            .bind("region_occupancy", "lesion.region_occupancy")
+            .bind("injury_total_q16", "regeneration.injury_total_q16")
+            .bind("injury_peak_q16", "regeneration.injury_peak_q16"),
+        )
+        .pass(
+            PassDraft::new(
+                "reduce_lesion_occupancy",
+                "organism_reduce_lesion_occupancy",
+            )
+            .bind("position", "cells.position")
+            .bind("cell_radius", "cells.radius")
+            .bind("center_q16", "lesion.center_q16")
+            .bind("radius_q16", "lesion.radius_q16")
+            .bind("region_occupancy", "lesion.region_occupancy")
+            .bind("active_count", "cells.active_count")
+            .dispatch_over("cells.position"),
+        )
+        .pass(
+            PassDraft::new("reduce_injury", "organism_reduce_injury")
+                .bind("injury", "field.injury")
+                .bind("injury_total_q16", "regeneration.injury_total_q16")
+                .bind("injury_peak_q16", "regeneration.injury_peak_q16")
+                .dispatch_over("field.injury"),
+        )
+        .pass(
+            PassDraft::new("audit_regeneration", "organism_audit_regeneration")
+                .bind("tick", "simulation.tick")
+                .bind("population", "morphology.population")
+                .bind("component_count", "morphology.component_count")
+                .bind("component_unresolved", "morphology.component_unresolved")
+                .bind("organizer_count", "morphology.organizer_count")
+                .bind("boundary_count", "morphology.boundary_count")
+                .bind("interior_count", "morphology.interior_count")
+                .bind("area_q16", "morphology.area_q16")
+                .bind("compactness_q16", "morphology.compactness_q16")
+                .bind("centroid_x_q16", "morphology.centroid_x_q16")
+                .bind("centroid_y_q16", "morphology.centroid_y_q16")
+                .bind("injury_total_q16", "regeneration.injury_total_q16")
+                .bind("post_lesion_peak_q16", "regeneration.post_lesion_peak_q16")
+                .bind("removed_count", "lesion.removed_count")
+                .bind("region_occupancy", "lesion.region_occupancy")
+                .bind("metric_min", "homeostasis.metric_min")
+                .bind("metric_max", "homeostasis.metric_max")
+                .bind("reference_samples", "homeostasis.reference_samples")
+                .bind("neighbor_overflow", "population.neighbor_overflow")
+                .bind("physical_overflow", "population.physical_neighbor_overflow")
+                .bind("perception_truncation", "population.perception_truncation")
+                .bind("deposit_saturation", "deposit.saturation_count")
+                .bind("energy_residual", "ledger.residual")
+                .bind("window", "regeneration.window")
+                .bind("consecutive_ticks", "regeneration.consecutive_ticks")
+                .bind("success_tick", "regeneration.success_tick"),
         );
 
     let mut schedule = ScheduleDraft::fixed("simulation", 120)
@@ -948,7 +1123,10 @@ pub fn hello_organism_builder_with_config(config: HelloOrganismConfig) -> Module
         .run_after("reduce_morphology", "clear_morphology")
         .run_after("finalize_morphology", "reduce_morphology")
         .run_after("reduce_radial_density", "finalize_morphology")
-        .run_after("begin_energy_ledger", "reduce_radial_density")
+        .run_after("clear_regeneration_metrics", "reduce_radial_density")
+        .run_after("reduce_lesion_occupancy", "clear_regeneration_metrics")
+        .run_after("reduce_injury", "reduce_lesion_occupancy")
+        .run_after("begin_energy_ledger", "reduce_injury")
         .run_after("sample", "begin_energy_ledger")
         .run_after("decide", "sample")
         .run_after("resolve_state", "decide")
@@ -976,7 +1154,8 @@ pub fn hello_organism_builder_with_config(config: HelloOrganismConfig) -> Module
         .run_after("commit_population_development", "commit_population_core")
         .run_after("finalize_population", "commit_population_development")
         .run_after("finalize_energy_ledger", "finalize_population")
-        .run_after("measure_homeostasis_events", "finalize_energy_ledger")
+        .run_after("audit_regeneration", "finalize_energy_ledger")
+        .run_after("measure_homeostasis_events", "audit_regeneration")
         .run_after("audit_homeostasis", "measure_homeostasis_events")
         .run_after("advance_tick", "audit_homeostasis")
         .show_after("organism", "advance_tick")
@@ -1000,10 +1179,12 @@ pub fn hello_organism_builder_with_config(config: HelloOrganismConfig) -> Module
                 stream_slot("inhibitor", f32_type.clone(), SlotAccess::Read, true),
                 stream_slot("nutrient", f32_type.clone(), SlotAccess::Read, true),
                 stream_slot("density", f32_type.clone(), SlotAccess::Read, true),
+                stream_slot("injury", f32_type.clone(), SlotAccess::Read, true),
                 stream_slot("activator_bin", u32_type.clone(), SlotAccess::Write, false),
                 stream_slot("inhibitor_bin", u32_type.clone(), SlotAccess::Write, false),
                 stream_slot("nutrient_bin", u32_type.clone(), SlotAccess::Write, false),
                 stream_slot("density_bin", u32_type.clone(), SlotAccess::Write, false),
+                stream_slot("injury_bin", u32_type.clone(), SlotAccess::Write, false),
                 stream_slot("energy_bin", u32_type.clone(), SlotAccess::Write, false),
                 value_slot("width", u32_type.clone()),
                 stream_slot("active_count", u32_type.clone(), SlotAccess::Read, true),
@@ -1029,16 +1210,22 @@ pub fn hello_organism_builder_with_config(config: HelloOrganismConfig) -> Module
                 ("surface_exposure_bin", SlotAccess::Read),
                 ("recent_surface_exposure", SlotAccess::Read),
                 ("energy_bin", SlotAccess::Read),
+                ("injury_bin", SlotAccess::Read),
+                ("repair_enabled", SlotAccess::Read),
                 ("requested_fate", SlotAccess::Write),
                 ("requested_phase", SlotAccess::Write),
                 ("requested_health", SlotAccess::Write),
                 ("divide_intent", SlotAccess::Write),
                 ("death_intent", SlotAccess::Write),
+                ("repair_intent", SlotAccess::Write),
                 ("activator_deposit", SlotAccess::Write),
                 ("inhibitor_deposit", SlotAccess::Write),
+                ("injury_deposit", SlotAccess::Write),
             ]
             .into_iter()
-            .map(|(name, access)| stream_slot(name, u32_type.clone(), access, false))
+            .map(|(name, access)| {
+                stream_slot(name, u32_type.clone(), access, name == "repair_enabled")
+            })
             .chain(std::iter::once(stream_slot(
                 "active_count",
                 u32_type.clone(),
@@ -1116,6 +1303,7 @@ pub fn hello_organism_builder_with_config(config: HelloOrganismConfig) -> Module
                     SlotAccess::Read,
                     false,
                 ),
+                stream_slot("injury_deposit", u32_type.clone(), SlotAccess::Read, false),
                 stream_slot("active_count", u32_type.clone(), SlotAccess::Read, true),
                 stream_slot("stable_id", u32_type.clone(), SlotAccess::Read, false),
                 stream_slot("event_hash", u32_type.clone(), SlotAccess::ReadWrite, false),
@@ -1153,6 +1341,7 @@ pub fn hello_organism_builder_with_config(config: HelloOrganismConfig) -> Module
                 stream_slot("activator", u32_type.clone(), SlotAccess::Write, false),
                 stream_slot("inhibitor", u32_type.clone(), SlotAccess::Write, false),
                 stream_slot("density", u32_type.clone(), SlotAccess::Write, false),
+                stream_slot("injury", u32_type.clone(), SlotAccess::Write, false),
             ],
         ))
         .kernel(packaged_kernel(
@@ -1177,9 +1366,11 @@ pub fn hello_organism_builder_with_config(config: HelloOrganismConfig) -> Module
                     SlotAccess::Read,
                     false,
                 ),
+                stream_slot("injury_amount", u32_type.clone(), SlotAccess::Read, false),
                 stream_slot("activator", u32_type.clone(), SlotAccess::Atomic, true),
                 stream_slot("inhibitor", u32_type.clone(), SlotAccess::Atomic, true),
                 stream_slot("density", u32_type.clone(), SlotAccess::Atomic, true),
+                stream_slot("injury", u32_type.clone(), SlotAccess::Atomic, true),
                 stream_slot(
                     "saturation_count",
                     u32_type.clone(),
@@ -1211,6 +1402,7 @@ pub fn hello_organism_builder_with_config(config: HelloOrganismConfig) -> Module
                     false,
                 ),
                 stream_slot("density_deposit", u32_type.clone(), SlotAccess::Read, false),
+                stream_slot("injury_deposit", u32_type.clone(), SlotAccess::Read, false),
                 stream_slot("activator_next", f32_type.clone(), SlotAccess::Write, false),
                 stream_slot("inhibitor_next", f32_type.clone(), SlotAccess::Write, false),
                 stream_slot("nutrient_next", f32_type.clone(), SlotAccess::Write, false),
@@ -1220,6 +1412,7 @@ pub fn hello_organism_builder_with_config(config: HelloOrganismConfig) -> Module
                 value_slot("activator_transport", f32_type.clone()),
                 value_slot("inhibitor_transport", f32_type.clone()),
                 stream_slot("nutrient_supply", f32_type.clone(), SlotAccess::Read, true),
+                stream_slot("injury_transport", f32_type.clone(), SlotAccess::Read, true),
             ],
         ))
         .kernel(packaged_kernel(
@@ -1486,6 +1679,234 @@ pub fn hello_organism_builder_with_config(config: HelloOrganismConfig) -> Module
             vec![
                 stream_slot("nutrient_supply", f32_type.clone(), SlotAccess::Write, true),
                 value_slot("requested_supply", f32_type.clone()),
+            ],
+        ))
+        .kernel(packaged_kernel(
+            "organism_set_injury_transport",
+            vec![
+                stream_slot(
+                    "injury_transport",
+                    f32_type.clone(),
+                    SlotAccess::Write,
+                    true,
+                ),
+                value_slot("requested_transport", f32_type.clone()),
+            ],
+        ))
+        .kernel(packaged_kernel(
+            "organism_set_repair_enabled",
+            vec![
+                stream_slot("repair_enabled", u32_type.clone(), SlotAccess::Write, true),
+                value_slot("requested_enabled", u32_type.clone()),
+            ],
+        ))
+        .kernel(packaged_kernel(
+            "organism_apply_lesion_cells",
+            vec![
+                stream_slot_unit(
+                    "position",
+                    vec3.clone(),
+                    Unit::METER,
+                    SlotAccess::Read,
+                    true,
+                ),
+                stream_slot("stable_id", u32_type.clone(), SlotAccess::Read, true),
+                stream_slot("fate", u32_type.clone(), SlotAccess::Read, true),
+                stream_slot("health", u32_type.clone(), SlotAccess::ReadWrite, true),
+                stream_slot("event_hash", u32_type.clone(), SlotAccess::ReadWrite, true),
+                stream_slot("energy", f32_type.clone(), SlotAccess::Read, true),
+                stream_slot("active_count", u32_type.clone(), SlotAccess::Read, true),
+                value_slot("center_x_q16", DataType::Scalar(ScalarType::I32)),
+                value_slot("center_y_q16", DataType::Scalar(ScalarType::I32)),
+                value_slot("radius_q16", u32_type.clone()),
+                stream_slot("removed_ids", u32_type.clone(), SlotAccess::Write, true),
+                stream_slot("removed_count", u32_type.clone(), SlotAccess::Write, true),
+                stream_slot("damaged_count", u32_type.clone(), SlotAccess::Write, true),
+                stream_slot("removed_energy", f32_type.clone(), SlotAccess::Write, true),
+                stream_slot(
+                    "recorded_center_q16",
+                    DataType::Scalar(ScalarType::I32),
+                    SlotAccess::Write,
+                    true,
+                ),
+                stream_slot(
+                    "recorded_radius_q16",
+                    u32_type.clone(),
+                    SlotAccess::Write,
+                    true,
+                ),
+            ],
+        ))
+        .kernel(packaged_kernel(
+            "organism_apply_lesion_field",
+            vec![
+                stream_slot("injury", f32_type.clone(), SlotAccess::ReadWrite, false),
+                value_slot("width", u32_type.clone()),
+                value_slot("center_x_q16", DataType::Scalar(ScalarType::I32)),
+                value_slot("center_y_q16", DataType::Scalar(ScalarType::I32)),
+                value_slot("radius_q16", u32_type.clone()),
+                value_slot("injury_strength", f32_type.clone()),
+                stream_slot("injury_transport", f32_type.clone(), SlotAccess::Read, true),
+            ],
+        ))
+        .kernel(packaged_kernel(
+            "organism_clear_regeneration_metrics",
+            vec![
+                stream_slot(
+                    "region_occupancy",
+                    u32_type.clone(),
+                    SlotAccess::Atomic,
+                    true,
+                ),
+                stream_slot(
+                    "injury_total_q16",
+                    u32_type.clone(),
+                    SlotAccess::Atomic,
+                    true,
+                ),
+                stream_slot(
+                    "injury_peak_q16",
+                    u32_type.clone(),
+                    SlotAccess::Atomic,
+                    true,
+                ),
+            ],
+        ))
+        .kernel(packaged_kernel(
+            "organism_reduce_lesion_occupancy",
+            vec![
+                stream_slot_unit(
+                    "position",
+                    vec3.clone(),
+                    Unit::METER,
+                    SlotAccess::Read,
+                    false,
+                ),
+                stream_slot_unit(
+                    "cell_radius",
+                    f32_type.clone(),
+                    Unit::METER,
+                    SlotAccess::Read,
+                    false,
+                ),
+                stream_slot(
+                    "center_q16",
+                    DataType::Scalar(ScalarType::I32),
+                    SlotAccess::Read,
+                    true,
+                ),
+                stream_slot("radius_q16", u32_type.clone(), SlotAccess::Read, true),
+                stream_slot(
+                    "region_occupancy",
+                    u32_type.clone(),
+                    SlotAccess::Atomic,
+                    true,
+                ),
+                stream_slot("active_count", u32_type.clone(), SlotAccess::Read, true),
+            ],
+        ))
+        .kernel(packaged_kernel(
+            "organism_reduce_injury",
+            vec![
+                stream_slot("injury", f32_type.clone(), SlotAccess::Read, false),
+                stream_slot(
+                    "injury_total_q16",
+                    u32_type.clone(),
+                    SlotAccess::Atomic,
+                    true,
+                ),
+                stream_slot(
+                    "injury_peak_q16",
+                    u32_type.clone(),
+                    SlotAccess::Atomic,
+                    true,
+                ),
+            ],
+        ))
+        .kernel(packaged_kernel(
+            "organism_audit_regeneration",
+            vec![
+                stream_slot("tick", u32_type.clone(), SlotAccess::Read, true),
+                stream_slot("population", u32_type.clone(), SlotAccess::Read, true),
+                stream_slot("component_count", u32_type.clone(), SlotAccess::Read, true),
+                stream_slot(
+                    "component_unresolved",
+                    u32_type.clone(),
+                    SlotAccess::Read,
+                    true,
+                ),
+                stream_slot("organizer_count", u32_type.clone(), SlotAccess::Read, true),
+                stream_slot("boundary_count", u32_type.clone(), SlotAccess::Read, true),
+                stream_slot("interior_count", u32_type.clone(), SlotAccess::Read, true),
+                stream_slot("area_q16", u32_type.clone(), SlotAccess::Read, true),
+                stream_slot("compactness_q16", u32_type.clone(), SlotAccess::Read, true),
+                stream_slot(
+                    "centroid_x_q16",
+                    DataType::Scalar(ScalarType::I32),
+                    SlotAccess::Read,
+                    true,
+                ),
+                stream_slot(
+                    "centroid_y_q16",
+                    DataType::Scalar(ScalarType::I32),
+                    SlotAccess::Read,
+                    true,
+                ),
+                stream_slot("injury_total_q16", u32_type.clone(), SlotAccess::Read, true),
+                stream_slot(
+                    "post_lesion_peak_q16",
+                    u32_type.clone(),
+                    SlotAccess::ReadWrite,
+                    true,
+                ),
+                stream_slot("removed_count", u32_type.clone(), SlotAccess::Read, true),
+                stream_slot("region_occupancy", u32_type.clone(), SlotAccess::Read, true),
+                stream_slot("metric_min", u32_type.clone(), SlotAccess::Read, true),
+                stream_slot("metric_max", u32_type.clone(), SlotAccess::Read, true),
+                stream_slot(
+                    "reference_samples",
+                    u32_type.clone(),
+                    SlotAccess::Read,
+                    true,
+                ),
+                stream_slot(
+                    "neighbor_overflow",
+                    u32_type.clone(),
+                    SlotAccess::Read,
+                    true,
+                ),
+                stream_slot(
+                    "physical_overflow",
+                    u32_type.clone(),
+                    SlotAccess::Read,
+                    true,
+                ),
+                stream_slot(
+                    "perception_truncation",
+                    u32_type.clone(),
+                    SlotAccess::Read,
+                    true,
+                ),
+                stream_slot(
+                    "deposit_saturation",
+                    u32_type.clone(),
+                    SlotAccess::Read,
+                    true,
+                ),
+                stream_slot("energy_residual", f32_type.clone(), SlotAccess::Read, true),
+                stream_slot("window", u32_type.clone(), SlotAccess::Read, true),
+                stream_slot(
+                    "consecutive_ticks",
+                    u32_type.clone(),
+                    SlotAccess::ReadWrite,
+                    true,
+                ),
+                stream_slot(
+                    "success_tick",
+                    u32_type.clone(),
+                    SlotAccess::ReadWrite,
+                    true,
+                ),
             ],
         ))
         .kernel(packaged_kernel(
@@ -1826,6 +2247,10 @@ pub fn hello_organism_builder_with_config(config: HelloOrganismConfig) -> Module
                 stream_slot("surface_mask", u32_type.clone(), SlotAccess::Read, true),
                 stream_slot("divide", u32_type.clone(), SlotAccess::Read, true),
                 stream_slot("death", u32_type.clone(), SlotAccess::Read, true),
+                stream_slot("repair", u32_type.clone(), SlotAccess::Read, true),
+                stream_slot("injury", f32_type.clone(), SlotAccess::Read, true),
+                stream_slot("density", f32_type.clone(), SlotAccess::Read, true),
+                value_slot("field_width", u32_type.clone()),
                 stream_slot("bin_count", u32_type.clone(), SlotAccess::Read, true),
                 stream_slot("bin_indices", u32_type.clone(), SlotAccess::Read, true),
                 stream_slot("survival", u32_type.clone(), SlotAccess::Write, false),
@@ -2108,6 +2533,7 @@ pub fn hello_organism_builder_with_config(config: HelloOrganismConfig) -> Module
                     SlotAccess::Read,
                     true,
                 ),
+                stream_slot("repair", u32_type.clone(), SlotAccess::Read, true),
                 stream_slot("stage_age", u32_type.clone(), SlotAccess::Write, false),
                 stream_slot("stage_fate", u32_type.clone(), SlotAccess::Write, false),
                 stream_slot("stage_phase", u32_type.clone(), SlotAccess::Write, false),
@@ -2315,6 +2741,53 @@ pub fn hello_organism_builder_with_config(config: HelloOrganismConfig) -> Module
                 .grant("mutate_environment"),
         )
         .pass(
+            PassDraft::new("ablate_injury_transport", "organism_set_injury_transport")
+                .bind("injury_transport", "environment.injury_transport")
+                .bind(
+                    "requested_transport",
+                    "environment.requested_injury_transport",
+                )
+                .grant("mutate_environment"),
+        )
+        .pass(
+            PassDraft::new("set_repair_enabled", "organism_set_repair_enabled")
+                .bind("repair_enabled", "environment.repair_enabled")
+                .bind("requested_enabled", "environment.requested_repair_enabled")
+                .grant("mutate_environment"),
+        )
+        .pass(
+            PassDraft::new("apply_lesion_cells", "organism_apply_lesion_cells")
+                .bind("position", "cells.position")
+                .bind("stable_id", "cells.stable_id")
+                .bind("fate", "cells.fate")
+                .bind("health", "cells.health")
+                .bind("event_hash", "cells.event_hash")
+                .bind("energy", "cells.energy")
+                .bind("active_count", "cells.active_count")
+                .bind("center_x_q16", "lesion.reference_center_x_q16")
+                .bind("center_y_q16", "lesion.reference_center_y_q16")
+                .bind("radius_q16", "lesion.reference_radius_q16")
+                .bind("removed_ids", "lesion.removed_ids")
+                .bind("removed_count", "lesion.removed_count")
+                .bind("damaged_count", "lesion.damaged_count")
+                .bind("removed_energy", "lesion.removed_energy")
+                .bind("recorded_center_q16", "lesion.center_q16")
+                .bind("recorded_radius_q16", "lesion.radius_q16")
+                .grant("mutate_cell_state"),
+        )
+        .pass(
+            PassDraft::new("apply_lesion_field", "organism_apply_lesion_field")
+                .bind("injury", "field.injury")
+                .bind("width", "field.width")
+                .bind("center_x_q16", "lesion.reference_center_x_q16")
+                .bind("center_y_q16", "lesion.reference_center_y_q16")
+                .bind("radius_q16", "lesion.reference_radius_q16")
+                .bind("injury_strength", "lesion.reference_injury")
+                .bind("injury_transport", "environment.injury_transport")
+                .dispatch_over("field.injury")
+                .grant("mutate_field_state"),
+        )
+        .pass(
             PassDraft::new("sample", "organism_sample")
                 .bind("position", "cells.position")
                 .bind("energy", "cells.energy")
@@ -2322,10 +2795,12 @@ pub fn hello_organism_builder_with_config(config: HelloOrganismConfig) -> Module
                 .bind("inhibitor", "field.inhibitor")
                 .bind("nutrient", "field.nutrient")
                 .bind("density", "field.density")
+                .bind("injury", "field.injury")
                 .bind("activator_bin", "perception.activator_bin")
                 .bind("inhibitor_bin", "perception.inhibitor_bin")
                 .bind("nutrient_bin", "perception.nutrient_bin")
                 .bind("density_bin", "perception.density_bin")
+                .bind("injury_bin", "perception.injury_bin")
                 .bind("energy_bin", "perception.energy_bin")
                 .bind("width", "field.width")
                 .bind("active_count", "cells.active_count")
@@ -2350,13 +2825,17 @@ pub fn hello_organism_builder_with_config(config: HelloOrganismConfig) -> Module
                 .bind("surface_exposure_bin", "perception.surface_exposure_bin")
                 .bind("recent_surface_exposure", "cells.recent_surface_exposure")
                 .bind("energy_bin", "perception.energy_bin")
+                .bind("injury_bin", "perception.injury_bin")
+                .bind("repair_enabled", "environment.repair_enabled")
                 .bind("requested_fate", "intent.requested_fate")
                 .bind("requested_phase", "intent.requested_phase")
                 .bind("requested_health", "intent.requested_health")
                 .bind("divide_intent", "intent.divide")
                 .bind("death_intent", "intent.death")
+                .bind("repair_intent", "intent.repair")
                 .bind("activator_deposit", "intent.activator_deposit")
                 .bind("inhibitor_deposit", "intent.inhibitor_deposit")
+                .bind("injury_deposit", "intent.injury_deposit")
                 .bind("active_count", "cells.active_count")
                 .dispatch_over("cells.stable_id"),
         )
@@ -2383,6 +2862,7 @@ pub fn hello_organism_builder_with_config(config: HelloOrganismConfig) -> Module
                 .bind("surface_exposure_bin", "perception.surface_exposure_bin")
                 .bind("activator_deposit", "intent.activator_deposit")
                 .bind("inhibitor_deposit", "intent.inhibitor_deposit")
+                .bind("injury_deposit", "intent.injury_deposit")
                 .bind("active_count", "cells.active_count")
                 .bind("stable_id", "cells.stable_id")
                 .bind("event_hash", "cells.event_hash")
@@ -2418,6 +2898,7 @@ pub fn hello_organism_builder_with_config(config: HelloOrganismConfig) -> Module
                 .bind("activator", "deposit.activator_q16")
                 .bind("inhibitor", "deposit.inhibitor_q16")
                 .bind("density", "deposit.density_q16")
+                .bind("injury", "deposit.injury_q16")
                 .dispatch_over("deposit.activator_q16"),
         )
         .pass(
@@ -2425,9 +2906,11 @@ pub fn hello_organism_builder_with_config(config: HelloOrganismConfig) -> Module
                 .bind("position", "cells.position")
                 .bind("activator_amount", "intent.activator_deposit")
                 .bind("inhibitor_amount", "intent.inhibitor_deposit")
+                .bind("injury_amount", "intent.injury_deposit")
                 .bind("activator", "deposit.activator_q16")
                 .bind("inhibitor", "deposit.inhibitor_q16")
                 .bind("density", "deposit.density_q16")
+                .bind("injury", "deposit.injury_q16")
                 .bind("saturation_count", "deposit.saturation_count")
                 .bind("width", "field.width")
                 .bind("active_count", "cells.active_count")
@@ -2443,6 +2926,7 @@ pub fn hello_organism_builder_with_config(config: HelloOrganismConfig) -> Module
                 .bind("activator_deposit", "deposit.activator_q16")
                 .bind("inhibitor_deposit", "deposit.inhibitor_q16")
                 .bind("density_deposit", "deposit.density_q16")
+                .bind("injury_deposit", "deposit.injury_q16")
                 .bind("activator_next", "field.activator_next")
                 .bind("inhibitor_next", "field.inhibitor_next")
                 .bind("nutrient_next", "field.nutrient_next")
@@ -2452,6 +2936,7 @@ pub fn hello_organism_builder_with_config(config: HelloOrganismConfig) -> Module
                 .bind("activator_transport", "field.activator_transport")
                 .bind("inhibitor_transport", "field.inhibitor_transport")
                 .bind("nutrient_supply", "environment.nutrient_supply")
+                .bind("injury_transport", "environment.injury_transport")
                 .dispatch_over("field.activator")
                 .grant("mutate_field_state"),
         )
@@ -2502,6 +2987,10 @@ pub fn hello_organism_builder_with_config(config: HelloOrganismConfig) -> Module
                 .bind("surface_mask", "perception.surface_mask")
                 .bind("divide", "intent.divide")
                 .bind("death", "intent.death")
+                .bind("repair", "intent.repair")
+                .bind("injury", "field.injury")
+                .bind("density", "field.density")
+                .bind("field_width", "field.width")
                 .bind("bin_count", "spatial.living_bin_count")
                 .bind("bin_indices", "spatial.living_bin_indices")
                 .bind("survival", "population.survival_flag")
@@ -2655,6 +3144,7 @@ pub fn hello_organism_builder_with_config(config: HelloOrganismConfig) -> Module
             .bind("birth_prefix", "population.birth_prefix")
             .bind("survivor_count", "population.survivor_count")
             .bind("accepted_birth_count", "population.accepted_birth_count")
+            .bind("repair", "intent.repair")
             .bind("stage_age", "population.stage_age")
             .bind("stage_fate", "population.stage_fate")
             .bind("stage_phase", "population.stage_phase")
@@ -2883,6 +3373,87 @@ pub fn hello_organism_builder_with_config(config: HelloOrganismConfig) -> Module
                     ]),
                 ),
         )
+        .scenario(ScenarioDraft::new(
+            "regeneration_control",
+            "simulation",
+            50_000,
+        ))
+        .scenario(
+            ScenarioDraft::new("structural_regeneration", "simulation", 50_000)
+                .intervene(
+                    30_000,
+                    "apply_lesion_cells",
+                    [
+                        ("lesion.reference_center_x_q16", Literal::I32(5_571)),
+                        ("lesion.reference_center_y_q16", Literal::I32(0)),
+                        ("lesion.reference_radius_q16", Literal::U32(3_932)),
+                    ],
+                )
+                .intervene(
+                    30_000,
+                    "apply_lesion_field",
+                    [
+                        ("lesion.reference_center_x_q16", Literal::I32(5_571)),
+                        ("lesion.reference_center_y_q16", Literal::I32(0)),
+                        ("lesion.reference_radius_q16", Literal::U32(3_932)),
+                        ("lesion.reference_injury", Literal::f32(4.0)),
+                    ],
+                ),
+        )
+        .scenario(
+            ScenarioDraft::new("regeneration_without_injury", "simulation", 50_000)
+                .intervene(
+                    30_000,
+                    "ablate_injury_transport",
+                    [("environment.requested_injury_transport", Literal::f32(0.0))],
+                )
+                .intervene(
+                    30_000,
+                    "apply_lesion_cells",
+                    [
+                        ("lesion.reference_center_x_q16", Literal::I32(5_571)),
+                        ("lesion.reference_center_y_q16", Literal::I32(0)),
+                        ("lesion.reference_radius_q16", Literal::U32(3_932)),
+                    ],
+                )
+                .intervene(
+                    30_000,
+                    "apply_lesion_field",
+                    [
+                        ("lesion.reference_center_x_q16", Literal::I32(5_571)),
+                        ("lesion.reference_center_y_q16", Literal::I32(0)),
+                        ("lesion.reference_radius_q16", Literal::U32(3_932)),
+                        ("lesion.reference_injury", Literal::f32(4.0)),
+                    ],
+                ),
+        )
+        .scenario(
+            ScenarioDraft::new("regeneration_without_repair", "simulation", 50_000)
+                .intervene(
+                    30_000,
+                    "set_repair_enabled",
+                    [("environment.requested_repair_enabled", Literal::U32(0))],
+                )
+                .intervene(
+                    30_000,
+                    "apply_lesion_cells",
+                    [
+                        ("lesion.reference_center_x_q16", Literal::I32(5_571)),
+                        ("lesion.reference_center_y_q16", Literal::I32(0)),
+                        ("lesion.reference_radius_q16", Literal::U32(3_932)),
+                    ],
+                )
+                .intervene(
+                    30_000,
+                    "apply_lesion_field",
+                    [
+                        ("lesion.reference_center_x_q16", Literal::I32(5_571)),
+                        ("lesion.reference_center_y_q16", Literal::I32(0)),
+                        ("lesion.reference_radius_q16", Literal::U32(3_932)),
+                        ("lesion.reference_injury", Literal::f32(4.0)),
+                    ],
+                ),
+        )
         .capability(CapabilityDraft::state_mutate(
             "mutate_cell_state",
             committed
@@ -2900,7 +3471,11 @@ pub fn hello_organism_builder_with_config(config: HelloOrganismConfig) -> Module
         ))
         .capability(CapabilityDraft::state_mutate(
             "mutate_environment",
-            ["environment.nutrient_supply"],
+            [
+                "environment.nutrient_supply",
+                "environment.injury_transport",
+                "environment.repair_enabled",
+            ],
         ))
         .capability(CapabilityDraft::state_mutate(
             "advance_simulation_time",

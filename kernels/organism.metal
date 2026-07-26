@@ -10,6 +10,27 @@ inline uint field_index(float2 position, uint width) {
     return cell.y * width + cell.x;
 }
 
+inline float sample_field_bilinear(
+    const device float* field,
+    float2 position,
+    uint width)
+{
+    const float2 normalized = clamp(position * 0.45f + 0.5f, 0.0f, 1.0f);
+    const float2 coordinate = normalized * float(width - 1u);
+    const uint2 lower = uint2(floor(coordinate));
+    const uint2 upper = min(lower + 1u, uint2(width - 1u));
+    const float2 fraction = coordinate - float2(lower);
+    const float lower_value = mix(
+        field[lower.y * width + lower.x],
+        field[lower.y * width + upper.x],
+        fraction.x);
+    const float upper_value = mix(
+        field[upper.y * width + lower.x],
+        field[upper.y * width + upper.x],
+        fraction.x);
+    return mix(lower_value, upper_value, fraction.y);
+}
+
 inline uint decision_bin(float value, float maximum) {
     return uint(round(clamp(value / maximum, 0.0f, 1.0f) * float(LOOM_DECISION_MAX)));
 }
@@ -21,13 +42,15 @@ kernel void organism_sample(
     const device float* inhibitor [[buffer(3)]],
     const device float* nutrient [[buffer(4)]],
     const device float* density [[buffer(5)]],
-    device uint* activator_bin [[buffer(6)]],
-    device uint* inhibitor_bin [[buffer(7)]],
-    device uint* nutrient_bin [[buffer(8)]],
-    device uint* density_bin [[buffer(9)]],
-    device uint* energy_bin [[buffer(10)]],
-    constant uint& width [[buffer(11)]],
-    const device uint* active_count [[buffer(12)]],
+    const device float* injury [[buffer(6)]],
+    device uint* activator_bin [[buffer(7)]],
+    device uint* inhibitor_bin [[buffer(8)]],
+    device uint* nutrient_bin [[buffer(9)]],
+    device uint* density_bin [[buffer(10)]],
+    device uint* injury_bin [[buffer(11)]],
+    device uint* energy_bin [[buffer(12)]],
+    constant uint& width [[buffer(13)]],
+    const device uint* active_count [[buffer(14)]],
     uint index [[thread_position_in_grid]])
 {
     if (index >= active_count[0]) return;
@@ -36,6 +59,7 @@ kernel void organism_sample(
     inhibitor_bin[index] = decision_bin(inhibitor[field], 16.0f);
     nutrient_bin[index] = decision_bin(nutrient[field], 1.0f);
     density_bin[index] = decision_bin(density[field], 16.0f);
+    injury_bin[index] = decision_bin(injury[field], 16.0f);
     energy_bin[index] = decision_bin(energy[index], 8.0f);
 }
 
@@ -57,14 +81,18 @@ kernel void organism_decide(
     const device uint* surface_exposure_bin [[buffer(14)]],
     const device uint* recent_surface_exposure [[buffer(15)]],
     const device uint* energy_bin [[buffer(16)]],
-    device uint* requested_fate [[buffer(17)]],
-    device uint* requested_phase [[buffer(18)]],
-    device uint* requested_health [[buffer(19)]],
-    device uint* divide_intent [[buffer(20)]],
-    device uint* death_intent [[buffer(21)]],
-    device uint* activator_deposit [[buffer(22)]],
-    device uint* inhibitor_deposit [[buffer(23)]],
-    const device uint* active_count [[buffer(24)]],
+    const device uint* injury_bin [[buffer(17)]],
+    const device uint* repair_enabled [[buffer(18)]],
+    device uint* requested_fate [[buffer(19)]],
+    device uint* requested_phase [[buffer(20)]],
+    device uint* requested_health [[buffer(21)]],
+    device uint* divide_intent [[buffer(22)]],
+    device uint* death_intent [[buffer(23)]],
+    device uint* repair_intent [[buffer(24)]],
+    device uint* activator_deposit [[buffer(25)]],
+    device uint* inhibitor_deposit [[buffer(26)]],
+    device uint* injury_deposit [[buffer(27)]],
+    const device uint* active_count [[buffer(28)]],
     uint index [[thread_position_in_grid]])
 {
     if (index >= active_count[0]) return;
@@ -73,14 +101,27 @@ kernel void organism_decide(
     const uint current_health = health[index];
     const bool organizer = stable_id[index] == 1u;
     const bool receives_activator = organizer || activator_bin[index] >= 1u;
+    const bool repair =
+        repair_enabled[0] != 0u &&
+        current_health == 1u &&
+        injury_bin[index] >= 8u &&
+        energy_bin[index] >= 384u;
+    const uint exposure =
+        (recent_surface_exposure[index] * 3u + surface_exposure_bin[index]) / 4u;
+    const bool repair_complete =
+        current_health == 1u &&
+        current_phase == 2u &&
+        (injury_bin[index] < 256u ||
+         (contact_count[index] >= 3u && exposure < 2560u));
     uint next_phase = current_phase;
-    if (current_phase == 0 && age[index] >= 60 && receives_activator) next_phase = 1;
+    if (repair_complete) next_phase = 3u;
+    else if (current_health == 1u && current_phase == 2u) next_phase = 2u;
+    else if (repair && current_phase == 3u) next_phase = 1u;
+    else if (current_phase == 0 && age[index] >= 60 && receives_activator) next_phase = 1;
     else if (current_phase == 1 && fate_confidence[index] >= 60) next_phase = 2;
     else if (current_phase == 2 && fate_confidence[index] >= 120) next_phase = 3;
 
     uint next_fate = current_fate;
-    const uint exposure =
-        (recent_surface_exposure[index] * 3u + surface_exposure_bin[index]) / 4u;
     if (current_fate == 1 && next_phase >= 2) {
         next_fate =
             surface_exposure_bin[index] >= 2560u || contact_count[index] < 3u ? 2u : 3u;
@@ -94,10 +135,11 @@ kernel void organism_decide(
 
     requested_fate[index] = organizer ? 0 : next_fate;
     requested_phase[index] = next_phase;
-    requested_health[index] = current_health;
+    requested_health[index] = repair_complete ? 0u : current_health;
     const bool can_divide =
         next_phase >= 1 &&
         current_health == 0 &&
+        injury_bin[index] < 8u &&
         age[index] >= 240 &&
         energy_bin[index] >= 1536 &&
         nutrient_bin[index] >= 2048 &&
@@ -105,10 +147,25 @@ kernel void organism_decide(
         local_density_bin[index] < 1024 &&
         ((~surface_mask[index]) & 255u) != 0u &&
         receives_activator;
-    divide_intent[index] = can_divide ? 1 : 0;
+    const bool regenerative_division =
+        repair_enabled[0] != 0u &&
+        injury_bin[index] >= 8u &&
+        current_health == 1u &&
+        current_phase == 1u &&
+        age[index] >= 60u &&
+        energy_bin[index] >= 384u &&
+        nutrient_bin[index] >= 1024u &&
+        inhibitor_bin[index] < 2048u &&
+        local_density_bin[index] < 3072u &&
+        ((~surface_mask[index]) & 255u) != 0u &&
+        receives_activator;
+    divide_intent[index] = can_divide || regenerative_division ? 1 : 0;
     death_intent[index] = current_health == 2 || energy_bin[index] == 0 ? 1 : 0;
+    repair_intent[index] = repair || regenerative_division ? 1u : 0u;
     activator_deposit[index] = organizer ? LOOM_Q16 : LOOM_Q16 / 16;
     inhibitor_deposit[index] = organizer ? LOOM_Q16 / 256 : LOOM_Q16 / 16;
+    injury_deposit[index] =
+        current_health == 1u && current_phase != 2u ? LOOM_Q16 / 32u : 0u;
 }
 
 inline bool fate_allowed(uint from, uint to) {
@@ -157,15 +214,16 @@ kernel void organism_resolve_state(
     const device uint* surface_exposure_bin [[buffer(18)]],
     const device uint* activator_deposit [[buffer(19)]],
     const device uint* inhibitor_deposit [[buffer(20)]],
-    const device uint* active_count [[buffer(21)]],
-    const device uint* stable_id [[buffer(22)]],
-    device uint* event_hash [[buffer(23)]],
-    const device uint* divide_intent [[buffer(24)]],
-    const device uint* death_intent [[buffer(25)]],
-    device float* ledger_absorbed [[buffer(26)]],
-    device float* ledger_maintenance [[buffer(27)]],
-    device float* ledger_decisions [[buffer(28)]],
-    device float* ledger_signaling [[buffer(29)]],
+    const device uint* injury_deposit [[buffer(21)]],
+    const device uint* active_count [[buffer(22)]],
+    const device uint* stable_id [[buffer(23)]],
+    device uint* event_hash [[buffer(24)]],
+    const device uint* divide_intent [[buffer(25)]],
+    const device uint* death_intent [[buffer(26)]],
+    device float* ledger_absorbed [[buffer(27)]],
+    device float* ledger_maintenance [[buffer(28)]],
+    device float* ledger_decisions [[buffer(29)]],
+    device float* ledger_signaling [[buffer(30)]],
     uint index [[thread_position_in_grid]])
 {
     if (index >= active_count[0]) return;
@@ -177,7 +235,13 @@ kernel void organism_resolve_state(
     if (fate_allowed(old_fate, next_fate)) {
         fate[index] = next_fate;
     }
-    if (phase_allowed(phase[index], requested_phase[index], health[index], false)) {
+    const bool repair_rollback =
+        phase[index] == 3u &&
+        requested_phase[index] == 1u &&
+        health[index] == 1u;
+    if (phase_allowed(
+            phase[index], requested_phase[index], health[index],
+            repair_rollback)) {
         phase[index] = requested_phase[index];
     }
     if (health_allowed(health[index], requested_health[index])) {
@@ -213,10 +277,16 @@ kernel void organism_resolve_state(
         float(nutrient_bin[index]) / float(LOOM_DECISION_MAX) * 0.00978f;
     const float maintenance = 0.001f + previous_energy * 0.0022f;
     const float signaling =
-        float(activator_deposit[index] + inhibitor_deposit[index]) /
+        float(
+            activator_deposit[index] +
+            inhibitor_deposit[index] +
+            injury_deposit[index]) /
         float(LOOM_Q16) * 0.0001f;
     const float decisions =
-        float(divide_intent[index] + death_intent[index]) * 0.00001f;
+        float(
+            divide_intent[index] +
+            death_intent[index] +
+            uint(repair_rollback)) * 0.00001f;
     ledger_absorbed[index] = absorbed;
     ledger_maintenance[index] = maintenance;
     ledger_decisions[index] = decisions;
@@ -237,11 +307,13 @@ kernel void organism_clear_deposits(
     device uint* activator [[buffer(0)]],
     device uint* inhibitor [[buffer(1)]],
     device uint* density [[buffer(2)]],
+    device uint* injury [[buffer(3)]],
     uint index [[thread_position_in_grid]])
 {
     activator[index] = 0;
     inhibitor[index] = 0;
     density[index] = 0;
+    injury[index] = 0;
 }
 
 inline bool saturating_add(device atomic_uint* target, uint amount) {
@@ -261,12 +333,14 @@ kernel void organism_deposit(
     const device packed_float3* position [[buffer(0)]],
     const device uint* activator_amount [[buffer(1)]],
     const device uint* inhibitor_amount [[buffer(2)]],
-    device atomic_uint* activator [[buffer(3)]],
-    device atomic_uint* inhibitor [[buffer(4)]],
-    device atomic_uint* density [[buffer(5)]],
-    device atomic_uint* saturation_count [[buffer(6)]],
-    constant uint& width [[buffer(7)]],
-    const device uint* active_count [[buffer(8)]],
+    const device uint* injury_amount [[buffer(3)]],
+    device atomic_uint* activator [[buffer(4)]],
+    device atomic_uint* inhibitor [[buffer(5)]],
+    device atomic_uint* density [[buffer(6)]],
+    device atomic_uint* injury [[buffer(7)]],
+    device atomic_uint* saturation_count [[buffer(8)]],
+    constant uint& width [[buffer(9)]],
+    const device uint* active_count [[buffer(10)]],
     uint index [[thread_position_in_grid]])
 {
     if (index >= active_count[0]) return;
@@ -282,7 +356,8 @@ kernel void organism_deposit(
             const bool saturated =
                 saturating_add(&activator[field], activator_amount[index] * weight / 16) |
                 saturating_add(&inhibitor[field], inhibitor_amount[index] * weight / 16) |
-                saturating_add(&density[field], LOOM_Q16 * weight / 16);
+                saturating_add(&density[field], LOOM_Q16 * weight / 16) |
+                saturating_add(&injury[field], injury_amount[index] * weight / 16);
             if (saturated) {
                 atomic_fetch_add_explicit(
                     &saturation_count[0], 1u, memory_order_relaxed);
@@ -326,15 +401,17 @@ kernel void organism_diffuse(
     const device uint* activator_deposit [[buffer(5)]],
     const device uint* inhibitor_deposit [[buffer(6)]],
     const device uint* density_deposit [[buffer(7)]],
-    device float* activator_next [[buffer(8)]],
-    device float* inhibitor_next [[buffer(9)]],
-    device float* nutrient_next [[buffer(10)]],
-    device float* density_next [[buffer(11)]],
-    device float* injury_next [[buffer(12)]],
-    constant uint& width [[buffer(13)]],
-    constant float& activator_transport [[buffer(14)]],
-    constant float& inhibitor_transport [[buffer(15)]],
-    const device float* nutrient_supply [[buffer(16)]],
+    const device uint* injury_deposit [[buffer(8)]],
+    device float* activator_next [[buffer(9)]],
+    device float* inhibitor_next [[buffer(10)]],
+    device float* nutrient_next [[buffer(11)]],
+    device float* density_next [[buffer(12)]],
+    device float* injury_next [[buffer(13)]],
+    constant uint& width [[buffer(14)]],
+    constant float& activator_transport [[buffer(15)]],
+    constant float& inhibitor_transport [[buffer(16)]],
+    const device float* nutrient_supply [[buffer(17)]],
+    const device float* injury_transport [[buffer(18)]],
     uint index [[thread_position_in_grid]])
 {
     activator_next[index] = diffuse_channel(
@@ -352,7 +429,9 @@ kernel void organism_diffuse(
         0.001f * (clamp(nutrient_supply[0], 0.0f, 1.0f) - nutrient[index]) -
         local_consumption,
         0.0f, 1.0f);
-    injury_next[index] = max(0.0f, injury[index] * 0.99f);
+    injury_next[index] = diffuse_channel(
+        injury, injury_deposit, index, width, 0.18f, 0.01f, 16.0f) *
+        injury_transport[0];
 }
 
 kernel void organism_commit_fields(
@@ -660,6 +739,255 @@ kernel void organism_set_nutrient_supply(
 {
     if (index == 0) {
         nutrient_supply[0] = clamp(requested_supply, 0.0f, 1.0f);
+    }
+}
+
+kernel void organism_set_injury_transport(
+    device float* injury_transport [[buffer(0)]],
+    constant float& requested_transport [[buffer(1)]],
+    uint index [[thread_position_in_grid]])
+{
+    if (index == 0) {
+        injury_transport[0] = clamp(requested_transport, 0.0f, 1.0f);
+    }
+}
+
+kernel void organism_set_repair_enabled(
+    device uint* repair_enabled [[buffer(0)]],
+    constant uint& requested_enabled [[buffer(1)]],
+    uint index [[thread_position_in_grid]])
+{
+    if (index == 0) repair_enabled[0] = min(requested_enabled, 1u);
+}
+
+kernel void organism_apply_lesion_cells(
+    const device packed_float3* position [[buffer(0)]],
+    const device uint* stable_id [[buffer(1)]],
+    const device uint* fate [[buffer(2)]],
+    device uint* health [[buffer(3)]],
+    device uint* event_hash [[buffer(4)]],
+    const device float* energy [[buffer(5)]],
+    const device uint* active_count [[buffer(6)]],
+    constant int& center_x_q16 [[buffer(7)]],
+    constant int& center_y_q16 [[buffer(8)]],
+    constant uint& radius_q16 [[buffer(9)]],
+    device uint* removed_ids [[buffer(10)]],
+    device uint* removed_count [[buffer(11)]],
+    device uint* damaged_count [[buffer(12)]],
+    device float* removed_energy [[buffer(13)]],
+    device int* recorded_center_q16 [[buffer(14)]],
+    device uint* recorded_radius_q16 [[buffer(15)]],
+    uint index [[thread_position_in_grid]])
+{
+    if (index != 0) return;
+    uint removed = 0u;
+    uint damaged = 0u;
+    float lost_energy = 0.0f;
+    const long radius_squared = long(radius_q16) * long(radius_q16);
+    const long shell_radius = long(radius_q16) + 1966l;
+    const long shell_squared = shell_radius * shell_radius;
+    for (uint cell = 0; cell < active_count[0]; ++cell) {
+        const float2 point = float3(position[cell]).xy;
+        const long x = long(round(point.x * float(LOOM_Q16))) - long(center_x_q16);
+        const long y = long(round(point.y * float(LOOM_Q16))) - long(center_y_q16);
+        const long distance_squared = x * x + y * y;
+        if (fate[cell] != 0u && distance_squared <= radius_squared) {
+            health[cell] = 2u;
+            if (removed < 64u) removed_ids[removed] = stable_id[cell];
+            removed += 1u;
+            lost_energy += energy[cell];
+            event_hash[cell] = mix_event(
+                event_hash[cell], 7u, stable_id[cell], uint(distance_squared));
+        } else if (
+            fate[cell] != 0u &&
+            health[cell] == 0u &&
+            distance_squared <= shell_squared) {
+            health[cell] = 1u;
+            damaged += 1u;
+            event_hash[cell] = mix_event(
+                event_hash[cell], 8u, stable_id[cell], uint(distance_squared));
+        }
+    }
+    removed_count[0] = removed;
+    damaged_count[0] = damaged;
+    removed_energy[0] = lost_energy;
+    recorded_center_q16[0] = center_x_q16;
+    recorded_center_q16[1] = center_y_q16;
+    recorded_radius_q16[0] = radius_q16;
+}
+
+kernel void organism_apply_lesion_field(
+    device float* injury [[buffer(0)]],
+    constant uint& width [[buffer(1)]],
+    constant int& center_x_q16 [[buffer(2)]],
+    constant int& center_y_q16 [[buffer(3)]],
+    constant uint& radius_q16 [[buffer(4)]],
+    constant float& injury_strength [[buffer(5)]],
+    const device float* injury_transport [[buffer(6)]],
+    uint index [[thread_position_in_grid]])
+{
+    const uint x = index % width;
+    const uint y = index / width;
+    const float2 world =
+        (float2(float(x) + 0.5f, float(y) + 0.5f) / float(width) - 0.5f) /
+        0.45f;
+    const long dx =
+        long(round(world.x * float(LOOM_Q16))) - long(center_x_q16);
+    const long dy =
+        long(round(world.y * float(LOOM_Q16))) - long(center_y_q16);
+    if (dx * dx + dy * dy <= long(radius_q16) * long(radius_q16)) {
+        injury[index] = max(
+            injury[index],
+            max(0.0f, injury_strength) * injury_transport[0]);
+    }
+}
+
+kernel void organism_clear_regeneration_metrics(
+    device atomic_uint* region_occupancy [[buffer(0)]],
+    device atomic_uint* injury_total_q16 [[buffer(1)]],
+    device atomic_uint* injury_peak_q16 [[buffer(2)]],
+    uint index [[thread_position_in_grid]])
+{
+    if (index == 0) {
+        atomic_store_explicit(&region_occupancy[0], 0u, memory_order_relaxed);
+        atomic_store_explicit(&injury_total_q16[0], 0u, memory_order_relaxed);
+        atomic_store_explicit(&injury_peak_q16[0], 0u, memory_order_relaxed);
+    }
+}
+
+kernel void organism_reduce_lesion_occupancy(
+    const device packed_float3* position [[buffer(0)]],
+    const device float* cell_radius [[buffer(1)]],
+    const device int* center_q16 [[buffer(2)]],
+    const device uint* radius_q16 [[buffer(3)]],
+    device atomic_uint* region_occupancy [[buffer(4)]],
+    const device uint* active_count [[buffer(5)]],
+    uint index [[thread_position_in_grid]])
+{
+    if (index >= active_count[0] || radius_q16[0] == 0u) return;
+    const float2 point = float3(position[index]).xy;
+    const long dx =
+        long(round(point.x * float(LOOM_Q16))) - long(center_q16[0]);
+    const long dy =
+        long(round(point.y * float(LOOM_Q16))) - long(center_q16[1]);
+    const long occupied_radius =
+        long(radius_q16[0]) +
+        long(round(clamp(cell_radius[index], 0.0f, 1.0f) * float(LOOM_Q16)));
+    if (dx * dx + dy * dy <= occupied_radius * occupied_radius) {
+        atomic_fetch_add_explicit(&region_occupancy[0], 1u, memory_order_relaxed);
+    }
+}
+
+kernel void organism_reduce_injury(
+    const device float* injury [[buffer(0)]],
+    device atomic_uint* injury_total_q16 [[buffer(1)]],
+    device atomic_uint* injury_peak_q16 [[buffer(2)]],
+    uint index [[thread_position_in_grid]])
+{
+    const uint value = uint(round(clamp(injury[index], 0.0f, 16.0f) * 4096.0f));
+    atomic_fetch_add_explicit(&injury_total_q16[0], value, memory_order_relaxed);
+    atomic_fetch_max_explicit(&injury_peak_q16[0], value, memory_order_relaxed);
+}
+
+inline bool regeneration_metric_within(
+    uint value,
+    uint minimum,
+    uint maximum,
+    uint percent)
+{
+    const uint margin = max(1u, maximum * percent / 100u);
+    const uint lower = minimum > margin ? minimum - margin : 0u;
+    return value >= lower && value <= maximum + margin;
+}
+
+inline uint integer_sqrt(ulong value) {
+    ulong result = 0ul;
+    ulong bit = 1ul << 62;
+    while (bit > value) bit >>= 2;
+    while (bit != 0ul) {
+        if (value >= result + bit) {
+            value -= result + bit;
+            result = (result >> 1) + bit;
+        } else {
+            result >>= 1;
+        }
+        bit >>= 2;
+    }
+    return uint(min(result, ulong(UINT_MAX)));
+}
+
+kernel void organism_audit_regeneration(
+    const device uint* tick [[buffer(0)]],
+    const device uint* population [[buffer(1)]],
+    const device uint* component_count [[buffer(2)]],
+    const device uint* component_unresolved [[buffer(3)]],
+    const device uint* organizer_count [[buffer(4)]],
+    const device uint* boundary_count [[buffer(5)]],
+    const device uint* interior_count [[buffer(6)]],
+    const device uint* area_q16 [[buffer(7)]],
+    const device uint* compactness_q16 [[buffer(8)]],
+    const device int* centroid_x_q16 [[buffer(9)]],
+    const device int* centroid_y_q16 [[buffer(10)]],
+    const device uint* injury_total_q16 [[buffer(11)]],
+    device uint* post_lesion_peak_q16 [[buffer(12)]],
+    const device uint* removed_count [[buffer(13)]],
+    const device uint* region_occupancy [[buffer(14)]],
+    const device uint* metric_min [[buffer(15)]],
+    const device uint* metric_max [[buffer(16)]],
+    const device uint* reference_samples [[buffer(17)]],
+    const device uint* neighbor_overflow [[buffer(18)]],
+    const device uint* physical_overflow [[buffer(19)]],
+    const device uint* perception_truncation [[buffer(20)]],
+    const device uint* deposit_saturation [[buffer(21)]],
+    const device float* energy_residual [[buffer(22)]],
+    const device uint* window [[buffer(23)]],
+    device uint* consecutive_ticks [[buffer(24)]],
+    device uint* success_tick [[buffer(25)]],
+    uint index [[thread_position_in_grid]])
+{
+    if (index != 0) return;
+    const uint now = tick[0];
+    if (now < window[0] || now >= window[1] || removed_count[0] == 0u) return;
+    post_lesion_peak_q16[0] =
+        max(post_lesion_peak_q16[0], injury_total_q16[0]);
+    const uint encoded_centroid_x =
+        uint(clamp(centroid_x_q16[0] + 65536, 0, 131072));
+    const uint encoded_centroid_y =
+        uint(clamp(centroid_y_q16[0] + 65536, 0, 131072));
+    const uint required_occupancy = (removed_count[0] * 9u + 9u) / 10u;
+    constexpr ulong PI_Q16 = 205887ul;
+    const ulong reference_area_scaled =
+        ulong(metric_max[3]) * ulong(LOOM_Q16) * ulong(LOOM_Q16) / PI_Q16;
+    const uint centroid_tolerance =
+        max(1u, integer_sqrt(reference_area_scaled) / 10u);
+    const bool injury_cleared =
+        post_lesion_peak_q16[0] > 0u &&
+        injury_total_q16[0] * 20u <= post_lesion_peak_q16[0];
+    const bool recovered =
+        reference_samples[0] == 1000u &&
+        component_count[0] == 1u &&
+        component_unresolved[0] == 0u &&
+        organizer_count[0] == 1u &&
+        regeneration_metric_within(population[0], metric_min[0], metric_max[0], 10u) &&
+        regeneration_metric_within(boundary_count[0], metric_min[1], metric_max[1], 10u) &&
+        regeneration_metric_within(interior_count[0], metric_min[2], metric_max[2], 10u) &&
+        regeneration_metric_within(area_q16[0], metric_min[3], metric_max[3], 10u) &&
+        regeneration_metric_within(
+            compactness_q16[0], metric_min[5], metric_max[5], 15u) &&
+        encoded_centroid_x + centroid_tolerance >= metric_min[6] &&
+        encoded_centroid_x <= metric_max[6] + centroid_tolerance &&
+        encoded_centroid_y + centroid_tolerance >= metric_min[7] &&
+        encoded_centroid_y <= metric_max[7] + centroid_tolerance &&
+        region_occupancy[0] >= required_occupancy &&
+        injury_cleared &&
+        neighbor_overflow[0] == 0u &&
+        physical_overflow[0] == 0u &&
+        perception_truncation[0] == 0u &&
+        deposit_saturation[0] == 0u &&
+        abs(energy_residual[0]) <= 0.001f;
+    consecutive_ticks[0] = recovered ? consecutive_ticks[0] + 1u : 0u;
+    if (success_tick[0] == 0u && consecutive_ticks[0] >= window[2]) {
+        success_tick[0] = now + 1u;
     }
 }
 
@@ -1127,12 +1455,16 @@ kernel void organism_prequalify_population(
     const device uint* surface_mask [[buffer(5)]],
     const device uint* divide [[buffer(6)]],
     const device uint* death [[buffer(7)]],
-    const device uint* bin_count [[buffer(8)]],
-    const device uint* bin_indices [[buffer(9)]],
-    device uint* survival [[buffer(10)]],
-    device uint* birth [[buffer(11)]],
-    device uint* candidate_sector [[buffer(12)]],
-    device atomic_uint* overflow [[buffer(13)]],
+    const device uint* repair [[buffer(8)]],
+    const device float* injury [[buffer(9)]],
+    const device float* density [[buffer(10)]],
+    constant uint& field_width [[buffer(11)]],
+    const device uint* bin_count [[buffer(12)]],
+    const device uint* bin_indices [[buffer(13)]],
+    device uint* survival [[buffer(14)]],
+    device uint* birth [[buffer(15)]],
+    device uint* candidate_sector [[buffer(16)]],
+    device atomic_uint* overflow [[buffer(17)]],
     uint index [[thread_position_in_grid]])
 {
     if (index >= active_count[0]) {
@@ -1148,9 +1480,15 @@ kernel void organism_prequalify_population(
     if (!survives || divide[index] == 0) return;
 
     const float2 parent = float3(position[index]).xy;
+    const uint parent_injury =
+        decision_bin(sample_field_bilinear(injury, parent, field_width), 16.0f);
     const uint available = (~surface_mask[index]) & 255u;
     const uint start =
         (stable_id[index] * 2654435761u + age[index] * 2246822519u) & 7u;
+    uint best_sector = UINT_MAX;
+    uint best_contacts = 0u;
+    uint best_density = 0u;
+    uint best_injury = 0u;
     for (uint rank = 0; rank < 8u; ++rank) {
         const uint sector = (start + rank) & 7u;
         if ((available & (1u << sector)) == 0u) continue;
@@ -1160,6 +1498,7 @@ kernel void organism_prequalify_population(
 
         const int2 center = spatial_cell(candidate);
         uint observed = 0;
+        uint candidate_contacts = 0u;
         bool invalid = false;
         for (int y = -1; y <= 1 && !invalid; ++y) {
             for (int x = -1; x <= 1 && !invalid; ++x) {
@@ -1180,14 +1519,44 @@ kernel void organism_prequalify_population(
                         candidate, radius[index],
                         float3(position[other]).xy, radius[other]);
                     if (invalid) break;
+                    candidate_contacts += uint(quantized_contact(
+                        candidate, radius[index],
+                        float3(position[other]).xy, radius[other]));
                 }
             }
         }
         if (!invalid) {
+            if (repair[index] != 0u) {
+                const uint candidate_injury =
+                    decision_bin(
+                        sample_field_bilinear(injury, candidate, field_width),
+                        16.0f);
+                const uint candidate_density =
+                    decision_bin(
+                        sample_field_bilinear(density, candidate, field_width),
+                        16.0f);
+                if (candidate_injury >= 8u &&
+                    candidate_injury > parent_injury &&
+                    (candidate_contacts > best_contacts ||
+                     (candidate_contacts == best_contacts &&
+                      (candidate_density > best_density ||
+                       (candidate_density == best_density &&
+                        candidate_injury > best_injury))))) {
+                    best_contacts = candidate_contacts;
+                    best_density = candidate_density;
+                    best_injury = candidate_injury;
+                    best_sector = sector;
+                }
+                continue;
+            }
             candidate_sector[index] = sector;
             birth[index] = 1u;
             return;
         }
+    }
+    if (best_sector != UINT_MAX) {
+        candidate_sector[index] = best_sector;
+        birth[index] = 1u;
     }
 }
 
@@ -1452,17 +1821,18 @@ kernel void organism_scatter_population_development(
     const device uint* birth_prefix [[buffer(16)]],
     const device uint* survivor_count [[buffer(17)]],
     const device uint* accepted_birth_count [[buffer(18)]],
-    device uint* stage_age [[buffer(19)]],
-    device uint* stage_fate [[buffer(20)]],
-    device uint* stage_phase [[buffer(21)]],
-    device uint* stage_health [[buffer(22)]],
-    device uint* stage_previous_fate [[buffer(23)]],
-    device uint* stage_fate_confidence [[buffer(24)]],
-    device uint* stage_time_in_fate [[buffer(25)]],
-    device uint* stage_recent_activator [[buffer(26)]],
-    device uint* stage_recent_inhibitor [[buffer(27)]],
-    device uint* stage_recent_surface_exposure [[buffer(28)]],
-    device float4* stage_color [[buffer(29)]],
+    const device uint* repair [[buffer(19)]],
+    device uint* stage_age [[buffer(20)]],
+    device uint* stage_fate [[buffer(21)]],
+    device uint* stage_phase [[buffer(22)]],
+    device uint* stage_health [[buffer(23)]],
+    device uint* stage_previous_fate [[buffer(24)]],
+    device uint* stage_fate_confidence [[buffer(25)]],
+    device uint* stage_time_in_fate [[buffer(26)]],
+    device uint* stage_recent_activator [[buffer(27)]],
+    device uint* stage_recent_inhibitor [[buffer(28)]],
+    device uint* stage_recent_surface_exposure [[buffer(29)]],
+    device float4* stage_color [[buffer(30)]],
     uint index [[thread_position_in_grid]])
 {
     if (index >= active_count[0]) return;
@@ -1488,8 +1858,8 @@ kernel void organism_scatter_population_development(
         const uint destination = survivor_count[0] + birth_prefix[index] - 1;
         stage_age[destination] = 0;
         stage_fate[destination] = 1;
-        stage_phase[destination] = 0;
-        stage_health[destination] = 0;
+        stage_phase[destination] = repair[source] != 0u ? 1u : 0u;
+        stage_health[destination] = repair[source] != 0u ? 1u : 0u;
         stage_previous_fate[destination] = 1;
         stage_fate_confidence[destination] = 0;
         stage_time_in_fate[destination] = 0;

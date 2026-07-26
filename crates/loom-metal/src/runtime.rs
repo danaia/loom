@@ -466,6 +466,16 @@ impl RuntimeState {
         scenario: &loom_core::ScenarioNode,
         ticks: u64,
     ) -> Result<Vec<ScenarioEventRecord>, RuntimeDiagnostic> {
+        self.execute_scenario_range(device, scenario, 0, ticks)
+    }
+
+    fn execute_scenario_range(
+        &mut self,
+        device: &Device,
+        scenario: &loom_core::ScenarioNode,
+        start_tick: u64,
+        ticks: u64,
+    ) -> Result<Vec<ScenarioEventRecord>, RuntimeDiagnostic> {
         let schedule = &self.validated.execution_plan().schedules[0];
         if schedule.schedule != scenario.schedule {
             return Err(RuntimeDiagnostic::new(
@@ -474,7 +484,13 @@ impl RuntimeState {
             ));
         }
         let mut records = Vec::new();
-        for tick in 0..ticks {
+        let end_tick = start_tick.checked_add(ticks).ok_or_else(|| {
+            RuntimeDiagnostic::new(
+                RuntimeDiagnosticCode::UnsupportedGraph,
+                "scenario tick range exceeds u64",
+            )
+        })?;
+        for tick in start_tick..end_tick {
             let command_buffer = self.queue.new_command_buffer();
             command_buffer.set_label("loom.scenario.tick");
             let mut override_buffers = Vec::<BTreeMap<ValueId, Buffer>>::new();
@@ -539,6 +555,37 @@ impl RuntimeState {
             }
         }
         Ok(records)
+    }
+
+    #[cfg(test)]
+    fn fork_checkpoint(&self, device: &Device) -> Result<Self, RuntimeDiagnostic> {
+        let layer = MetalLayer::new();
+        layer.set_device(device);
+        layer.set_pixel_format(MTLPixelFormat::BGRA8Unorm);
+        let fork = Self::new(self.validated.clone(), device.clone(), layer)?;
+        let command_buffer = fork.queue.new_command_buffer();
+        command_buffer.set_label("loom.checkpoint.fork");
+        let blit = command_buffer.new_blit_command_encoder();
+        for (source_versions, destination_versions) in
+            self.stream_buffers.iter().zip(&fork.stream_buffers)
+        {
+            for (source, destination) in source_versions.iter().zip(destination_versions) {
+                let length = source.length();
+                debug_assert_eq!(length, destination.length());
+                blit.copy_from_buffer(source, 0, destination, 0, length);
+            }
+        }
+        blit.end_encoding();
+        command_buffer.commit();
+        command_buffer.wait_until_completed();
+        if command_buffer.status() == MTLCommandBufferStatus::Error {
+            return Err(RuntimeDiagnostic::new(
+                RuntimeDiagnosticCode::CommandBufferFailed,
+                "Metal failed to fork the committed checkpoint",
+            )
+            .at("runtime.checkpoint"));
+        }
+        Ok(fork)
     }
 
     fn run_benchmark(
@@ -2577,7 +2624,6 @@ mod tests {
         };
         let active_count_id = stream_id("cells.active_count");
         let stable_id = stream_id("cells.stable_id");
-        let parent_id = stream_id("cells.parent_id");
         let overflow_id = stream_id("population.neighbor_overflow");
         let report = Validator::validate(&graph);
         assert!(
@@ -2647,7 +2693,7 @@ mod tests {
             u64::from(active_count) * 4,
         );
         blit.copy_from_buffer(
-            &state.stream_buffers[parent_id.0 as usize][0],
+            &state.stream_buffers[stable_id.0 as usize][0],
             0,
             &id_readback,
             u64::from(active_count) * 4,
@@ -3339,6 +3385,272 @@ mod tests {
                 && (floats[3] / DEADLINE as f32).abs() <= 0.000_02
                 && floats[5] < floats[4],
             "the recovered organism must retain bounded, auditable energy: {floats:?}"
+        );
+    }
+
+    #[derive(Debug)]
+    struct RegenerationProbe {
+        scalars: Vec<u32>,
+        removed_ids: Vec<u32>,
+    }
+
+    fn regeneration_probe(
+        graph: &loom_core::ModuleGraph,
+        state: &RuntimeState,
+        device: &metal::Device,
+    ) -> RegenerationProbe {
+        let stream_id = |name: &str| {
+            graph
+                .resources
+                .streams
+                .iter()
+                .find(|stream| stream.name == name)
+                .unwrap()
+                .id
+        };
+        let scalar_ids = [
+            "simulation.tick",
+            "morphology.population",
+            "morphology.component_count",
+            "morphology.component_unresolved",
+            "morphology.organizer_count",
+            "morphology.boundary_count",
+            "morphology.interior_count",
+            "morphology.area_q16",
+            "morphology.compactness_q16",
+            "lesion.removed_count",
+            "lesion.damaged_count",
+            "lesion.region_occupancy",
+            "regeneration.injury_total_q16",
+            "regeneration.post_lesion_peak_q16",
+            "regeneration.consecutive_ticks",
+            "regeneration.success_tick",
+            "environment.injury_transport",
+            "environment.repair_enabled",
+            "ledger.residual",
+            "lesion.removed_energy",
+            "ledger.current_total",
+        ]
+        .map(stream_id);
+        let removed_ids = stream_id("lesion.removed_ids");
+        let word_count = scalar_ids.len() + 64;
+        let readback = device.new_buffer(
+            (word_count * 4) as u64,
+            metal::MTLResourceOptions::StorageModeShared,
+        );
+        let command_buffer = state.queue.new_command_buffer();
+        let blit = command_buffer.new_blit_command_encoder();
+        for (index, stream) in scalar_ids.iter().enumerate() {
+            blit.copy_from_buffer(
+                &state.stream_buffers[stream.0 as usize][0],
+                0,
+                &readback,
+                (index * 4) as u64,
+                4,
+            );
+        }
+        blit.copy_from_buffer(
+            &state.stream_buffers[removed_ids.0 as usize][0],
+            0,
+            &readback,
+            (scalar_ids.len() * 4) as u64,
+            64 * 4,
+        );
+        blit.end_encoding();
+        command_buffer.commit();
+        command_buffer.wait_until_completed();
+        let words =
+            unsafe { std::slice::from_raw_parts(readback.contents().cast::<u32>(), word_count) };
+        RegenerationProbe {
+            scalars: words[..scalar_ids.len()].to_vec(),
+            removed_ids: words[scalar_ids.len()..].to_vec(),
+        }
+    }
+
+    fn checkpoint_signature(state: &RuntimeState, device: &metal::Device) -> Vec<u8> {
+        let length = state
+            .stream_buffers
+            .iter()
+            .flatten()
+            .map(|buffer| buffer.length())
+            .sum::<u64>();
+        let readback = device.new_buffer(length, metal::MTLResourceOptions::StorageModeShared);
+        let command_buffer = state.queue.new_command_buffer();
+        let blit = command_buffer.new_blit_command_encoder();
+        let mut offset = 0;
+        for buffer in state.stream_buffers.iter().flatten() {
+            blit.copy_from_buffer(buffer, 0, &readback, offset, buffer.length());
+            offset += buffer.length();
+        }
+        blit.end_encoding();
+        command_buffer.commit();
+        command_buffer.wait_until_completed();
+        unsafe {
+            std::slice::from_raw_parts(readback.contents().cast::<u8>(), length as usize).to_vec()
+        }
+    }
+
+    #[test]
+    fn committed_homeostatic_checkpoint_branches_into_causal_regeneration_proofs() {
+        const CAPACITY: u32 = 1_024;
+        const CHECKPOINT_TICK: u64 = 30_000;
+        const RECOVERY_TICKS: u64 = 20_000;
+        let graph = hello_organism_builder(CAPACITY).build().unwrap();
+        let scenario = |name: &str| {
+            graph
+                .scenarios
+                .iter()
+                .find(|scenario| scenario.name == name)
+                .cloned()
+                .unwrap()
+        };
+        let control_scenario = scenario("regeneration_control");
+        let lesion_scenario = scenario("structural_regeneration");
+        let no_injury_scenario = scenario("regeneration_without_injury");
+        let no_repair_scenario = scenario("regeneration_without_repair");
+        let report = Validator::validate(&graph);
+        assert!(
+            report.is_valid(),
+            "Gate 5 diagnostics: {:#?}",
+            report.diagnostics
+        );
+        let device = metal::Device::system_default().expect("Metal device");
+        let layer = metal::MetalLayer::new();
+        layer.set_device(&device);
+        layer.set_pixel_format(metal::MTLPixelFormat::BGRA8Unorm);
+        let mut control =
+            RuntimeState::new(report.validated.unwrap(), device.clone(), layer).unwrap();
+        control
+            .run_benchmark(
+                &device,
+                BenchmarkConfig {
+                    mode: BenchmarkMode::Headless,
+                    runner: BenchmarkRunner::LoomPlan,
+                    warmup_ticks: 0,
+                    sample_ticks: CHECKPOINT_TICK as u32,
+                    ..BenchmarkConfig::default()
+                },
+            )
+            .expect("the homeostatic checkpoint must execute");
+
+        let mut lesion = control.fork_checkpoint(&device).unwrap();
+        let mut no_injury = control.fork_checkpoint(&device).unwrap();
+        let mut no_repair = control.fork_checkpoint(&device).unwrap();
+        let checkpoint = checkpoint_signature(&control, &device);
+        assert_eq!(checkpoint_signature(&lesion, &device), checkpoint);
+        assert_eq!(checkpoint_signature(&no_injury, &device), checkpoint);
+        assert_eq!(checkpoint_signature(&no_repair, &device), checkpoint);
+
+        let control_events = control
+            .execute_scenario_range(&device, &control_scenario, CHECKPOINT_TICK, RECOVERY_TICKS)
+            .unwrap();
+        let lesion_events = lesion
+            .execute_scenario_range(&device, &lesion_scenario, CHECKPOINT_TICK, RECOVERY_TICKS)
+            .unwrap();
+        let no_injury_events = no_injury
+            .execute_scenario_range(
+                &device,
+                &no_injury_scenario,
+                CHECKPOINT_TICK,
+                RECOVERY_TICKS,
+            )
+            .unwrap();
+        let no_repair_events = no_repair
+            .execute_scenario_range(
+                &device,
+                &no_repair_scenario,
+                CHECKPOINT_TICK,
+                RECOVERY_TICKS,
+            )
+            .unwrap();
+        assert!(control_events.is_empty());
+        assert_eq!(lesion_events.len(), 2);
+        assert_eq!(no_injury_events.len(), 3);
+        assert_eq!(no_repair_events.len(), 3);
+        assert!(
+            lesion_events
+                .iter()
+                .all(|event| event.tick == CHECKPOINT_TICK),
+            "the lesion must be a canonical tick-addressed event: {lesion_events:?}"
+        );
+
+        let control = regeneration_probe(&graph, &control, &device);
+        let lesion = regeneration_probe(&graph, &lesion, &device);
+        let no_injury = regeneration_probe(&graph, &no_injury, &device);
+        let no_repair = regeneration_probe(&graph, &no_repair, &device);
+        eprintln!(
+            "Gate 5 control={:?} lesion={:?} no_injury={:?} no_repair={:?}",
+            control.scalars, lesion.scalars, no_injury.scalars, no_repair.scalars
+        );
+        assert_eq!(&control.scalars[..7], &[50_000, 39, 1, 0, 1, 16, 22]);
+        assert_eq!(control.scalars[9], 0);
+        assert!(
+            (8..=12).contains(&lesion.scalars[9]),
+            "the reference lesion must remove 20–30% of the body: {lesion:?}"
+        );
+        assert!(lesion.scalars[10] > 0, "the wound shell must be damaged");
+        assert!(
+            lesion.removed_ids[..lesion.scalars[9] as usize]
+                .windows(2)
+                .all(|ids| ids[0] < ids[1]),
+            "removed stable IDs must be canonical: {lesion:?}"
+        );
+        assert!(
+            f32::from_bits(lesion.scalars[19]) > 0.0,
+            "lesion energy must be recorded as environmental loss"
+        );
+        assert_eq!(no_injury.scalars[9], lesion.scalars[9]);
+        assert_eq!(no_repair.scalars[9], lesion.scalars[9]);
+        let removed = lesion.scalars[9] as usize;
+        assert_eq!(
+            &no_injury.removed_ids[..removed],
+            &lesion.removed_ids[..removed]
+        );
+        assert_eq!(
+            &no_repair.removed_ids[..removed],
+            &lesion.removed_ids[..removed]
+        );
+        assert_eq!(f32::from_bits(lesion.scalars[16]), 1.0);
+        assert_eq!(lesion.scalars[17], 1);
+        assert_eq!(f32::from_bits(no_injury.scalars[16]), 0.0);
+        assert_eq!(no_injury.scalars[17], 1);
+        assert_eq!(f32::from_bits(no_repair.scalars[16]), 1.0);
+        assert_eq!(no_repair.scalars[17], 0);
+        assert_eq!(
+            no_injury.scalars[13], 0,
+            "disabling injury transport must eliminate the distributed injury signal"
+        );
+        assert!(
+            (36..=43).contains(&lesion.scalars[1])
+                && lesion.scalars[2] == 1
+                && lesion.scalars[3] == 0
+                && lesion.scalars[4] == 1,
+            "the repaired body must recover population, connectivity, and organizer identity: \
+             {lesion:?}"
+        );
+        assert!(
+            lesion.scalars[11] * 10 >= lesion.scalars[9] * 9,
+            "the original wound region must close: {lesion:?}"
+        );
+        assert!(
+            lesion.scalars[15] > CHECKPOINT_TICK as u32
+                && lesion.scalars[15] <= 50_000
+                && lesion.scalars[14] >= 500,
+            "the reference branch must sustain its recovery envelope: {lesion:?}"
+        );
+        assert!(
+            lesion.scalars[12] * 20 <= lesion.scalars[13]
+                && f32::from_bits(lesion.scalars[18]).abs() <= 0.001,
+            "injury and energy accounting must resolve: {lesion:?}"
+        );
+        assert_eq!(
+            no_injury.scalars[15], 0,
+            "without injury transport the causal regeneration criterion must fail: \
+             {no_injury:?}"
+        );
+        assert_eq!(
+            no_repair.scalars[15], 0,
+            "without repair behavior sensing alone must not regenerate: {no_repair:?}"
         );
     }
 

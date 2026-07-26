@@ -14,6 +14,8 @@ The language documents are read in this order:
 10. [`benchmarks/hello-organism-population-gate-m4-pro.md`](benchmarks/hello-organism-population-gate-m4-pro.md) — scalable population correctness load and declared-capacity timing boundary.
 11. [`benchmarks/hello-organism-neighborhood-gate-m4-pro.md`](benchmarks/hello-organism-neighborhood-gate-m4-pro.md) — developmental neighborhoods, morphology reductions, and their timing boundary.
 12. [`benchmarks/hello-organism-development-gate-m4-pro.md`](benchmarks/hello-organism-development-gate-m4-pro.md) — one-seed procedural development, causal ablations, exact replay, and populated reference timing.
+13. [`benchmarks/hello-organism-homeostasis-gate-m4-pro.md`](benchmarks/hello-organism-homeostasis-gate-m4-pro.md) — sustained equilibrium, energy accounting, nutrient perturbation, and the clean Gate 4 timing.
+14. [`benchmarks/hello-organism-regeneration-gate-m4-pro.md`](benchmarks/hello-organism-regeneration-gate-m4-pro.md) — committed-checkpoint lesion, local repair, sustained recovery, and causal ablations.
 
 Planned specifications:
 

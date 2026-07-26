@@ -52,8 +52,10 @@ The backend-neutral reference rules remain the correctness oracle. The Metal
 membership path now uses global stable-ID radix ordering, stable-ID bin
 canonicalization, and prefix allocation. Developmental neighborhoods, morphology
 reductions, causal field ablations, exact logical replay, and sustained
-homeostasis are measured proofs. Regeneration and adaptive aggregation remain
-follow-on gates.
+homeostasis are measured proofs. A committed checkpoint now also forks into a
+recorded structural lesion, a successful local injury/repair branch, and
+no-injury/no-repair causal ablations. Regeneration is therefore a measured
+proof; adaptive aggregation remains the next gate.
 
 ## Consequences
 

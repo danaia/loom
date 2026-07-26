@@ -24,6 +24,9 @@ systems:
   Q16.16 deposit-saturation audits, and per-lineage logical trajectory hashes,
 - a per-tick energy ledger, declared nutrient-supply intervention, disjoint
   reference/validation envelopes, and long-horizon invariant counters,
+- checkpoint-forked control and lesion scenarios, a local injury field,
+  authoritative damaged-state repair, injury-gradient daughter placement, and
+  sustained regeneration acceptance,
 - deterministic reference rules for transitions, quantization, deposits,
   neighborhoods, contact connectivity, stable compaction, allocation, energy,
   and sustained recovery envelopes.
@@ -47,7 +50,7 @@ committed state T
 → commit fields
 → resolve deaths and births
 → reconcile energy ledger
-→ audit sustained morphology and energy
+→ audit sustained morphology, energy, injury, and wound closure
 → committed state T+1
 ```
 
@@ -83,6 +86,12 @@ perception, decisions, deposits, component labels, or reductions.
   energy envelope; ticks 29,000–30,000 must remain inside the declared expanded
   bounds. A separate counter audits connectivity, organizer uniqueness,
   differentiated fates, and all overflow conditions after tick 3,200.
+- Regeneration: a peripheral quantized circular lesion at tick 30,000 removes
+  8–12 non-organizer cells and damages its contact shell. Recovery requires 500
+  consecutive ticks inside the expanded pre-lesion morphology envelope, at
+  least 90% cell-disk wound-region occupancy, one converged component, one organizer,
+  injury below 5% of its post-lesion peak, bounded energy residual, and no
+  overflow, truncation, or saturation.
 
 The backend-neutral reference implementation lives in `loom_core::emergent`.
 Metal implementations are required to match its logical rules and declared
@@ -127,16 +136,32 @@ Implemented and tested:
   decisions, accepted motion, signaling, division, death loss, per-tick
   residual, and cumulative residual; accepted motion is explicitly zero for
   this non-locomoting specimen, and the 30,000-tick proofs bound both
-  instantaneous and mean cumulative accounting error.
+  instantaneous and mean cumulative accounting error,
+- a byte-identical committed tick-30,000 checkpoint forks into control,
+  structural-lesion, no-injury-transport, and no-repair branches,
+- the canonical lesion preserves the organizer, records its Q16.16 geometry,
+  removed stable IDs, damaged-shell count, and removed energy, then the enabled
+  branch recovers a connected 40-cell morphology inside the 39-cell reference
+  envelope and sustains every declared regeneration predicate for at least 500
+  consecutive ticks by tick 50,000,
+- recorded lesion geometry is used only to apply and measure the intervention;
+  cell decisions and daughter placement receive the local injury field, not the
+  lesion center, radius, removed IDs, or pre-lesion coordinates,
+- the no-injury branch receives the identical lesion but records no transported
+  injury peak and grows without coordination to 97 cells, while the no-repair
+  branch receives the same injury and lesion but remains at 30 cells; neither
+  ablation reaches the regeneration criterion,
+- the reference repair branch first completes 500 consecutive accepted ticks at
+  tick 30,806 and remains accepted through tick 50,000.
 
 Not yet claimed:
 
 - real-time 16,384-cell morphogenesis,
-- 50,000-tick lesion and regeneration acceptance,
+- Gate 5 performance timing or populated regeneration scaling,
 - measurement cadence optimization and populated 256/1,024/4,096/16,384 scaling,
 - adaptive fine-to-coarse aggregation,
 - cross-domain material and abstract-network proofs.
 
-The one-seed developmental and sustained-homeostasis gates are now closed.
-Structural lesion and regeneration remain separate claims and must be measured
-before promotion.
+The one-seed development, sustained-homeostasis, and causal structural-
+regeneration gates are now closed. Adaptive hierarchy and cross-domain proofs
+remain separate claims.

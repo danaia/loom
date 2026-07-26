@@ -57,10 +57,31 @@ cells, with zero long-horizon invariant violations.
 This proves bounded equilibrium plus return after a non-destructive
 environmental perturbation. It does not yet prove repair after structural loss.
 
-## Performance status
+## Clean Gate 4 timing
 
-No Gate 4 performance number is promoted from this development tree. The prior
-Gate 3 populated timing remains a source-dirty engineering artifact, and the
-additional ledger and audit passes change the scheduled workload. A release
-benchmark from the clean committed Gate 4 SHA is required before publishing an
-updated timing claim.
+```text
+cargo run --release -q -p loom-metal --bin hello-particle-view -- \
+  organism 1024 --bench headless --warmup 30000 --samples 100
+```
+
+Device: Apple M4 Pro. macOS: 26.6. Host profile: release. Rust:
+`rustc 1.88.0`. Metal SDK: 26.0. Source:
+`57f01c5cd04a822d4641e391f6ca39d94ddbcc0c`, clean.
+
+```text
+GPU mean: 1.389 ms
+GPU p50:  1.339 ms
+GPU p95:  1.648 ms
+GPU p99:  1.663 ms
+GPU max:  1.717 ms
+stream buffers: 7,943,216 bytes
+```
+
+Runtime artifact:
+`428d467c13cec3a4009a90fb04b774ce3e3c64f30c78373f4bdcf8aa6df985ae`.
+Runtime fingerprint:
+`33605320d5d80e7bfae74947aeb4ad5dca9f243805160f298b924b7f0fa891a2`.
+
+The 30,000-tick warm-up establishes the accepted homeostatic state before
+sampling. This remains a 39-cell-class result at 1,024 declared capacity, not a
+populated scaling claim.

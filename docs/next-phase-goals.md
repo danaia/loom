@@ -3,8 +3,8 @@
 ## Goal
 
 Advance the implemented Hello Population, Hello Field, and Hello Organism
-correctness specimens into optimized neighborhoods, sustained morphogenesis,
-regeneration, and adaptive hierarchy.
+correctness specimens into optimized neighborhoods, populated scaling,
+adaptive hierarchy, and cross-domain proofs.
 
 Build evidence that Loom is a scalable, precise, agent-native systems language.
 
@@ -150,10 +150,16 @@ tick 12,000 and restores it at tick 14,000; energy leaves the reference envelope
 then the same connected 39-cell differentiated body returns to it. The per-tick
 energy ledger bounds instantaneous and cumulative accounting residual.
 
-The remaining organism gate is:
-
-- recorded injury and recovery by tick 50,000,
-- 500 consecutive ticks inside the recovery envelope.
+The structural-regeneration gate is implemented. A byte-identical committed
+tick-30,000 checkpoint branches into control, peripheral lesion,
+no-injury-transport, and no-repair scenarios. The lesion preserves the
+organizer, removes 8–12 cells, records stable IDs and removed energy, creates a
+local injury field and damaged shell, and permits only local authoritative
+repair behavior following the injury gradient to refill the recorded wound
+region. Recorded lesion geometry is not bound back into behavior. The enabled
+branch reconstructs a connected 40-cell morphology inside the 39-cell reference
+envelope and remains inside all declared recovery predicates for at least 500
+consecutive ticks by tick 50,000. Both causal ablations fail the same criterion.
 
 Global component and morphology passes still run every tick in this proof build.
 Cadenced observation, faster convergence, and populated scale measurements remain
