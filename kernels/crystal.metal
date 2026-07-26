@@ -12,6 +12,7 @@ constant uint METRIC_SOLUTE_Q10 = 6u;
 constant uint METRIC_TEMPERATURE_Q10 = 7u;
 constant uint METRIC_SLICE_COUNT = 8u;
 constant uint METRIC_PHASE_Q10 = 9u;
+constant float CUT_DAMAGE = 0.05f;
 
 inline uint index_3d(uint3 p, uint width) {
     return (p.z * width + p.y) * width + p.x;
@@ -185,6 +186,21 @@ inline float2 project_crystal(float3 world) {
     return center * perspective;
 }
 
+inline float3 rotate_for_camera(float3 world, float yaw, float pitch) {
+    float yaw_cs = cos(yaw);
+    float yaw_sn = sin(yaw);
+    float3 yawed = float3(
+        yaw_cs * world.x + yaw_sn * world.z,
+        world.y,
+        -yaw_sn * world.x + yaw_cs * world.z);
+    float pitch_cs = cos(pitch);
+    float pitch_sn = sin(pitch);
+    return float3(
+        yawed.x,
+        pitch_cs * yawed.y - pitch_sn * yawed.z,
+        pitch_sn * yawed.y + pitch_cs * yawed.z);
+}
+
 inline float distance_to_segment(float2 point, float2 start, float2 end) {
     float2 span = end - start;
     float denominator = max(dot(span, span), 1.0e-7f);
@@ -195,26 +211,32 @@ inline float distance_to_segment(float2 point, float2 start, float2 end) {
 kernel void crystal_slice_material(
     const device float* phase [[buffer(0)]],
     const device packed_float3* position [[buffer(1)]],
-    device float* damage [[buffer(2)]],
-    device packed_float3* velocity [[buffer(3)]],
-    device atomic_uint* slice_count [[buffer(4)]],
-    constant float& start_x [[buffer(5)]],
-    constant float& start_y [[buffer(6)]],
-    constant float& end_x [[buffer(7)]],
-    constant float& end_y [[buffer(8)]],
-    constant float& radius [[buffer(9)]],
+    const device float* camera_yaw [[buffer(2)]],
+    const device float* camera_pitch [[buffer(3)]],
+    const device float* camera_zoom [[buffer(4)]],
+    device float* damage [[buffer(5)]],
+    device packed_float3* velocity [[buffer(6)]],
+    device atomic_uint* slice_count [[buffer(7)]],
+    constant float& start_x [[buffer(8)]],
+    constant float& start_y [[buffer(9)]],
+    constant float& end_x [[buffer(10)]],
+    constant float& end_y [[buffer(11)]],
+    constant float& radius [[buffer(12)]],
     uint gid [[thread_position_in_grid]])
 {
     if (gid == 0u) {
         atomic_fetch_add_explicit(&slice_count[0], 1u, memory_order_relaxed);
     }
-    if (phase[gid] < 0.55f || damage[gid] >= 0.98f) {
+    if (phase[gid] < 0.55f || damage[gid] >= CUT_DAMAGE) {
         return;
     }
 
     float2 start = float2(start_x, start_y);
     float2 end = float2(end_x, end_y);
-    float2 screen = project_crystal(float3(position[gid]));
+    float3 view_position =
+        rotate_for_camera(float3(position[gid]), camera_yaw[0], camera_pitch[0]) *
+        camera_zoom[0];
+    float2 screen = project_crystal(view_position);
     if (distance_to_segment(screen, start, end) <= radius) {
         float2 tangent = normalize((end - start) + float2(1.0e-5f, 0.0f));
         float2 normal = float2(-tangent.y, tangent.x);
@@ -224,13 +246,100 @@ kernel void crystal_slice_material(
     }
 }
 
+kernel void crystal_self_heal(
+    const device float* phase [[buffer(0)]],
+    device float* damage [[buffer(1)]],
+    device packed_float3* position [[buffer(2)]],
+    device packed_float3* velocity [[buffer(3)]],
+    const device uint* slice_count [[buffer(4)]],
+    constant uint& width [[buffer(5)]],
+    constant float& damage_rate [[buffer(6)]],
+    constant float& reassembly_rate [[buffer(7)]],
+    uint gid [[thread_position_in_grid]])
+{
+    if (slice_count[0] == 0u || phase[gid] < 0.55f) {
+        return;
+    }
+
+    damage[gid] = max(damage[gid] - damage_rate, 0.0f);
+    uint3 cell = coordinate_3d(gid, width);
+    float3 center = (float3(cell) + 0.5f) - float(width) * 0.5f;
+    float3 rest = center * (1.55f / float(width));
+    float3 current = float3(position[gid]);
+    float3 v = float3(velocity[gid]);
+    position[gid] = packed_float3(mix(current, rest, reassembly_rate));
+    velocity[gid] = packed_float3(v * (1.0f - reassembly_rate * 1.8f));
+}
+
+kernel void crystal_orbit_camera(
+    device float* camera_yaw [[buffer(0)]],
+    device float* camera_pitch [[buffer(1)]],
+    constant float& delta_yaw [[buffer(2)]],
+    constant float& delta_pitch [[buffer(3)]],
+    uint gid [[thread_position_in_grid]])
+{
+    if (gid != 0u) {
+        return;
+    }
+    float yaw = camera_yaw[0] + delta_yaw;
+    camera_yaw[0] = atan2(sin(yaw), cos(yaw));
+    camera_pitch[0] = clamp(camera_pitch[0] + delta_pitch, -1.18f, 1.18f);
+}
+
+kernel void crystal_zoom_camera(
+    device float* camera_zoom [[buffer(0)]],
+    constant float& zoom_delta [[buffer(1)]],
+    uint gid [[thread_position_in_grid]])
+{
+    if (gid == 0u) {
+        camera_zoom[0] = clamp(camera_zoom[0] * exp(zoom_delta), 0.42f, 3.5f);
+    }
+}
+
+kernel void crystal_clear_pick(
+    device uint* pick_hit [[buffer(0)]],
+    uint gid [[thread_position_in_grid]])
+{
+    if (gid == 0u) {
+        pick_hit[0] = 0u;
+    }
+}
+
+kernel void crystal_pick(
+    const device float* phase [[buffer(0)]],
+    const device float* damage [[buffer(1)]],
+    const device packed_float3* position [[buffer(2)]],
+    const device float* camera_yaw [[buffer(3)]],
+    const device float* camera_pitch [[buffer(4)]],
+    const device float* camera_zoom [[buffer(5)]],
+    device atomic_uint* pick_hit [[buffer(6)]],
+    constant float& pick_x [[buffer(7)]],
+    constant float& pick_y [[buffer(8)]],
+    constant uint& width [[buffer(9)]],
+    uint gid [[thread_position_in_grid]])
+{
+    if (phase[gid] < 0.55f || damage[gid] >= CUT_DAMAGE) {
+        return;
+    }
+    float3 view_position =
+        rotate_for_camera(float3(position[gid]), camera_yaw[0], camera_pitch[0]) *
+        camera_zoom[0];
+    float2 screen = project_crystal(view_position);
+    float perspective = 1.0f / (1.12f + 0.24f * view_position.z);
+    float pick_radius =
+        (1.75f / float(width)) * camera_zoom[0] * perspective;
+    if (distance(screen, float2(pick_x, pick_y)) <= pick_radius) {
+        atomic_store_explicit(&pick_hit[0], 1u, memory_order_relaxed);
+    }
+}
+
 kernel void crystal_initialize_components(
     const device float* phase [[buffer(0)]],
     const device float* damage [[buffer(1)]],
     device uint* component [[buffer(2)]],
     uint gid [[thread_position_in_grid]])
 {
-    if (phase[gid] >= 0.55f && damage[gid] < 0.98f) {
+    if (phase[gid] >= 0.55f && damage[gid] < CUT_DAMAGE) {
         if (component[gid] == EMPTY_COMPONENT) {
             component[gid] = gid;
         }
@@ -246,7 +355,7 @@ kernel void crystal_relax_components(
     constant uint& width [[buffer(3)]],
     uint gid [[thread_position_in_grid]])
 {
-    if (phase[gid] < 0.55f || damage[gid] >= 0.98f) {
+    if (phase[gid] < 0.55f || damage[gid] >= CUT_DAMAGE) {
         return;
     }
     uint3 cell = coordinate_3d(gid, width);
@@ -254,7 +363,7 @@ kernel void crystal_relax_components(
     for (int axis = 0; axis < 3; ++axis) {
         for (int direction = -1; direction <= 1; direction += 2) {
             uint neighbor = neighbor_index(cell, axis, direction, width);
-            if (phase[neighbor] >= 0.55f && damage[neighbor] < 0.98f) {
+            if (phase[neighbor] >= 0.55f && damage[neighbor] < CUT_DAMAGE) {
                 label = min(
                     label,
                     atomic_load_explicit(&component[neighbor], memory_order_relaxed));
@@ -275,7 +384,7 @@ kernel void crystal_integrate_fragments(
     constant float& fixed_dt [[buffer(7)]],
     uint gid [[thread_position_in_grid]])
 {
-    if (slice_count[0] == 0u || phase[gid] < 0.55f || damage[gid] >= 0.98f) {
+    if (slice_count[0] == 0u || phase[gid] < 0.55f || damage[gid] >= CUT_DAMAGE) {
         return;
     }
     uint main_component = component[seed_index];
@@ -302,16 +411,19 @@ kernel void crystal_prepare_render(
     const device float* damage [[buffer(1)]],
     const device uint* component [[buffer(2)]],
     const device packed_float3* position [[buffer(3)]],
-    device packed_float3* render_position [[buffer(4)]],
-    device packed_float3* render_normal [[buffer(5)]],
-    device float4* color [[buffer(6)]],
-    device float* radius [[buffer(7)]],
-    constant uint& width [[buffer(8)]],
-    constant uint& seed_index [[buffer(9)]],
+    const device float* camera_yaw [[buffer(4)]],
+    const device float* camera_pitch [[buffer(5)]],
+    const device float* camera_zoom [[buffer(6)]],
+    device packed_float3* render_position [[buffer(7)]],
+    device packed_float3* render_normal [[buffer(8)]],
+    device float4* color [[buffer(9)]],
+    device float* radius [[buffer(10)]],
+    constant uint& width [[buffer(11)]],
+    constant uint& seed_index [[buffer(12)]],
     uint gid [[thread_position_in_grid]])
 {
     float p = phase[gid];
-    if (p < 0.55f || damage[gid] >= 0.98f) {
+    if (p < 0.55f || damage[gid] >= CUT_DAMAGE) {
         render_position[gid] = packed_float3(0.0f);
         render_normal[gid] = packed_float3(0.0f);
         color[gid] = float4(0.0f);
@@ -325,10 +437,10 @@ kernel void crystal_prepare_render(
     for (int axis = 0; axis < 3; ++axis) {
         for (int direction = -1; direction <= 1; direction += 2) {
             uint neighbor = neighbor_index(cell, axis, direction, width);
-            bool exposed = phase[neighbor] < 0.55f || damage[neighbor] >= 0.98f;
+            bool exposed = phase[neighbor] < 0.55f || damage[neighbor] >= CUT_DAMAGE;
             if (exposed) {
                 outward[axis] += float(direction);
-                cut_edge = cut_edge || damage[neighbor] >= 0.98f;
+                cut_edge = cut_edge || damage[neighbor] >= CUT_DAMAGE;
             }
         }
     }
@@ -349,10 +461,13 @@ kernel void crystal_prepare_render(
     base = cut_edge ? mix(base, float3(0.82f, 0.96f, 1.0f), 0.72f) : base;
     float depth_light = 0.58f + 0.42f * clamp(world.z + 0.55f, 0.0f, 1.0f);
 
-    render_position[gid] = position[gid];
-    render_normal[gid] = packed_float3(surface_normal);
+    render_position[gid] =
+        packed_float3(
+            rotate_for_camera(world, camera_yaw[0], camera_pitch[0]) * camera_zoom[0]);
+    render_normal[gid] =
+        packed_float3(rotate_for_camera(surface_normal, camera_yaw[0], camera_pitch[0]));
     color[gid] = float4(base * depth_light, cut_edge ? 1.0f : 0.88f);
-    radius[gid] = 1.46f / float(width);
+    radius[gid] = (1.46f / float(width)) * camera_zoom[0];
 }
 
 kernel void crystal_clear_metrics(
@@ -375,7 +490,7 @@ kernel void crystal_reduce_metrics(
     uint gid [[thread_position_in_grid]])
 {
     float p = phase[gid];
-    bool solid = p >= 0.55f && damage[gid] < 0.98f;
+    bool solid = p >= 0.55f && damage[gid] < CUT_DAMAGE;
     if (solid) {
         atomic_fetch_add_explicit(&metrics[METRIC_SOLID], 1u, memory_order_relaxed);
         if (p < 0.98f) {

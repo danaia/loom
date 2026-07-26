@@ -248,6 +248,10 @@ fn crystal_specimen_keeps_damage_interactive_and_orders_components_metrics_and_s
         "material.component",
         "material.position",
         "interaction.slice_count",
+        "interaction.camera_yaw",
+        "interaction.camera_pitch",
+        "interaction.camera_zoom",
+        "interaction.pick_hit",
         "render.normal",
         "metrics.snapshot",
     ] {
@@ -279,14 +283,32 @@ fn crystal_specimen_keeps_damage_interactive_and_orders_components_metrics_and_s
     };
     assert!(at("evolve_growth_fields") < at("initialize_solid_components"));
     assert!(!names.contains(&"slice_material"));
-    assert!(
-        validated
-            .execution_plan()
-            .intervention_passes
-            .iter()
-            .any(|pass| graph.pass(pass.pass).unwrap().name == "slice_material")
-    );
+    assert!(!names.contains(&"orbit_camera"));
+    assert!(!names.contains(&"zoom_camera"));
+    assert!(names.contains(&"self_heal_material"));
+    assert!(!names.contains(&"clear_pointer_pick"));
+    assert!(!names.contains(&"pick_crystal"));
+    let interventions = validated
+        .execution_plan()
+        .intervention_passes
+        .iter()
+        .map(|pass| graph.pass(pass.pass).unwrap().name.as_str())
+        .collect::<Vec<_>>();
+    for name in [
+        "slice_material",
+        "orbit_camera",
+        "zoom_camera",
+        "clear_pointer_pick",
+        "pick_crystal",
+    ] {
+        assert!(
+            interventions.contains(&name),
+            "missing interactive crystal intervention {name}"
+        );
+    }
     assert!(at("relax_solid_components_7") < at("integrate_fragments"));
+    assert!(at("integrate_fragments") < at("self_heal_material"));
+    assert!(at("self_heal_material") < at("extract_crystal_surface"));
     assert!(at("extract_crystal_surface") < at("reduce_crystal_metrics"));
 }
 

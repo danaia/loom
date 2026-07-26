@@ -29,7 +29,7 @@ use metal::{
 use objc::{msg_send, rc::autoreleasepool, runtime::YES, sel, sel_impl};
 use winit::{
     dpi::{LogicalSize, PhysicalSize},
-    event::{ElementState, Event, MouseButton, WindowEvent},
+    event::{ElementState, Event, MouseButton, MouseScrollDelta, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
     platform::macos::WindowExtMacOS,
     window::WindowBuilder,
@@ -99,7 +99,7 @@ impl MetalRuntime {
     pub fn run(validated: ValidatedModuleGraph) -> Result<(), RuntimeDiagnostic> {
         let interactive_crystal = validated.graph().name == "hello_crystal";
         let title = if interactive_crystal {
-            "Loom — Hello Crystal — drag to slice".to_owned()
+            "Loom — Crystal — left: slice/orbit · scroll: zoom · self-healing".to_owned()
         } else {
             format!("Loom — {}", display_name(validated.graph().name.as_str()))
         };
@@ -136,14 +136,21 @@ impl MetalRuntime {
         );
         if interactive_crystal {
             println!(
-                "interaction: hold the left mouse button and drag across the crystal to slice"
+                "interaction: left-drag crystal to slice; left-drag space to orbit; \
+                 scroll to zoom; cuts self-heal automatically"
             );
+        }
+
+        #[derive(Clone, Copy)]
+        enum CrystalGesture {
+            Slice((f64, f64)),
+            Orbit((f64, f64)),
         }
 
         let tick_interval = Duration::from_nanos(1_000_000_000 / state.rate_hz as u64);
         let mut next_tick = Instant::now();
         let mut cursor = (0.0_f64, 0.0_f64);
-        let mut slice_last = None::<(f64, f64)>;
+        let mut crystal_gesture = None::<CrystalGesture>;
         event_loop.run(move |event, _, control_flow| {
             *control_flow = ControlFlow::WaitUntil(next_tick);
             autoreleasepool(|| match event {
@@ -154,13 +161,30 @@ impl MetalRuntime {
                     }
                     WindowEvent::CursorMoved { position, .. } => {
                         cursor = (position.x, position.y);
-                        if let Some(previous) = slice_last {
-                            let dx = cursor.0 - previous.0;
-                            let dy = cursor.1 - previous.1;
-                            if dx * dx + dy * dy >= 4.0 {
-                                state.queue_pointer_slice(previous, cursor, window.inner_size());
-                                slice_last = Some(cursor);
-                                window.request_redraw();
+                        if let Some(gesture) = crystal_gesture {
+                            match gesture {
+                                CrystalGesture::Slice(previous) => {
+                                    let dx = cursor.0 - previous.0;
+                                    let dy = cursor.1 - previous.1;
+                                    if dx * dx + dy * dy >= 4.0 {
+                                        state.queue_pointer_slice(
+                                            previous,
+                                            cursor,
+                                            window.inner_size(),
+                                        );
+                                        crystal_gesture = Some(CrystalGesture::Slice(cursor));
+                                        window.request_redraw();
+                                    }
+                                }
+                                CrystalGesture::Orbit(previous) => {
+                                    let dx = cursor.0 - previous.0;
+                                    let dy = cursor.1 - previous.1;
+                                    if dx * dx + dy * dy >= 1.0 {
+                                        state.queue_pointer_orbit(previous, cursor);
+                                        crystal_gesture = Some(CrystalGesture::Orbit(cursor));
+                                        window.request_redraw();
+                                    }
+                                }
                             }
                         }
                     }
@@ -169,14 +193,37 @@ impl MetalRuntime {
                         button: MouseButton::Left,
                         ..
                     } if interactive_crystal => {
-                        slice_last = Some(cursor);
+                        match state.pointer_hits_crystal(cursor, window.inner_size()) {
+                            Ok(true) => {
+                                crystal_gesture = Some(CrystalGesture::Slice(cursor));
+                            }
+                            Ok(false) => {
+                                crystal_gesture = Some(CrystalGesture::Orbit(cursor));
+                            }
+                            Err(diagnostic) => {
+                                eprintln!(
+                                    "{}",
+                                    serde_json::to_string_pretty(&diagnostic)
+                                        .unwrap_or_else(|_| diagnostic.to_string())
+                                );
+                                *control_flow = ControlFlow::Exit;
+                            }
+                        }
                     }
                     WindowEvent::MouseInput {
                         state: ElementState::Released,
                         button: MouseButton::Left,
                         ..
                     } => {
-                        slice_last = None;
+                        crystal_gesture = None;
+                    }
+                    WindowEvent::MouseWheel { delta, .. } if interactive_crystal => {
+                        let zoom_delta = match delta {
+                            MouseScrollDelta::LineDelta(_, vertical) => vertical * 0.12,
+                            MouseScrollDelta::PixelDelta(position) => position.y as f32 * 0.003,
+                        };
+                        state.queue_pointer_zoom(zoom_delta);
+                        window.request_redraw();
                     }
                     _ => {}
                 },
@@ -385,12 +432,20 @@ struct RuntimeState {
     max_in_flight_command_buffers: u32,
     direct_metal: Option<DirectMetalEncoding>,
     pending_pointer_slices: VecDeque<PointerSlice>,
+    pending_pointer_orbits: VecDeque<PointerOrbit>,
+    pending_pointer_zooms: VecDeque<f32>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct PointerSlice {
     start: [f32; 2],
     end: [f32; 2],
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct PointerOrbit {
+    delta_yaw: f32,
+    delta_pitch: f32,
 }
 
 struct IndirectSupport {
@@ -456,6 +511,8 @@ impl RuntimeState {
             max_in_flight_command_buffers,
             direct_metal,
             pending_pointer_slices: VecDeque::new(),
+            pending_pointer_orbits: VecDeque::new(),
+            pending_pointer_zooms: VecDeque::new(),
         })
     }
 
@@ -474,15 +531,9 @@ impl RuntimeState {
         if !supports_slicing || viewport.width == 0 || viewport.height == 0 {
             return;
         }
-        let to_ndc = |point: (f64, f64)| {
-            [
-                (2.0 * point.0 / f64::from(viewport.width) - 1.0) as f32,
-                (1.0 - 2.0 * point.1 / f64::from(viewport.height)) as f32,
-            ]
-        };
         self.pending_pointer_slices.push_back(PointerSlice {
-            start: to_ndc(start),
-            end: to_ndc(end),
+            start: pointer_ndc(start, viewport),
+            end: pointer_ndc(end, viewport),
         });
         while self.pending_pointer_slices.len() > 64 {
             self.pending_pointer_slices.pop_front();
@@ -493,13 +544,40 @@ impl RuntimeState {
         &self,
         slice: PointerSlice,
     ) -> Result<BTreeMap<ValueId, Buffer>, RuntimeDiagnostic> {
-        let mut overrides = BTreeMap::new();
-        for (name, value) in [
+        self.f32_value_overrides([
             ("interaction.slice_start_x", slice.start[0]),
             ("interaction.slice_start_y", slice.start[1]),
             ("interaction.slice_end_x", slice.end[0]),
             ("interaction.slice_end_y", slice.end[1]),
-        ] {
+        ])
+    }
+
+    fn queue_pointer_orbit(&mut self, start: (f64, f64), end: (f64, f64)) {
+        self.pending_pointer_orbits.push_back(PointerOrbit {
+            delta_yaw: ((end.0 - start.0) * 0.008) as f32,
+            delta_pitch: ((end.1 - start.1) * 0.008) as f32,
+        });
+        while self.pending_pointer_orbits.len() > 64 {
+            self.pending_pointer_orbits.pop_front();
+        }
+    }
+
+    fn queue_pointer_zoom(&mut self, delta: f32) {
+        if delta.abs() < f32::EPSILON {
+            return;
+        }
+        self.pending_pointer_zooms.push_back(delta.clamp(-0.5, 0.5));
+        while self.pending_pointer_zooms.len() > 64 {
+            self.pending_pointer_zooms.pop_front();
+        }
+    }
+
+    fn f32_value_overrides<const N: usize>(
+        &self,
+        values: [(&str, f32); N],
+    ) -> Result<BTreeMap<ValueId, Buffer>, RuntimeDiagnostic> {
+        let mut overrides = BTreeMap::new();
+        for (name, value) in values {
             let resource = self
                 .validated
                 .graph()
@@ -510,7 +588,7 @@ impl RuntimeState {
                 .ok_or_else(|| {
                     RuntimeDiagnostic::new(
                         RuntimeDiagnosticCode::UnsupportedGraph,
-                        format!("pointer slicing requires value `{name}`"),
+                        format!("pointer interaction requires value `{name}`"),
                     )
                 })?;
             let bytes = value.to_le_bytes();
@@ -526,14 +604,122 @@ impl RuntimeState {
         Ok(overrides)
     }
 
+    fn pointer_hits_crystal(
+        &self,
+        point: (f64, f64),
+        viewport: PhysicalSize<u32>,
+    ) -> Result<bool, RuntimeDiagnostic> {
+        if viewport.width == 0 || viewport.height == 0 {
+            return Ok(false);
+        }
+        let find_pass = |name: &str| {
+            self.validated
+                .execution_plan()
+                .intervention_passes
+                .iter()
+                .find(|pass| self.validated.graph().pass(pass.pass).unwrap().name == name)
+        };
+        let clear_pass = find_pass("clear_pointer_pick").ok_or_else(|| {
+            RuntimeDiagnostic::new(
+                RuntimeDiagnosticCode::UnsupportedGraph,
+                "pointer hit-testing requires intervention pass `clear_pointer_pick`",
+            )
+        })?;
+        let pick_pass = find_pass("pick_crystal").ok_or_else(|| {
+            RuntimeDiagnostic::new(
+                RuntimeDiagnosticCode::UnsupportedGraph,
+                "pointer hit-testing requires intervention pass `pick_crystal`",
+            )
+        })?;
+        let pick_stream = self
+            .validated
+            .graph()
+            .resources
+            .streams
+            .iter()
+            .find(|stream| stream.name == "interaction.pick_hit")
+            .ok_or_else(|| {
+                RuntimeDiagnostic::new(
+                    RuntimeDiagnosticCode::UnsupportedGraph,
+                    "pointer hit-testing requires stream `interaction.pick_hit`",
+                )
+            })?
+            .id;
+        let point = pointer_ndc(point, viewport);
+        let overrides = self.f32_value_overrides([
+            ("interaction.pick_x", point[0]),
+            ("interaction.pick_y", point[1]),
+        ])?;
+        let readback = self.device.new_buffer(
+            std::mem::size_of::<u32>() as u64,
+            MTLResourceOptions::StorageModeShared,
+        );
+        let command_buffer = self.queue.new_command_buffer();
+        command_buffer.set_label("loom.pointer-pick");
+        self.encode_compute(command_buffer, clear_pass)?;
+        self.encode_compute_with_overrides(command_buffer, pick_pass, Some(&overrides))?;
+        let blit = command_buffer.new_blit_command_encoder();
+        blit.copy_from_buffer(
+            &self.stream_buffers[pick_stream.0 as usize][0],
+            0,
+            &readback,
+            0,
+            std::mem::size_of::<u32>() as u64,
+        );
+        blit.end_encoding();
+        command_buffer.commit();
+        command_buffer.wait_until_completed();
+        if command_buffer.status() == MTLCommandBufferStatus::Error {
+            return Err(RuntimeDiagnostic::new(
+                RuntimeDiagnosticCode::CommandBufferFailed,
+                "Metal reported an error while hit-testing the crystal",
+            ));
+        }
+        Ok(unsafe { *(readback.contents().cast::<u32>()) != 0 })
+    }
+
     fn draw_tick(&mut self) -> Result<(), RuntimeDiagnostic> {
         let schedule = &self.validated.execution_plan().schedules[0];
         let command_buffer = self.queue.new_command_buffer();
         command_buffer.set_label("loom.tick");
         let drawable = self.layer.next_drawable();
         let mut wait_before_next_tick = false;
+        let pending_zooms = self.pending_pointer_zooms.drain(..).collect::<Vec<_>>();
+        let pending_orbits = self.pending_pointer_orbits.drain(..).collect::<Vec<_>>();
         let pending_slices = self.pending_pointer_slices.drain(..).collect::<Vec<_>>();
-        let mut interaction_buffers = Vec::with_capacity(pending_slices.len());
+        let mut interaction_buffers =
+            Vec::with_capacity(pending_zooms.len() + pending_orbits.len() + pending_slices.len());
+        if !pending_zooms.is_empty()
+            && let Some(zoom_pass) = self
+                .validated
+                .execution_plan()
+                .intervention_passes
+                .iter()
+                .find(|pass| self.validated.graph().pass(pass.pass).unwrap().name == "zoom_camera")
+        {
+            for zoom in pending_zooms {
+                let overrides = self.f32_value_overrides([("interaction.zoom_delta", zoom)])?;
+                self.encode_compute_with_overrides(command_buffer, zoom_pass, Some(&overrides))?;
+                interaction_buffers.push(overrides);
+            }
+        }
+        if !pending_orbits.is_empty()
+            && let Some(orbit_pass) = self
+                .validated
+                .execution_plan()
+                .intervention_passes
+                .iter()
+                .find(|pass| self.validated.graph().pass(pass.pass).unwrap().name == "orbit_camera")
+        {
+            for orbit in pending_orbits {
+                let overrides = self.f32_value_overrides([
+                    ("interaction.orbit_delta_yaw", orbit.delta_yaw),
+                    ("interaction.orbit_delta_pitch", orbit.delta_pitch),
+                ])?;
+                self.encode_compute_with_overrides(command_buffer, orbit_pass, Some(&overrides))?;
+                interaction_buffers.push(overrides);
+            }
+        }
         if !pending_slices.is_empty()
             && let Some(slice_pass) = self
                 .validated
@@ -550,7 +736,6 @@ impl RuntimeState {
                 interaction_buffers.push(overrides);
             }
         }
-
         for item in &schedule.order {
             match item {
                 ScheduleItemId::Pass(pass_id) => {
@@ -1863,6 +2048,13 @@ fn resize_layer(window: &winit::window::Window, layer: &MetalLayer) {
     layer.set_drawable_size(CGSize::new(size.width as f64, size.height as f64));
 }
 
+fn pointer_ndc(point: (f64, f64), viewport: PhysicalSize<u32>) -> [f32; 2] {
+    [
+        (2.0 * point.0 / f64::from(viewport.width) - 1.0) as f32,
+        (1.0 - 2.0 * point.1 / f64::from(viewport.height)) as f32,
+    ]
+}
+
 fn allocate_streams(
     validated: &ValidatedModuleGraph,
     device: &Device,
@@ -2695,7 +2887,7 @@ mod tests {
     }
 
     #[test]
-    fn packaged_crystal_grows_undamaged_until_a_pointer_slice() {
+    fn packaged_crystal_orbits_zooms_slices_and_self_heals() {
         let graph = hello_crystal_builder_with_config(HelloCrystalConfig {
             cell_count: 32 * 32 * 32,
         })
@@ -2706,6 +2898,27 @@ mod tests {
             .streams
             .iter()
             .find(|stream| stream.name == "metrics.snapshot")
+            .unwrap()
+            .id;
+        let camera_yaw = graph
+            .resources
+            .streams
+            .iter()
+            .find(|stream| stream.name == "interaction.camera_yaw")
+            .unwrap()
+            .id;
+        let camera_pitch = graph
+            .resources
+            .streams
+            .iter()
+            .find(|stream| stream.name == "interaction.camera_pitch")
+            .unwrap()
+            .id;
+        let camera_zoom = graph
+            .resources
+            .streams
+            .iter()
+            .find(|stream| stream.name == "interaction.camera_zoom")
             .unwrap()
             .id;
         let validated = Validator::validate(&graph)
@@ -2752,6 +2965,71 @@ mod tests {
         assert!(before[2] > 0, "the grown crystal must expose a surface");
         assert_eq!(before[3], 0, "autonomous growth must never damage crystal");
         assert_eq!(before[8], 0, "no slice intervention has occurred");
+        assert!(
+            state
+                .pointer_hits_crystal((480.0, 360.0), PhysicalSize::new(960, 720))
+                .unwrap(),
+            "the center of the grown crystal must pick as material"
+        );
+        assert!(
+            !state
+                .pointer_hits_crystal((30.0, 30.0), PhysicalSize::new(960, 720))
+                .unwrap(),
+            "the black corner must pick as orbit space"
+        );
+
+        let read_camera = |state: &RuntimeState| {
+            let readback = device.new_buffer(12, metal::MTLResourceOptions::StorageModeShared);
+            let command_buffer = state.queue.new_command_buffer();
+            let blit = command_buffer.new_blit_command_encoder();
+            blit.copy_from_buffer(
+                &state.stream_buffers[camera_yaw.0 as usize][0],
+                0,
+                &readback,
+                0,
+                4,
+            );
+            blit.copy_from_buffer(
+                &state.stream_buffers[camera_pitch.0 as usize][0],
+                0,
+                &readback,
+                4,
+                4,
+            );
+            blit.copy_from_buffer(
+                &state.stream_buffers[camera_zoom.0 as usize][0],
+                0,
+                &readback,
+                8,
+                4,
+            );
+            blit.end_encoding();
+            command_buffer.commit();
+            command_buffer.wait_until_completed();
+            unsafe {
+                let values = std::slice::from_raw_parts(readback.contents().cast::<f32>(), 3);
+                [values[0], values[1], values[2]]
+            }
+        };
+        state.queue_pointer_orbit((30.0, 30.0), (90.0, 55.0));
+        state.draw_tick().unwrap();
+        let camera = read_camera(&state);
+        assert!((camera[0] - 0.48).abs() < 0.001);
+        assert!((camera[1] - 0.20).abs() < 0.001);
+        assert!((camera[2] - 1.0).abs() < 0.001);
+        state.queue_pointer_zoom(1.5_f32.ln());
+        state.draw_tick().unwrap();
+        let camera = read_camera(&state);
+        assert!((camera[2] - 1.5).abs() < 0.001);
+        let after_orbit = read_metrics(&state);
+        assert_eq!(
+            after_orbit[3], 0,
+            "orbiting through black space must not damage material"
+        );
+        assert_eq!(
+            after_orbit[8], 0,
+            "orbiting must not record a slice intervention"
+        );
 
         let texture_descriptor = metal::TextureDescriptor::new();
         texture_descriptor.set_width(256);
@@ -2796,6 +3074,19 @@ mod tests {
         let after = read_metrics(&state);
         assert!(after[3] > 0, "the pointer slice must remove material");
         assert_eq!(after[8], 1, "one drag segment must record one slice");
+
+        for _ in 0..40 {
+            state.draw_tick().unwrap();
+        }
+        let healed = read_metrics(&state);
+        assert_eq!(
+            healed[3], 0,
+            "cut cells must heal automatically without another pointer gesture"
+        );
+        assert_eq!(
+            healed[8], 1,
+            "healing must preserve the historical slice count"
+        );
     }
 
     #[test]

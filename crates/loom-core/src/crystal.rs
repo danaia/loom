@@ -96,8 +96,9 @@ pub fn hello_crystal_builder(cell_count: u32) -> ModuleBuilder {
 /// A cell represents a mesoscopic material volume, not an atom. Solute and heat
 /// diffuse through the environment; a cubic orientation law advances the phase
 /// boundary. Damage is absent from autonomous ticks: a mouse drag enters as an
-/// explicit slice intervention, after which connected solid is relabeled and
-/// detached material receives independent motion.
+/// explicit slice intervention, after which connected solid is relabeled,
+/// detached material receives independent motion, and autonomous repair closes
+/// the seam and reassembles the fragments.
 pub fn hello_crystal_builder_with_config(config: HelloCrystalConfig) -> ModuleBuilder {
     let width = cube_axis(config.cell_count);
     let count = config.cell_count;
@@ -182,6 +183,48 @@ pub fn hello_crystal_builder_with_config(config: HelloCrystalConfig) -> ModuleBu
             Unit::DIMENSIONLESS,
             Literal::f32(0.024),
         ))
+        .value(ValueDraft::constant(
+            "interaction.orbit_delta_yaw",
+            f32t.clone(),
+            Unit::DIMENSIONLESS,
+            Literal::f32(0.0),
+        ))
+        .value(ValueDraft::constant(
+            "interaction.orbit_delta_pitch",
+            f32t.clone(),
+            Unit::DIMENSIONLESS,
+            Literal::f32(0.0),
+        ))
+        .value(ValueDraft::constant(
+            "interaction.zoom_delta",
+            f32t.clone(),
+            Unit::DIMENSIONLESS,
+            Literal::f32(0.0),
+        ))
+        .value(ValueDraft::constant(
+            "healing.damage_rate",
+            f32t.clone(),
+            Unit::DIMENSIONLESS,
+            Literal::f32(0.02),
+        ))
+        .value(ValueDraft::constant(
+            "healing.reassembly_rate",
+            f32t.clone(),
+            Unit::DIMENSIONLESS,
+            Literal::f32(0.075),
+        ))
+        .value(ValueDraft::constant(
+            "interaction.pick_x",
+            f32t.clone(),
+            Unit::DIMENSIONLESS,
+            Literal::f32(0.0),
+        ))
+        .value(ValueDraft::constant(
+            "interaction.pick_y",
+            f32t.clone(),
+            Unit::DIMENSIONLESS,
+            Literal::f32(0.0),
+        ))
         .stream(
             StreamDraft::new("simulation.tick", u32t.clone(), Unit::DIMENSIONLESS)
                 .capacity(1)
@@ -246,6 +289,38 @@ pub fn hello_crystal_builder_with_config(config: HelloCrystalConfig) -> ModuleBu
                 .length(1)
                 .write_authority("mutate_crystal_state")
                 .initial(Literal::Array(vec![Literal::U32(0)])),
+        )
+        .stream(
+            StreamDraft::new("interaction.camera_yaw", f32t.clone(), Unit::DIMENSIONLESS)
+                .capacity(1)
+                .length(1)
+                .write_authority("mutate_crystal_state")
+                .initial(Literal::Array(vec![Literal::f32(0.0)])),
+        )
+        .stream(
+            StreamDraft::new(
+                "interaction.camera_pitch",
+                f32t.clone(),
+                Unit::DIMENSIONLESS,
+            )
+            .capacity(1)
+            .length(1)
+            .write_authority("mutate_crystal_state")
+            .initial(Literal::Array(vec![Literal::f32(0.0)])),
+        )
+        .stream(
+            StreamDraft::new("interaction.camera_zoom", f32t.clone(), Unit::DIMENSIONLESS)
+                .capacity(1)
+                .length(1)
+                .write_authority("mutate_crystal_state")
+                .initial(Literal::Array(vec![Literal::f32(1.0)])),
+        )
+        .stream(
+            StreamDraft::new("interaction.pick_hit", u32t.clone(), Unit::DIMENSIONLESS)
+                .capacity(1)
+                .length(1)
+                .write_authority("mutate_crystal_state")
+                .initial(Literal::Array(vec![Literal::U32(0)])),
         );
 
     builder = builder
@@ -300,6 +375,9 @@ pub fn hello_crystal_builder_with_config(config: HelloCrystalConfig) -> ModuleBu
             vec![
                 sr("phase", f32t.clone()),
                 sr("position", v3t.clone()),
+                sr_all("camera_yaw", f32t.clone()),
+                sr_all("camera_pitch", f32t.clone()),
+                sr_all("camera_zoom", f32t.clone()),
                 srw("damage", f32t.clone()),
                 srw("velocity", v3t.clone()),
                 srw_all("slice_count", u32t.clone()),
@@ -308,6 +386,54 @@ pub fn hello_crystal_builder_with_config(config: HelloCrystalConfig) -> ModuleBu
                 value("end_x", f32t.clone()),
                 value("end_y", f32t.clone()),
                 value("radius", f32t.clone()),
+            ],
+        ))
+        .kernel(kernel(
+            "crystal_self_heal",
+            vec![
+                sr("phase", f32t.clone()),
+                srw("damage", f32t.clone()),
+                srw("position", v3t.clone()),
+                srw("velocity", v3t.clone()),
+                sr_all("slice_count", u32t.clone()),
+                value("width", u32t.clone()),
+                value("damage_rate", f32t.clone()),
+                value("reassembly_rate", f32t.clone()),
+            ],
+        ))
+        .kernel(kernel(
+            "crystal_orbit_camera",
+            vec![
+                srw_all("camera_yaw", f32t.clone()),
+                srw_all("camera_pitch", f32t.clone()),
+                value("delta_yaw", f32t.clone()),
+                value("delta_pitch", f32t.clone()),
+            ],
+        ))
+        .kernel(kernel(
+            "crystal_zoom_camera",
+            vec![
+                srw_all("camera_zoom", f32t.clone()),
+                value("zoom_delta", f32t.clone()),
+            ],
+        ))
+        .kernel(kernel(
+            "crystal_clear_pick",
+            vec![sw("pick_hit", u32t.clone())],
+        ))
+        .kernel(kernel(
+            "crystal_pick",
+            vec![
+                sr("phase", f32t.clone()),
+                sr("damage", f32t.clone()),
+                sr("position", v3t.clone()),
+                sr_all("camera_yaw", f32t.clone()),
+                sr_all("camera_pitch", f32t.clone()),
+                sr_all("camera_zoom", f32t.clone()),
+                srw_all("pick_hit", u32t.clone()),
+                value("pick_x", f32t.clone()),
+                value("pick_y", f32t.clone()),
+                value("width", u32t.clone()),
             ],
         ))
         .kernel(kernel(
@@ -351,6 +477,9 @@ pub fn hello_crystal_builder_with_config(config: HelloCrystalConfig) -> ModuleBu
                 sr_all("damage", f32t.clone()),
                 sr_all("component", u32t.clone()),
                 sr("position", v3t.clone()),
+                sr_all("camera_yaw", f32t.clone()),
+                sr_all("camera_pitch", f32t.clone()),
+                sr_all("camera_zoom", f32t.clone()),
                 sw("render_position", v3t.clone()),
                 sw("render_normal", v3t.clone()),
                 sw("color", v4t.clone()),
@@ -433,6 +562,9 @@ pub fn hello_crystal_builder_with_config(config: HelloCrystalConfig) -> ModuleBu
             PassDraft::new("slice_material", "crystal_slice_material")
                 .bind("phase", "field.phase")
                 .bind("position", "material.position")
+                .bind("camera_yaw", "interaction.camera_yaw")
+                .bind("camera_pitch", "interaction.camera_pitch")
+                .bind("camera_zoom", "interaction.camera_zoom")
                 .bind("damage", "material.damage")
                 .bind("velocity", "material.velocity")
                 .bind("slice_count", "interaction.slice_count")
@@ -441,6 +573,53 @@ pub fn hello_crystal_builder_with_config(config: HelloCrystalConfig) -> ModuleBu
                 .bind("end_x", "interaction.slice_end_x")
                 .bind("end_y", "interaction.slice_end_y")
                 .bind("radius", "interaction.slice_radius")
+                .dispatch_over("field.phase")
+                .grant("mutate_crystal_state"),
+        )
+        .pass(
+            PassDraft::new("self_heal_material", "crystal_self_heal")
+                .bind("phase", "field.phase")
+                .bind("damage", "material.damage")
+                .bind("position", "material.position")
+                .bind("velocity", "material.velocity")
+                .bind("slice_count", "interaction.slice_count")
+                .bind("width", "field.width")
+                .bind("damage_rate", "healing.damage_rate")
+                .bind("reassembly_rate", "healing.reassembly_rate")
+                .dispatch_over("field.phase")
+                .grant("mutate_crystal_state"),
+        )
+        .pass(
+            PassDraft::new("orbit_camera", "crystal_orbit_camera")
+                .bind("camera_yaw", "interaction.camera_yaw")
+                .bind("camera_pitch", "interaction.camera_pitch")
+                .bind("delta_yaw", "interaction.orbit_delta_yaw")
+                .bind("delta_pitch", "interaction.orbit_delta_pitch")
+                .grant("mutate_crystal_state"),
+        )
+        .pass(
+            PassDraft::new("zoom_camera", "crystal_zoom_camera")
+                .bind("camera_zoom", "interaction.camera_zoom")
+                .bind("zoom_delta", "interaction.zoom_delta")
+                .grant("mutate_crystal_state"),
+        )
+        .pass(
+            PassDraft::new("clear_pointer_pick", "crystal_clear_pick")
+                .bind("pick_hit", "interaction.pick_hit")
+                .grant("mutate_crystal_state"),
+        )
+        .pass(
+            PassDraft::new("pick_crystal", "crystal_pick")
+                .bind("phase", "field.phase")
+                .bind("damage", "material.damage")
+                .bind("position", "material.position")
+                .bind("camera_yaw", "interaction.camera_yaw")
+                .bind("camera_pitch", "interaction.camera_pitch")
+                .bind("camera_zoom", "interaction.camera_zoom")
+                .bind("pick_hit", "interaction.pick_hit")
+                .bind("pick_x", "interaction.pick_x")
+                .bind("pick_y", "interaction.pick_y")
+                .bind("width", "field.width")
                 .dispatch_over("field.phase")
                 .grant("mutate_crystal_state"),
         )
@@ -491,6 +670,9 @@ pub fn hello_crystal_builder_with_config(config: HelloCrystalConfig) -> ModuleBu
                 .bind("damage", "material.damage")
                 .bind("component", "material.component")
                 .bind("position", "material.position")
+                .bind("camera_yaw", "interaction.camera_yaw")
+                .bind("camera_pitch", "interaction.camera_pitch")
+                .bind("camera_zoom", "interaction.camera_zoom")
                 .bind("render_position", "render.position")
                 .bind("render_normal", "render.normal")
                 .bind("color", "render.color")
@@ -539,7 +721,8 @@ pub fn hello_crystal_builder_with_config(config: HelloCrystalConfig) -> ModuleBu
     }
     schedule = schedule
         .run_after("integrate_fragments", predecessor)
-        .run_after("extract_crystal_surface", "integrate_fragments")
+        .run_after("self_heal_material", "integrate_fragments")
+        .run_after("extract_crystal_surface", "self_heal_material")
         .run_after("clear_crystal_metrics", "extract_crystal_surface")
         .run_after("reduce_crystal_metrics", "clear_crystal_metrics")
         .run_after("advance_crystal_tick", "reduce_crystal_metrics")
@@ -608,6 +791,39 @@ pub fn hello_crystal_builder_with_config(config: HelloCrystalConfig) -> ModuleBu
                     ]),
                 ),
         )
+        .scenario(
+            ScenarioDraft::new("orbit_interaction_probe", "simulation", 180).intervene(
+                100,
+                "orbit_camera",
+                [
+                    ("interaction.orbit_delta_yaw", Literal::f32(0.2)),
+                    ("interaction.orbit_delta_pitch", Literal::f32(-0.1)),
+                ],
+            ),
+        )
+        .scenario(
+            ScenarioDraft::new("zoom_interaction_probe", "simulation", 180).intervene(
+                100,
+                "zoom_camera",
+                [("interaction.zoom_delta", Literal::f32(0.2))],
+            ),
+        )
+        .scenario(
+            ScenarioDraft::new("pointer_pick_probe", "simulation", 180)
+                .intervene(
+                    100,
+                    "clear_pointer_pick",
+                    std::iter::empty::<(&str, Literal)>(),
+                )
+                .intervene(
+                    100,
+                    "pick_crystal",
+                    [
+                        ("interaction.pick_x", Literal::f32(0.0)),
+                        ("interaction.pick_y", Literal::f32(0.0)),
+                    ],
+                ),
+        )
         .capability(CapabilityDraft::state_mutate(
             "mutate_crystal_state",
             [
@@ -623,6 +839,10 @@ pub fn hello_crystal_builder_with_config(config: HelloCrystalConfig) -> ModuleBu
                 "material.position",
                 "material.velocity",
                 "interaction.slice_count",
+                "interaction.camera_yaw",
+                "interaction.camera_pitch",
+                "interaction.camera_zoom",
+                "interaction.pick_hit",
                 "render.position",
                 "render.normal",
                 "render.color",

@@ -11,7 +11,7 @@ The default demonstration uses `100³ = 1,000,000` cells and includes:
 - an orientation-dependent cubic growth law and rotated Wulff-like material envelope,
 - latent-heat release and solute consumption,
 - zero autonomous damage,
-- mouse-drag slicing through explicit Loom interventions,
+- slicing, healing, orbit, and zoom through explicit Loom interventions,
 - iterative connected-component labels,
 - gravity and independent motion for detached material,
 - GPU-reduced morphology, material, slice, and damage metrics,
@@ -23,10 +23,16 @@ Run it on Metal:
 ./scripts/run-hello-particle.sh crystal 1m
 ```
 
-Hold the left mouse button and drag across the crystal. Every drag segment is
-projected into the simulation, removes the intersected material, and lets the
-connected-component and fragment passes decide what separates and falls. Nothing
-damages the crystal until you do this.
+Controls:
+
+- Left-drag on the crystal to slice it.
+- Left-drag on the black background to orbit it.
+- Scroll or use a trackpad gesture to zoom in and out.
+
+Every stroke is projected into the simulation using the current camera transform.
+Nothing damages the crystal until you slice it. Once cut, the crystal immediately
+begins self-healing: damage decays while displaced fragments are pulled back
+toward their lattice positions, and the seam closes automatically.
 
 For a faster development run, use a smaller perfect cube:
 
