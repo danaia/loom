@@ -35,33 +35,35 @@ const { compactAlgorithm, darkAlgorithm } = theme
 const panelTheme = {
   algorithm: [darkAlgorithm, compactAlgorithm],
   token: {
-    colorPrimary: '#57c7f3',
-    colorInfo: '#57c7f3',
-    colorSuccess: '#56d6a3',
-    colorBgBase: '#080c10',
-    colorBgContainer: '#0f151b',
-    colorBgElevated: '#151c23',
-    colorBorder: '#26313a',
-    colorText: '#dce7ed',
-    colorTextSecondary: '#7f919c',
+    colorPrimary: '#007acc',
+    colorInfo: '#3794ff',
+    colorSuccess: '#89d185',
+    colorWarning: '#cca700',
+    colorError: '#f14c4c',
+    colorBgBase: '#181818',
+    colorBgContainer: '#1f1f1f',
+    colorBgElevated: '#252526',
+    colorBorder: '#3c3c3c',
+    colorText: '#cccccc',
+    colorTextSecondary: '#969696',
     fontSize: 12,
-    controlHeight: 26,
-    borderRadius: 6,
+    controlHeight: 24,
+    borderRadius: 2,
     wireframe: false,
   },
   components: {
     Button: {
-      defaultBg: '#121a20',
-      defaultBorderColor: '#2b3943',
-      defaultColor: '#dce7ed',
+      defaultBg: '#2d2d2d',
+      defaultBorderColor: '#3c3c3c',
+      defaultColor: '#cccccc',
     },
     Slider: {
-      railBg: '#28323a',
-      railHoverBg: '#34414b',
-      trackBg: '#57c7f3',
-      trackHoverBg: '#72d4f8',
-      handleColor: '#57c7f3',
-      handleActiveColor: '#8cdefb',
+      railBg: '#3a3d41',
+      railHoverBg: '#4b4f52',
+      trackBg: '#007acc',
+      trackHoverBg: '#3794ff',
+      handleColor: '#007acc',
+      handleActiveColor: '#3794ff',
       dotSize: 4,
       handleSize: 9,
       handleSizeHover: 11,
@@ -80,10 +82,10 @@ const amplificationLabel = computed(() => `${(1 + amplification.value * 5).toFix
 const playerSpeedLabel = computed(() => `${playerSpeed.value.toFixed(2)}×`)
 const gpuPressurePercent = computed(() => Math.min(100, Math.max(0, gpuPressure.value)))
 const gpuPressureState = computed(() => {
-  if (gpuPressure.value >= 100) return { label: 'Limit', color: '#ff6b6b' }
-  if (gpuPressure.value >= 80) return { label: 'High', color: '#ffb454' }
-  if (gpuPressure.value >= 55) return { label: 'Working', color: '#f4d35e' }
-  return { label: 'Ready', color: '#56d6a3' }
+  if (gpuPressure.value >= 100) return { label: 'Limit', color: '#f14c4c' }
+  if (gpuPressure.value >= 80) return { label: 'High', color: '#ce9178' }
+  if (gpuPressure.value >= 55) return { label: 'Working', color: '#cca700' }
+  return { label: 'Ready', color: '#89d185' }
 })
 
 function commitControl(name: string, value: number) {
@@ -196,7 +198,7 @@ onBeforeUnmount(() => {
             :percent="gpuPressurePercent"
             :show-info="false"
             :stroke-color="gpuPressureState.color"
-            :trail-color="'#253039'"
+            :trail-color="'#3a3d41'"
             :stroke-width="5"
           />
           <div class="gpu-pressure__timing">

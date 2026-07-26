@@ -1,8 +1,20 @@
 @import "ant-design-vue/dist/reset.css";
 
 :root {
-  color: #dce7ed;
-  background: #080c10;
+  --vscode-bg: #181818;
+  --vscode-panel: #1f1f1f;
+  --vscode-surface: #252526;
+  --vscode-hover: #2a2d2e;
+  --vscode-border: #2b2b2b;
+  --vscode-border-strong: #3c3c3c;
+  --vscode-text: #cccccc;
+  --vscode-muted: #969696;
+  --vscode-faint: #6f6f6f;
+  --vscode-blue: #007acc;
+  --vscode-blue-bright: #3794ff;
+  --vscode-cyan: #4fc1ff;
+  color: var(--vscode-text);
+  background: var(--vscode-bg);
   font-family:
     Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "SF Pro Text",
     "Segoe UI", sans-serif;
@@ -24,9 +36,7 @@ body,
 body {
   min-width: 320px;
   overflow-x: hidden;
-  background:
-    radial-gradient(circle at 12% -6%, rgba(66, 174, 219, 0.1), transparent 32%),
-    #080c10;
+  background: var(--vscode-bg);
 }
 
 button,
@@ -37,9 +47,9 @@ input {
 .panel-shell {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
   min-height: 100vh;
-  padding: 14px;
+  padding: 10px;
 }
 
 .app-bar {
@@ -60,12 +70,12 @@ input {
   width: 28px;
   height: 28px;
   overflow: hidden;
-  border: 1px solid rgba(103, 198, 235, 0.42);
-  border-radius: 7px;
+  border: 1px solid #3c3c3c;
+  border-radius: 3px;
   background:
     radial-gradient(circle at 35% 28%, rgba(255, 255, 255, 0.9) 0 3%, transparent 9%),
-    linear-gradient(145deg, #39bade 0%, #17679a 52%, #10304e 100%);
-  box-shadow: inset -5px -6px 10px rgba(1, 11, 25, 0.46);
+    linear-gradient(145deg, #3794ff 0%, #007acc 52%, #094771 100%);
+  box-shadow: inset -5px -6px 10px rgba(0, 0, 0, 0.25);
 }
 
 .water-mark::after {
@@ -107,13 +117,13 @@ h1 {
 
 .app-identity p {
   margin-top: 2px;
-  color: #72838d;
+  color: var(--vscode-muted);
   font-size: 10px;
   line-height: 1.2;
 }
 
 .connection-badge .ant-badge-status-text {
-  color: #91a0a8;
+  color: var(--vscode-muted);
   font-size: 10px;
 }
 
@@ -128,9 +138,9 @@ h1 {
   min-height: 91px;
   overflow: hidden;
   padding: 7px 11px 8px;
-  border: 1px solid #202a31;
-  border-radius: 7px;
-  background: rgba(15, 21, 27, 0.88);
+  border: 1px solid var(--vscode-border);
+  border-radius: 3px;
+  background: var(--vscode-panel);
 }
 
 .telemetry__summary {
@@ -142,7 +152,7 @@ h1 {
 .telemetry .ant-divider-vertical {
   height: 28px;
   margin: 0 16px;
-  border-color: #273138;
+  border-color: var(--vscode-border-strong);
 }
 
 .telemetry__item {
@@ -155,13 +165,13 @@ h1 {
 }
 
 .telemetry__item > span {
-  color: #70818a;
+  color: var(--vscode-muted);
   font-size: 9px;
   line-height: 1.2;
 }
 
 .telemetry__item strong {
-  color: #e7f1f5;
+  color: #e7e7e7;
   font-size: 16px;
   font-variant-numeric: tabular-nums;
   font-weight: 600;
@@ -171,7 +181,7 @@ h1 {
 
 .telemetry__item small {
   margin-left: 4px;
-  color: #6d7f88;
+  color: var(--vscode-faint);
   font-size: 8px;
   font-weight: 550;
   letter-spacing: 0;
@@ -192,7 +202,7 @@ h1 {
   position: relative;
   z-index: 1;
   padding-top: 6px;
-  border-top: 1px solid #1d272e;
+  border-top: 1px solid var(--vscode-border);
 }
 
 .gpu-pressure__heading,
@@ -203,7 +213,7 @@ h1 {
 }
 
 .gpu-pressure__heading {
-  color: #7c8e98;
+  color: var(--vscode-muted);
   font-size: 9px;
 }
 
@@ -215,7 +225,7 @@ h1 {
 }
 
 .gpu-pressure__heading .anticon {
-  color: #536873;
+  color: var(--vscode-faint);
   font-size: 8px;
 }
 
@@ -236,7 +246,7 @@ h1 {
 }
 
 .gpu-pressure__timing {
-  color: #61747e;
+  color: var(--vscode-faint);
   font-size: 8px;
   font-variant-numeric: tabular-nums;
 }
@@ -245,7 +255,7 @@ h1 {
   width: 3px;
   height: calc(3px + (var(--i) % 4) * 3px);
   border-radius: 1px;
-  background: #65747d;
+  background: #6f6f6f;
   transition: background 180ms ease;
 }
 
@@ -254,14 +264,14 @@ h1 {
 }
 
 .telemetry__pulse--live i {
-  background: #4fc8ee;
+  background: var(--vscode-blue-bright);
 }
 
 .control-panel,
 .input-guide {
-  border: 1px solid #202a31;
-  border-radius: 7px;
-  background: rgba(14, 20, 26, 0.92);
+  border: 1px solid var(--vscode-border);
+  border-radius: 3px;
+  background: var(--vscode-panel);
 }
 
 .section-heading {
@@ -270,24 +280,25 @@ h1 {
   justify-content: space-between;
   min-height: 46px;
   padding: 9px 11px;
-  border-bottom: 1px solid #202a31;
+  border-bottom: 1px solid var(--vscode-border);
+  background: var(--vscode-surface);
 }
 
 .section-heading h2 {
   margin-top: 2px;
-  color: #dce7ed;
+  color: var(--vscode-text);
   font-size: 12px;
   font-weight: 600;
   line-height: 1.2;
 }
 
 .section-heading > span {
-  color: #647681;
+  color: var(--vscode-faint);
   font-size: 9px;
 }
 
 .overline {
-  color: #5c8495;
+  color: var(--vscode-blue-bright);
   font-size: 8px;
   font-weight: 650;
   letter-spacing: 0.12em;
@@ -303,7 +314,7 @@ h1 {
 }
 
 .control-row + .control-row {
-  border-top: 1px solid #1d252b;
+  border-top: 1px solid var(--vscode-border);
 }
 
 .control-row__heading {
@@ -317,26 +328,26 @@ h1 {
   display: flex;
   align-items: center;
   gap: 5px;
-  color: #bbc9d0;
+  color: var(--vscode-text);
   font-size: 10px;
   font-weight: 550;
 }
 
 .control-label .anticon {
-  color: #586b76;
+  color: var(--vscode-faint);
   font-size: 9px;
   cursor: help;
 }
 
 .control-row output {
-  color: #76d5f6;
+  color: var(--vscode-cyan);
   font-size: 11px;
   font-variant-numeric: tabular-nums;
   font-weight: 600;
 }
 
 .control-row output small {
-  color: #69808b;
+  color: var(--vscode-faint);
   font-size: 8px;
   font-weight: 500;
 }
@@ -346,13 +357,13 @@ h1 {
 }
 
 .control-row .ant-slider .ant-slider-handle::after {
-  box-shadow: 0 0 0 2px #57c7f3;
+  box-shadow: 0 0 0 2px var(--vscode-blue);
 }
 
 .range-legend {
   display: flex;
   justify-content: space-between;
-  color: #596a74;
+  color: var(--vscode-faint);
   font-size: 8px;
   line-height: 1;
 }
@@ -363,8 +374,9 @@ h1 {
 }
 
 .reset-button.ant-btn:hover {
-  border-color: #3f7891;
-  color: #87d9f6;
+  border-color: var(--vscode-blue);
+  color: #ffffff;
+  background: #094771;
 }
 
 .section-heading--compact {
@@ -382,7 +394,7 @@ h1 {
 }
 
 .shortcut-row + .shortcut-row {
-  border-top: 1px solid #1d252b;
+  border-top: 1px solid var(--vscode-border);
 }
 
 .shortcut-row__keys {
@@ -395,12 +407,12 @@ kbd {
   width: 17px;
   height: 17px;
   place-items: center;
-  border: 1px solid #33434d;
-  border-bottom-color: #4a5f6c;
-  border-radius: 4px;
-  color: #a9bbc5;
-  background: #151e24;
-  box-shadow: inset 0 -1px 0 rgba(142, 190, 211, 0.08);
+  border: 1px solid var(--vscode-border-strong);
+  border-bottom-color: #5a5a5a;
+  border-radius: 2px;
+  color: var(--vscode-text);
+  background: var(--vscode-surface);
+  box-shadow: inset 0 -1px 0 rgba(255, 255, 255, 0.04);
   font-family: inherit;
   font-size: 7px;
   font-weight: 650;
@@ -408,7 +420,7 @@ kbd {
 
 .shortcut-row__icon {
   margin-left: 27px;
-  color: #6bc9ea;
+  color: var(--vscode-blue-bright);
   font-size: 16px;
 }
 
@@ -418,14 +430,14 @@ kbd {
   flex-direction: column;
   gap: 1px;
   overflow: hidden;
-  color: #667984;
+  color: var(--vscode-faint);
   font-size: 8px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .shortcut-row strong {
-  color: #b8c6cd;
+  color: var(--vscode-text);
   font-size: 9px;
   font-weight: 550;
 }
