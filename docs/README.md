@@ -67,7 +67,7 @@ agent source into the same typed graph used by the Rust builders.
 Install the complete macOS distribution:
 
 ```text
-curl -fsSL https://raw.githubusercontent.com/danaia/RAYGUN-MAC-3/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/danaia/loom/main/install.sh | sh
 ```
 
 Everything required to use Loom lives below `~/.loom`: the compiler and Metal
@@ -98,7 +98,7 @@ directly by the parsed source graph.
 Remove the command, runtime, examples, documentation, and manifest together:
 
 ```text
-curl -fsSL https://raw.githubusercontent.com/danaia/RAYGUN-MAC-3/main/uninstall.sh | sh
+curl -fsSL https://raw.githubusercontent.com/danaia/loom/main/uninstall.sh | sh
 ```
 
 The remover only deletes a directory carrying Loom’s recognized installation

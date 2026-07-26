@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-LOOM_REPOSITORY="${LOOM_REPOSITORY:-danaia/RAYGUN-MAC-3}"
+LOOM_REPOSITORY="${LOOM_REPOSITORY:-danaia/loom}"
 LOOM_HOME="${LOOM_HOME:-${HOME}/.loom}"
 LOOM_BIN_DIR="${LOOM_BIN_DIR:-${HOME}/.local/bin}"
 LOOM_VERSION="${LOOM_VERSION:-}"
