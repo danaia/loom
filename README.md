@@ -1,32 +1,20 @@
 # Loom
 
-Loom is an agent-native language for building GPU applications on Apple
-Silicon.
+Loom is an agent-native, low-level GPU language for Apple Silicon. It lets AI
+agents author, validate, inspect, repair, and run Metal applications from one
+`.loom` source.
 
+Programs run as compiled GPU kernels instead of interpreted agent logic.
+An agent can inspect diagnostics and generated Metal, correct failed source, and
+continue refining the same program.
 
-## Why this is different
+This creates a tight self-reflective development loop for fast autonomous
+systems—including swarms, simulations, and procedural organisms that can detect
+change, adapt, and repair their own state directly on the GPU.
 
-Most tools handle one part of the problem:
-
-- an AI agent writes code
-- a GPU framework runs kernels
-- a graphics engine renders output
-- a simulation framework coordinates many actors
-- a validator checks whether the program is safe to run
-
-Loom is designed to combine these parts in one language and runtime.
-
-An AI agent can author a low-level GPU program, validate its memory and resource
-access, inspect the generated Metal, run millions of parallel elements, render
-the result, and continue refining the same `.loom` source.
-
-This combination is unusual. Loom is not a prompt wrapper, a shader toy, or a
-finished simulation engine. It is an attempt to make agent-authored autonomous
-systems a first-class GPU programming model.
-
-You write a `.loom` program. Loom validates it, generates Metal for supported
-kernels, connects declared Metal kernels, schedules the GPU work, and opens a
-native window.
+Typed streams, bounded memory, explicit effects, kernel passes, validated
+execution graphs, Metal generation, and native rendering remain visible to the
+agent. It's way powerful and open source. Enjoy!
 
 ## What that power can be used for
 
@@ -56,6 +44,32 @@ That creates a useful foundation for:
 
 Loom does not automatically solve these industries. It provides a low-level
 way to build and test the large parallel systems they increasingly depend on.
+
+
+## Why this is different
+
+Most tools handle one part of the problem:
+
+- an AI agent writes code
+- a GPU framework runs kernels
+- a graphics engine renders output
+- a simulation framework coordinates many actors
+- a validator checks whether the program is safe to run
+
+Loom is designed to combine these parts in one language and runtime.
+
+An AI agent can author a low-level GPU program, validate its memory and resource
+access, inspect the generated Metal, run millions of parallel elements, render
+the result, and continue refining the same `.loom` source.
+
+This combination is unusual. Loom is not a prompt wrapper, a shader toy, or a
+finished simulation engine. It is an attempt to make agent-authored autonomous
+systems a first-class GPU programming model.
+
+You write a `.loom` program. Loom validates it, generates Metal for supported
+kernels, connects declared Metal kernels, schedules the GPU work, and opens a
+native window.
+
 
 ## Get started
 
