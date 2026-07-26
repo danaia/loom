@@ -645,6 +645,48 @@ section:not(.hero):not(.closing) {
   letter-spacing: -.045em;
 }
 .start-heading > p { margin: 0; color: #9eada5; font-size: 14px; }
+.install-panel {
+  display: grid;
+  grid-template-columns: .8fr 1.2fr;
+  margin-bottom: 18px;
+  border: 1px solid rgba(255,255,255,.16);
+  background: #101916;
+}
+.install-copy { padding: 32px; border-right: 1px solid rgba(255,255,255,.13); }
+.install-copy .mini-label { color: var(--acid); }
+.install-copy h3 { margin: 18px 0 12px; font-size: 28px; line-height: 1.12; }
+.install-copy p { margin: 0; color: #8d9c94; font-size: 12px; }
+.install-copy code, .remove-command code { font-family: var(--mono); }
+.install-layout { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 24px; }
+.install-layout span, .install-layout i {
+  padding: 7px 9px;
+  border: 1px solid rgba(255,255,255,.14);
+  font-family: var(--mono);
+  font-size: 8px;
+  font-style: normal;
+}
+.install-layout span { color: var(--night); background: var(--acid); }
+.install-commands { min-width: 0; }
+.install-commands pre {
+  padding: 35px 28px;
+  margin: 0;
+  overflow-x: auto;
+  color: var(--acid);
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.8;
+}
+.remove-command {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 20px;
+  padding: 18px 28px;
+  border-top: 1px solid rgba(255,255,255,.13);
+  color: #78887f;
+  font-size: 8px;
+}
+.remove-command span { color: var(--orange); font-family: var(--mono); letter-spacing: .1em; }
+.remove-command code { overflow-x: auto; white-space: nowrap; }
 .start-path {
   display: flex;
   align-items: center;
@@ -704,6 +746,16 @@ section:not(.hero):not(.closing) {
   line-height: 1.8;
 }
 .terminal-card .prompt, .code-card .kw { color: var(--acid); }
+.run-result {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 22px;
+  padding: 18px 25px;
+  border-top: 1px solid rgba(255,255,255,.13);
+  background: rgba(217,255,98,.07);
+}
+.run-result span { color: var(--acid); font-family: var(--mono); font-size: 8px; letter-spacing: .1em; }
+.run-result p { margin: 0; color: #a8b7af; font-size: 11px; }
 .code-card .type { color: var(--mint); }
 .syntax-intro {
   display: grid;
@@ -933,7 +985,8 @@ footer > a:last-child { color:var(--acid); font-family:var(--mono); font-size:9p
   .hero-note { bottom:26px; width:auto; }
   .manifesto-copy, .mechanism-heading, .possibilities-heading, .particle-intro, .proof-heading, .build-heading, .start-heading, .syntax-intro { grid-template-columns:1fr; gap:35px; }
   .particle-anatomy, .gpu-section, .language-grid, .contracts { grid-template-columns:1fr; }
-  .start-grid { grid-template-columns:1fr; }
+  .start-grid, .install-panel { grid-template-columns:1fr; }
+  .install-copy { border-right:0; border-bottom:1px solid rgba(255,255,255,.13); }
   .building-blocks { grid-template-columns:1fr; }
   .block-card { min-height:auto; }
   .organism-specimen { grid-template-columns:1fr; }
@@ -990,7 +1043,10 @@ footer > a:last-child { color:var(--acid); font-family:var(--mono); font-size:9p
   .start-path span { white-space:nowrap; }
   .syntax-intro { margin:70px 0 30px; }
   .syntax-grid { grid-template-columns:1fr; }
+  .install-commands pre { padding:24px 18px; font-size:9px; }
+  .remove-command { grid-template-columns:1fr; gap:8px; padding:18px; }
   .terminal-card pre, .code-card pre { padding:20px 17px; font-size:10px; }
+  .run-result { grid-template-columns:1fr; gap:7px; padding:18px; }
   .native-boundary { grid-template-columns:1fr; gap:12px; }
   .proof-heading { margin:45px 0; }
   .proof-heading h2 { font-size:39px; }

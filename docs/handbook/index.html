@@ -351,13 +351,41 @@
         <div class="start-heading">
           <div>
             <p class="eyebrow">Hello Particle</p>
-            <h2>Write two lines of motion. Let Loom build the GPU program around them.</h2>
+            <h2>One install. One command. Your Loom program becomes a Metal application.</h2>
           </div>
           <p>
             This is Loom’s first complete language slice: agent-authored source is parsed,
             type- and unit-checked, lowered into the canonical graph, generated as Metal,
             compiled, and run in a native window.
           </p>
+        </div>
+
+        <div class="install-panel reveal">
+          <div class="install-copy">
+            <span class="mini-label">INSTALL / MACOS</span>
+            <h3>The whole language lives in one directory.</h3>
+            <p>
+              The compiler, Metal runtime, examples, handbook, version, and install manifest
+              live under <code>~/.loom</code>. A single symlink exposes the <code>loom</code>
+              command. No Rust or Cargo is required on the host.
+            </p>
+            <div class="install-layout" aria-label="Installed Loom directory layout">
+              <span>~/.loom/</span>
+              <i>bin/loom</i>
+              <i>examples/</i>
+              <i>share/loom/docs/</i>
+              <i>install-manifest</i>
+            </div>
+          </div>
+          <div class="install-commands">
+            <div class="code-header"><span>INSTALL</span><i>one curl command</i></div>
+            <pre><code>curl -fsSL \
+  https://raw.githubusercontent.com/danaia/RAYGUN-MAC-3/main/install.sh | sh</code></pre>
+            <div class="remove-command">
+              <span>REMOVE</span>
+              <code>curl -fsSL https://raw.githubusercontent.com/danaia/RAYGUN-MAC-3/main/uninstall.sh | sh</code>
+            </div>
+          </div>
         </div>
 
         <div class="start-path reveal" aria-label="Loom compilation path">
@@ -367,33 +395,34 @@
 
         <div class="start-grid">
           <article class="start-steps reveal">
-            <span class="mini-label">THREE COMMANDS</span>
+            <span class="mini-label">RUN THE FIRST APPLICATION</span>
             <ol>
               <li>
                 <span>01</span>
-                <div><strong>Check</strong><p>Parse, validate, and fingerprint without running.</p></div>
+                <div><strong>Launch Hello Particle</strong><p>Run the example included with every Loom installation.</p></div>
               </li>
               <li>
                 <span>02</span>
-                <div><strong>Explain</strong><p>Inspect the graph, execution plan, and generated Metal.</p></div>
+                <div><strong>Check your source</strong><p>Parse, validate, and fingerprint without running.</p></div>
               </li>
               <li>
                 <span>03</span>
-                <div><strong>Run</strong><p>Compile the pipelines and open the native Metal window.</p></div>
+                <div><strong>Explain the build</strong><p>Inspect the graph, execution plan, and generated Metal.</p></div>
               </li>
             </ol>
           </article>
 
           <div class="terminal-card reveal">
-            <div class="code-header"><span>TERMINAL</span><i>examples/hello-particle</i></div>
-            <pre><code><span class="prompt">$</span> cargo run -p loom-cli -- check \
-  examples/hello-particle/hello-particle.agent.loom
+            <div class="code-header"><span>RUN HELLO PARTICLE</span><i>no Cargo</i></div>
+            <pre><code><span class="prompt">$</span> loom ~/.loom/examples/hello-particle/hello-particle.loom
 
-<span class="prompt">$</span> cargo run -p loom-cli -- explain \
-  examples/hello-particle/hello-particle.agent.loom
+<span class="prompt">$</span> loom check hello-particle.loom
 
-<span class="prompt">$</span> cargo run -p loom-cli -- run \
-  examples/hello-particle/hello-particle.agent.loom</code></pre>
+<span class="prompt">$</span> loom explain hello-particle.loom</code></pre>
+            <div class="run-result">
+              <span>RESULT</span>
+              <p>A native Metal window opens and Loom runs the particle simulation at 120 Hz.</p>
+            </div>
           </div>
         </div>
 
@@ -460,8 +489,8 @@
           <strong>What is native today?</strong>
           <p>
             Integration is authored in Loom and generated into Metal. Ground contact and
-            rendering are explicit Metal implementations. Loom never hides which path a
-            kernel takes.
+            rendering are explicit Metal implementations packaged inside the installed
+            runtime. Loom never hides which path a kernel takes.
           </p>
           <a href="../../examples/hello-particle/hello-particle.agent.loom">Open the complete source <span>↗</span></a>
         </aside>

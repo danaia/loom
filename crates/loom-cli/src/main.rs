@@ -4,6 +4,20 @@ use loom_syntax::parse;
 use loom_validator::Validator;
 use serde::Serialize;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Command {
+    Check,
+    Explain,
+    Run,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+enum CliAction {
+    Execute { command: Command, path: String },
+    Help,
+    Version,
+}
+
 #[derive(Serialize)]
 struct CheckSuccess<'a> {
     status: &'static str,
@@ -35,16 +49,27 @@ fn main() -> ExitCode {
 
 fn run() -> Result<(), u8> {
     let arguments = env::args().skip(1).collect::<Vec<_>>();
-    let [command, path] = arguments.as_slice() else {
-        eprintln!("usage: loom <check|explain|run> <source.loom>");
-        return Err(2);
+    let action = match parse_arguments(&arguments) {
+        Ok(action) => action,
+        Err(message) => {
+            eprintln!("{message}\n");
+            print_help();
+            return Err(2);
+        }
     };
-    if command != "check" && command != "explain" && command != "run" {
-        eprintln!("unknown command `{command}`; expected `check`, `explain`, or `run`");
-        return Err(2);
-    }
+    let (command, path) = match action {
+        CliAction::Help => {
+            print_help();
+            return Ok(());
+        }
+        CliAction::Version => {
+            println!("loom {}", env!("CARGO_PKG_VERSION"));
+            return Ok(());
+        }
+        CliAction::Execute { command, path } => (command, path),
+    };
 
-    let source = match fs::read_to_string(path) {
+    let source = match fs::read_to_string(&path) {
         Ok(source) => source,
         Err(error) => {
             print_json(&serde_json::json!({
@@ -77,9 +102,9 @@ fn run() -> Result<(), u8> {
         return Err(1);
     };
 
-    if command == "run" {
+    if command == Command::Run {
         return run_window(validated.clone());
-    } else if command == "check" {
+    } else if command == Command::Check {
         print_json(&CheckSuccess {
             status: "valid",
             module: &graph.name,
@@ -125,6 +150,49 @@ fn run() -> Result<(), u8> {
     Ok(())
 }
 
+fn parse_arguments(arguments: &[String]) -> Result<CliAction, String> {
+    match arguments {
+        [flag] if flag == "--help" || flag == "-h" => Ok(CliAction::Help),
+        [flag] if flag == "--version" || flag == "-V" => Ok(CliAction::Version),
+        [path] => Ok(CliAction::Execute {
+            command: Command::Run,
+            path: path.clone(),
+        }),
+        [command, path] => {
+            let command = match command.as_str() {
+                "check" => Command::Check,
+                "explain" => Command::Explain,
+                "run" => Command::Run,
+                _ => {
+                    return Err(format!(
+                        "unknown command `{command}`; pass a .loom file or use check, explain, or run"
+                    ));
+                }
+            };
+            Ok(CliAction::Execute {
+                command,
+                path: path.clone(),
+            })
+        }
+        [] => Err("missing Loom program".to_owned()),
+        _ => Err("too many arguments".to_owned()),
+    }
+}
+
+fn print_help() {
+    println!(
+        "Loom — agent-native GPU programs for Metal
+
+Usage:
+  loom <source.loom>           Run a Loom program
+  loom run <source.loom>       Run a Loom program explicitly
+  loom check <source.loom>     Parse, validate, and fingerprint
+  loom explain <source.loom>   Print the graph, plan, and generated Metal
+  loom --version               Print the installed version
+  loom --help                  Print this help"
+    );
+}
+
 #[cfg(target_os = "macos")]
 fn run_window(validated: loom_validator::ValidatedModuleGraph) -> Result<(), u8> {
     loom_metal::MetalRuntime::run(validated).map_err(|diagnostic| {
@@ -140,7 +208,7 @@ fn run_window(validated: loom_validator::ValidatedModuleGraph) -> Result<(), u8>
 fn run_window(_validated: loom_validator::ValidatedModuleGraph) -> Result<(), u8> {
     print_json(&serde_json::json!({
         "status": "unsupported",
-        "message": "`loom run` currently requires macOS and Metal",
+        "message": "running Loom programs currently requires macOS and Metal",
     }));
     Err(2)
 }
@@ -150,4 +218,44 @@ fn print_json(value: &impl Serialize) {
         "{}",
         serde_json::to_string_pretty(value).expect("CLI result must serialize")
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CliAction, Command, parse_arguments};
+
+    fn args(values: &[&str]) -> Vec<String> {
+        values.iter().map(|value| (*value).to_owned()).collect()
+    }
+
+    #[test]
+    fn a_source_path_runs_without_a_subcommand() {
+        assert_eq!(
+            parse_arguments(&args(&["hello-particle.loom"])),
+            Ok(CliAction::Execute {
+                command: Command::Run,
+                path: "hello-particle.loom".to_owned(),
+            })
+        );
+    }
+
+    #[test]
+    fn explicit_commands_remain_available() {
+        assert_eq!(
+            parse_arguments(&args(&["check", "hello-particle.loom"])),
+            Ok(CliAction::Execute {
+                command: Command::Check,
+                path: "hello-particle.loom".to_owned(),
+            })
+        );
+    }
+
+    #[test]
+    fn help_and_version_are_host_friendly() {
+        assert_eq!(parse_arguments(&args(&["--help"])), Ok(CliAction::Help));
+        assert_eq!(
+            parse_arguments(&args(&["--version"])),
+            Ok(CliAction::Version)
+        );
+    }
 }

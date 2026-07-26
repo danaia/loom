@@ -62,19 +62,47 @@ The example intentionally constructs the unsafe one-buffer/four-overlapping-tick
 
 The first executable `.loom` compiler parses native kernel arithmetic, checks
 its types, units, and effects, generates packaged Metal, and lowers canonical
-agent source into the same typed graph used by the Rust builders. Check or
-inspect the source with:
+agent source into the same typed graph used by the Rust builders.
+
+Install the complete macOS distribution:
 
 ```text
-cargo run -p loom-cli -- check examples/hello-particle/hello-particle.agent.loom
-cargo run -p loom-cli -- explain examples/hello-particle/hello-particle.agent.loom
-cargo run -p loom-cli -- run examples/hello-particle/hello-particle.agent.loom
+curl -fsSL https://raw.githubusercontent.com/danaia/RAYGUN-MAC-3/main/install.sh | sh
+```
+
+Everything required to use Loom lives below `~/.loom`: the compiler and Metal
+runtime, examples, handbook, version, and installation manifest. The installer
+adds only a `~/.local/bin/loom` symlink outside that directory. Rust and Cargo are
+not required on the host.
+
+Run a program directly:
+
+```text
+loom ~/.loom/examples/hello-particle/hello-particle.loom
+```
+
+A source path means run. The explicit development and inspection commands remain
+available:
+
+```text
+loom run examples/hello-particle/hello-particle.agent.loom
+loom check examples/hello-particle/hello-particle.agent.loom
+loom explain examples/hello-particle/hello-particle.agent.loom
 ```
 
 `check` and `explain` return structured JSON. `check` reports stable graph and
 artifact hashes; `explain` includes the normalized graph, generated Metal, and
 resolved execution plan. On macOS, `run` opens a native Metal window driven
 directly by the parsed source graph.
+
+Remove the command, runtime, examples, documentation, and manifest together:
+
+```text
+curl -fsSL https://raw.githubusercontent.com/danaia/RAYGUN-MAC-3/main/uninstall.sh | sh
+```
+
+The remover only deletes a directory carrying Loom’s recognized installation
+manifest and only removes a command symlink that points into that directory.
 
 ## Native Metal Hello Particle
 
