@@ -87,7 +87,7 @@ Run a particle:
 loom ~/.loom/examples/hello-particle.loom
 ```
 
-Run a crystal:
+Run the interactive self-healing crystal:
 
 ```sh
 loom ~/.loom/examples/crystal.loom
@@ -203,7 +203,8 @@ Metal kernels.
 
 ### Hello Crystal
 
-A 32 × 32 × 32 mesoscopic crystal grows, can be cut, and repairs damage.
+A 32 × 32 × 32 mesoscopic crystal grows on the GPU. Drag across it to slice it,
+drag the black background to spin it, and scroll to zoom. The cut heals itself.
 
 ```sh
 loom examples/hello-crystal/crystal.loom

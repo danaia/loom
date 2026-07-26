@@ -2464,6 +2464,14 @@ fn build_execution_plan(
             })
         })
         .collect();
+    let scheduled_pass_ids = orders
+        .iter()
+        .flat_map(|order| order.items.iter())
+        .filter_map(|item| match item {
+            ScheduleItemId::Pass(pass) => Some(*pass),
+            ScheduleItemId::View(_) => None,
+        })
+        .collect::<BTreeSet<_>>();
     let mut intervention_ids = graph
         .scenarios
         .iter()
@@ -2473,6 +2481,13 @@ fn build_execution_plan(
                 .iter()
                 .map(|intervention| intervention.pass)
         })
+        .chain(
+            graph
+                .passes
+                .iter()
+                .filter(|pass| !scheduled_pass_ids.contains(&pass.id))
+                .map(|pass| pass.id),
+        )
         .collect::<Vec<_>>();
     intervention_ids.sort();
     intervention_ids.dedup();

@@ -2797,9 +2797,13 @@ mod tests {
         hello_crystal_builder_with_config, hello_organism_builder,
         hello_organism_builder_with_config,
     };
+    use loom_syntax::parse;
     use loom_validator::Validator;
     use std::time::Duration;
     use winit::dpi::PhysicalSize;
+
+    const CRYSTAL_LANGUAGE_SOURCE: &str =
+        include_str!("../../../examples/hello-crystal/crystal.loom");
 
     #[test]
     fn rational_pacing_has_no_one_second_drift() {
@@ -3184,6 +3188,113 @@ mod tests {
             healed[8], 1,
             "healing must preserve the historical slice count"
         );
+    }
+
+    #[test]
+    fn language_crystal_orbits_zooms_slices_and_self_heals() {
+        let graph = parse(CRYSTAL_LANGUAGE_SOURCE).expect("crystal source must parse");
+        let stream = |name: &str| {
+            graph
+                .resources
+                .streams
+                .iter()
+                .find(|stream| stream.name == name)
+                .unwrap_or_else(|| panic!("missing crystal stream `{name}`"))
+                .id
+        };
+        let damage = stream("material.damage");
+        let slice_count = stream("interaction.slice_count");
+        let camera_yaw = stream("interaction.camera_yaw");
+        let camera_pitch = stream("interaction.camera_pitch");
+        let camera_zoom = stream("interaction.camera_zoom");
+        let validated = Validator::validate(&graph)
+            .validated
+            .expect("crystal source graph must validate");
+        let device = metal::Device::system_default().expect("Metal device");
+        let layer = metal::MetalLayer::new();
+        layer.set_device(&device);
+        layer.set_pixel_format(metal::MTLPixelFormat::BGRA8Unorm);
+        let mut state = RuntimeState::new(validated, device.clone(), layer).unwrap();
+        state
+            .run_benchmark(
+                &device,
+                BenchmarkConfig {
+                    mode: BenchmarkMode::Headless,
+                    runner: BenchmarkRunner::LoomPlan,
+                    warmup_ticks: 0,
+                    sample_ticks: 100,
+                    ..BenchmarkConfig::default()
+                },
+            )
+            .expect("language crystal must execute through Metal");
+
+        let read_bytes = |state: &RuntimeState, stream: loom_core::StreamId, byte_count: u64| {
+            let readback =
+                device.new_buffer(byte_count, metal::MTLResourceOptions::StorageModeShared);
+            let command_buffer = state.queue.new_command_buffer();
+            let blit = command_buffer.new_blit_command_encoder();
+            blit.copy_from_buffer(
+                &state.stream_buffers[stream.0 as usize][0],
+                0,
+                &readback,
+                0,
+                byte_count,
+            );
+            blit.end_encoding();
+            command_buffer.commit();
+            command_buffer.wait_until_completed();
+            readback
+        };
+        let read_scalar_f32 = |state: &RuntimeState, stream| {
+            let readback = read_bytes(state, stream, std::mem::size_of::<f32>() as u64);
+            unsafe { *(readback.contents().cast::<f32>()) }
+        };
+        let read_scalar_u32 = |state: &RuntimeState, stream| {
+            let readback = read_bytes(state, stream, std::mem::size_of::<u32>() as u64);
+            unsafe { *(readback.contents().cast::<u32>()) }
+        };
+        let damaged_cells = |state: &RuntimeState| {
+            let count = 32 * 32 * 32;
+            let readback = read_bytes(state, damage, (count * std::mem::size_of::<f32>()) as u64);
+            let damage =
+                unsafe { std::slice::from_raw_parts(readback.contents().cast::<f32>(), count) };
+            damage.iter().filter(|value| **value > 0.0).count()
+        };
+
+        assert!(
+            state
+                .pointer_hits_crystal((480.0, 360.0), PhysicalSize::new(960, 720))
+                .unwrap(),
+            "the language crystal must support pointer hit-testing"
+        );
+        assert!(
+            !state
+                .pointer_hits_crystal((30.0, 30.0), PhysicalSize::new(960, 720))
+                .unwrap(),
+            "background space must remain available for orbiting"
+        );
+
+        state.queue_pointer_orbit((30.0, 30.0), (90.0, 55.0));
+        state.queue_pointer_zoom(1.5_f32.ln());
+        state.draw_tick().unwrap();
+        assert!((read_scalar_f32(&state, camera_yaw) - 0.48).abs() < 0.001);
+        assert!((read_scalar_f32(&state, camera_pitch) - 0.20).abs() < 0.001);
+        assert!((read_scalar_f32(&state, camera_zoom) - 1.5).abs() < 0.001);
+
+        state.queue_pointer_slice((250.0, 360.0), (710.0, 360.0), PhysicalSize::new(960, 720));
+        state.draw_tick().unwrap();
+        assert!(damaged_cells(&state) > 0, "mouse slicing must damage cells");
+        assert_eq!(read_scalar_u32(&state, slice_count), 1);
+
+        for _ in 0..60 {
+            state.draw_tick().unwrap();
+        }
+        assert_eq!(
+            damaged_cells(&state),
+            0,
+            "the language crystal must heal without another pointer gesture"
+        );
+        assert_eq!(read_scalar_u32(&state, slice_count), 1);
     }
 
     #[test]

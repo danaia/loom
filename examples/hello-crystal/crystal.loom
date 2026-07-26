@@ -1,8 +1,10 @@
-// A runnable 32 x 32 x 32 mesoscopic crystal.
+// A runnable, interactive 32 x 32 x 32 mesoscopic crystal.
+// Drag across the crystal to slice it, drag the background to orbit, and scroll
+// to zoom. Damage and displaced fragments heal automatically.
 // Loom owns the graph; the advanced neighborhood kernels remain Metal escape hatches.
 
 loom 0.1
-module hello_crystal_language
+module hello_crystal
 target metal
 
 const field.width: u32 = 32
@@ -11,6 +13,16 @@ const growth.rate: f32 = 0.19
 const growth.anisotropy_strength: f32 = 0.68
 const field.solute_diffusion: f32 = 0.075
 const field.thermal_diffusion: f32 = 0.065
+const interaction.slice_start_x: f32 = 0
+const interaction.slice_start_y: f32 = 0
+const interaction.slice_end_x: f32 = 0
+const interaction.slice_end_y: f32 = 0
+const interaction.slice_radius: f32 = 0.024
+const interaction.orbit_delta_yaw: f32 = 0
+const interaction.orbit_delta_pitch: f32 = 0
+const interaction.zoom_delta: f32 = 0
+const interaction.pick_x: f32 = 0
+const interaction.pick_y: f32 = 0
 const healing.damage_rate: f32 = 0.02
 const healing.reassembly_rate: f32 = 0.075
 
@@ -79,6 +91,11 @@ stream interaction.camera_zoom: f32 {
   init=[1]
 }
 
+stream interaction.pick_hit: u32 {
+  cap=1 len=1 buffers=1 access=rw storage=device
+  init=[0]
+}
+
 stream render.position: f32x3 {
   cap=32768 len=32768 buffers=1 access=rw storage=device
 }
@@ -144,6 +161,25 @@ kernel crystal_commit_fields(
   entry="crystal_commit_fields"
 }
 
+kernel crystal_slice_material(
+  phase: in stream<f32>,
+  position: in stream<f32x3>,
+  camera_yaw: in all stream<f32>,
+  camera_pitch: in all stream<f32>,
+  camera_zoom: in all stream<f32>,
+  damage: rw stream<f32>,
+  velocity: rw stream<f32x3>,
+  slice_count: atomic all stream<u32>,
+  start_x: in value<f32>,
+  start_y: in value<f32>,
+  end_x: in value<f32>,
+  end_y: in value<f32>,
+  radius: in value<f32>
+) extern metal {
+  source="kernels/crystal.metal"
+  entry="crystal_slice_material"
+}
+
 kernel crystal_initialize_components(
   phase: in stream<f32>,
   damage: in stream<f32>,
@@ -189,6 +225,47 @@ kernel crystal_self_heal(
 ) extern metal {
   source="kernels/crystal.metal"
   entry="crystal_self_heal"
+}
+
+kernel crystal_orbit_camera(
+  camera_yaw: rw all stream<f32>,
+  camera_pitch: rw all stream<f32>,
+  delta_yaw: in value<f32>,
+  delta_pitch: in value<f32>
+) extern metal {
+  source="kernels/crystal.metal"
+  entry="crystal_orbit_camera"
+}
+
+kernel crystal_zoom_camera(
+  camera_zoom: rw all stream<f32>,
+  zoom_delta: in value<f32>
+) extern metal {
+  source="kernels/crystal.metal"
+  entry="crystal_zoom_camera"
+}
+
+kernel crystal_clear_pick(
+  pick_hit: out stream<u32>
+) extern metal {
+  source="kernels/crystal.metal"
+  entry="crystal_clear_pick"
+}
+
+kernel crystal_pick(
+  phase: in stream<f32>,
+  damage: in stream<f32>,
+  position: in stream<f32x3>,
+  camera_yaw: in all stream<f32>,
+  camera_pitch: in all stream<f32>,
+  camera_zoom: in all stream<f32>,
+  pick_hit: atomic all stream<u32>,
+  pick_x: in value<f32>,
+  pick_y: in value<f32>,
+  width: in value<u32>
+) extern metal {
+  source="kernels/crystal.metal"
+  entry="crystal_pick"
 }
 
 kernel crystal_prepare_render(
@@ -255,6 +332,51 @@ pass commit = crystal_commit_fields(
   solute_next=field.solute_next
   temperature=field.temperature
   temperature_next=field.temperature_next
+) over field.phase
+
+pass slice_material = crystal_slice_material(
+  phase=field.phase
+  position=material.position
+  camera_yaw=interaction.camera_yaw
+  camera_pitch=interaction.camera_pitch
+  camera_zoom=interaction.camera_zoom
+  damage=material.damage
+  velocity=material.velocity
+  slice_count=interaction.slice_count
+  start_x=interaction.slice_start_x
+  start_y=interaction.slice_start_y
+  end_x=interaction.slice_end_x
+  end_y=interaction.slice_end_y
+  radius=interaction.slice_radius
+) over field.phase
+
+pass orbit_camera = crystal_orbit_camera(
+  camera_yaw=interaction.camera_yaw
+  camera_pitch=interaction.camera_pitch
+  delta_yaw=interaction.orbit_delta_yaw
+  delta_pitch=interaction.orbit_delta_pitch
+) over interaction.camera_yaw
+
+pass zoom_camera = crystal_zoom_camera(
+  camera_zoom=interaction.camera_zoom
+  zoom_delta=interaction.zoom_delta
+) over interaction.camera_zoom
+
+pass clear_pointer_pick = crystal_clear_pick(
+  pick_hit=interaction.pick_hit
+) over interaction.pick_hit
+
+pass pick_crystal = crystal_pick(
+  phase=field.phase
+  damage=material.damage
+  position=material.position
+  camera_yaw=interaction.camera_yaw
+  camera_pitch=interaction.camera_pitch
+  camera_zoom=interaction.camera_zoom
+  pick_hit=interaction.pick_hit
+  pick_x=interaction.pick_x
+  pick_y=interaction.pick_y
+  width=field.width
 ) over field.phase
 
 pass seed_components = crystal_initialize_components(

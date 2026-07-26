@@ -1,7 +1,8 @@
 # Hello Crystal
 
 [`crystal.loom`](crystal.loom) is a directly runnable Loom-language program for a
-32³ mesoscopic crystal. One element is a material volume, not an atom.
+32³ interactive mesoscopic crystal. It grows on the GPU, can be sliced with the
+mouse, and heals itself. One element is a material volume, not an atom.
 
 Update Loom first:
 
@@ -36,6 +37,16 @@ The curl installer places a copy that can be launched from any directory:
 ```text
 loom ~/.loom/examples/crystal.loom
 ```
+
+## Controls
+
+- Left-drag on the crystal to slice it.
+- Left-drag on the black background to spin the crystal.
+- Scroll or use a trackpad gesture to zoom.
+
+Nothing damages the crystal until you slice it. A cut removes material and moves
+the separated fragments. Damage then decays, fragments return toward their
+lattice positions, and the seam closes automatically.
 
 ## Check and explain
 
@@ -73,16 +84,7 @@ Run the configurable builder on Metal:
 ./scripts/run-hello-particle.sh crystal 1m
 ```
 
-Controls:
-
-- Left-drag on the crystal to slice it.
-- Left-drag on the black background to orbit it.
-- Scroll or use a trackpad gesture to zoom in and out.
-
 Every stroke is projected into the simulation using the current camera transform.
-Nothing damages the crystal until you slice it. Once cut, the crystal immediately
-begins self-healing: damage decays while displaced fragments are pulled back
-toward their lattice positions, and the seam closes automatically.
 
 For a faster development run, use a smaller perfect cube:
 

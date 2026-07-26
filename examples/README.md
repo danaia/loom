@@ -10,6 +10,10 @@ loom examples/hello-particle/hello-particle.loom
 loom examples/hello-crystal/crystal.loom
 ```
 
+The Crystal example is interactive: drag across the crystal to slice it, drag
+the black background to spin it, and scroll to zoom. The cut heals
+automatically.
+
 From inside an example directory:
 
 ```text

@@ -1803,5 +1803,24 @@ mod tests {
             .find(|slot| slot.name == "tick")
             .expect("tick slot");
         assert_eq!(tick.indexing, StreamIndexing::WholeResource);
+
+        let validated = report.validated.expect("crystal source should validate");
+        let mut intervention_names = validated
+            .execution_plan()
+            .intervention_passes
+            .iter()
+            .map(|planned| graph.passes[planned.pass.0 as usize].name.as_str())
+            .collect::<Vec<_>>();
+        intervention_names.sort_unstable();
+        assert_eq!(
+            intervention_names,
+            [
+                "clear_pointer_pick",
+                "orbit_camera",
+                "pick_crystal",
+                "slice_material",
+                "zoom_camera",
+            ]
+        );
     }
 }
