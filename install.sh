@@ -40,8 +40,9 @@ elif [ -n "${LOOM_VERSION}" ]; then
   CHECKSUM_URL="${RELEASE_ROOT}/${ASSET_NAME}.sha256"
 else
   RELEASE_ROOT="https://github.com/${LOOM_REPOSITORY}/releases/latest/download"
-  ARCHIVE_URL="${RELEASE_ROOT}/${ASSET_NAME}.tar.gz"
-  CHECKSUM_URL="${RELEASE_ROOT}/${ASSET_NAME}.sha256"
+  RELEASE_CACHE_KEY="$(date +%s)"
+  ARCHIVE_URL="${RELEASE_ROOT}/${ASSET_NAME}.tar.gz?loom_release=${RELEASE_CACHE_KEY}"
+  CHECKSUM_URL="${RELEASE_ROOT}/${ASSET_NAME}.sha256?loom_release=${RELEASE_CACHE_KEY}"
 fi
 
 TEMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/loom-install.XXXXXX")"
