@@ -160,6 +160,12 @@ kernel void organism_resolve_state(
     const device uint* active_count [[buffer(21)]],
     const device uint* stable_id [[buffer(22)]],
     device uint* event_hash [[buffer(23)]],
+    const device uint* divide_intent [[buffer(24)]],
+    const device uint* death_intent [[buffer(25)]],
+    device float* ledger_absorbed [[buffer(26)]],
+    device float* ledger_maintenance [[buffer(27)]],
+    device float* ledger_decisions [[buffer(28)]],
+    device float* ledger_signaling [[buffer(29)]],
     uint index [[thread_position_in_grid]])
 {
     if (index >= active_count[0]) return;
@@ -202,11 +208,22 @@ kernel void organism_resolve_state(
     recent_surface_exposure[index] =
         (recent_surface_exposure[index] * 7u + surface_exposure_bin[index]) / 8u;
     age[index] += 1;
-    const float absorbed = float(nutrient_bin[index]) / float(LOOM_DECISION_MAX) * 0.005f;
+    const float previous_energy = energy[index];
+    const float absorbed =
+        float(nutrient_bin[index]) / float(LOOM_DECISION_MAX) * 0.00978f;
+    const float maintenance = 0.001f + previous_energy * 0.0022f;
     const float signaling =
         float(activator_deposit[index] + inhibitor_deposit[index]) /
         float(LOOM_Q16) * 0.0001f;
-    energy[index] = max(0.0f, energy[index] + absorbed - 0.001f - signaling);
+    const float decisions =
+        float(divide_intent[index] + death_intent[index]) * 0.00001f;
+    ledger_absorbed[index] = absorbed;
+    ledger_maintenance[index] = maintenance;
+    ledger_decisions[index] = decisions;
+    ledger_signaling[index] = signaling;
+    energy[index] = max(
+        0.0f,
+        previous_energy + absorbed - maintenance - decisions - signaling);
     const float4 colors[4] = {
         float4(1.0, 0.25, 0.25, 1.0),
         float4(0.8, 0.8, 0.9, 1.0),
@@ -317,6 +334,7 @@ kernel void organism_diffuse(
     constant uint& width [[buffer(13)]],
     constant float& activator_transport [[buffer(14)]],
     constant float& inhibitor_transport [[buffer(15)]],
+    const device float* nutrient_supply [[buffer(16)]],
     uint index [[thread_position_in_grid]])
 {
     activator_next[index] = diffuse_channel(
@@ -330,7 +348,9 @@ kernel void organism_diffuse(
     const float local_consumption =
         float(density_deposit[index]) / float(LOOM_Q16) * 0.00005f;
     nutrient_next[index] = clamp(
-        nutrient[index] + 0.001f * (1.0f - nutrient[index]) - local_consumption,
+        nutrient[index] +
+        0.001f * (clamp(nutrient_supply[0], 0.0f, 1.0f) - nutrient[index]) -
+        local_consumption,
         0.0f, 1.0f);
     injury_next[index] = max(0.0f, injury[index] * 0.99f);
 }
@@ -353,6 +373,294 @@ kernel void organism_commit_fields(
     nutrient[index] = nutrient_next[index];
     density[index] = density_next[index];
     injury[index] = injury_next[index];
+}
+
+kernel void organism_begin_energy_ledger(
+    const device uint* active_count [[buffer(0)]],
+    const device float* energy [[buffer(1)]],
+    device float* previous_total [[buffer(2)]],
+    device float* absorbed [[buffer(3)]],
+    device float* maintenance [[buffer(4)]],
+    device float* decisions [[buffer(5)]],
+    device float* motion [[buffer(6)]],
+    device float* signaling [[buffer(7)]],
+    device float* division [[buffer(8)]],
+    device float* environmental_death_loss [[buffer(9)]],
+    device float* current_total [[buffer(10)]],
+    device float* residual [[buffer(11)]],
+    uint index [[thread_position_in_grid]])
+{
+    if (index != 0) return;
+    float total = 0.0f;
+    for (uint cell = 0; cell < active_count[0]; ++cell) {
+        total += energy[cell];
+    }
+    previous_total[0] = total;
+    absorbed[0] = 0.0f;
+    maintenance[0] = 0.0f;
+    decisions[0] = 0.0f;
+    motion[0] = 0.0f;
+    signaling[0] = 0.0f;
+    division[0] = 0.0f;
+    environmental_death_loss[0] = 0.0f;
+    current_total[0] = 0.0f;
+    residual[0] = 0.0f;
+}
+
+kernel void organism_reduce_energy_ledger(
+    const device uint* active_count [[buffer(0)]],
+    const device float* cell_absorbed [[buffer(1)]],
+    const device float* cell_maintenance [[buffer(2)]],
+    const device float* cell_decisions [[buffer(3)]],
+    const device float* cell_signaling [[buffer(4)]],
+    const device uint* death_intent [[buffer(5)]],
+    const device float* energy [[buffer(6)]],
+    device float* absorbed [[buffer(7)]],
+    device float* maintenance [[buffer(8)]],
+    device float* decisions [[buffer(9)]],
+    device float* signaling [[buffer(10)]],
+    device float* environmental_death_loss [[buffer(11)]],
+    uint index [[thread_position_in_grid]])
+{
+    if (index != 0) return;
+    float absorbed_total = 0.0f;
+    float maintenance_total = 0.0f;
+    float decision_total = 0.0f;
+    float signaling_total = 0.0f;
+    float death_total = 0.0f;
+    for (uint cell = 0; cell < active_count[0]; ++cell) {
+        absorbed_total += cell_absorbed[cell];
+        maintenance_total += cell_maintenance[cell];
+        decision_total += cell_decisions[cell];
+        signaling_total += cell_signaling[cell];
+        if (death_intent[cell] != 0u) {
+            death_total += energy[cell];
+        }
+    }
+    absorbed[0] = absorbed_total;
+    maintenance[0] = maintenance_total;
+    decisions[0] = decision_total;
+    signaling[0] = signaling_total;
+    environmental_death_loss[0] = death_total;
+}
+
+kernel void organism_finalize_energy_ledger(
+    const device uint* active_count [[buffer(0)]],
+    const device float* energy [[buffer(1)]],
+    const device uint* accepted_birth_count [[buffer(2)]],
+    const device float* previous_total [[buffer(3)]],
+    const device float* absorbed [[buffer(4)]],
+    const device float* maintenance [[buffer(5)]],
+    const device float* decisions [[buffer(6)]],
+    const device float* motion [[buffer(7)]],
+    const device float* signaling [[buffer(8)]],
+    device float* division [[buffer(9)]],
+    const device float* environmental_death_loss [[buffer(10)]],
+    device float* current_total [[buffer(11)]],
+    device float* residual [[buffer(12)]],
+    device float* cumulative_residual [[buffer(13)]],
+    uint index [[thread_position_in_grid]])
+{
+    if (index != 0) return;
+    float total = 0.0f;
+    for (uint cell = 0; cell < active_count[0]; ++cell) {
+        total += energy[cell];
+    }
+    const float division_cost = float(accepted_birth_count[0]) * 0.1f;
+    const float tick_residual =
+        previous_total[0] + absorbed[0] -
+        maintenance[0] - decisions[0] - motion[0] - signaling[0] -
+        division_cost - environmental_death_loss[0] - total;
+    division[0] = division_cost;
+    current_total[0] = total;
+    residual[0] = tick_residual;
+    cumulative_residual[0] += tick_residual;
+}
+
+inline bool homeostasis_metric_within(
+    uint value,
+    uint minimum,
+    uint maximum,
+    uint metric)
+{
+    uint margin = 1u;
+    if (metric <= 2u) {
+        margin = max(1u, maximum / 10u);
+    } else if (metric <= 5u || metric >= 8u) {
+        margin = max(1u, maximum * 15u / 100u);
+    } else {
+        margin = 6554u;
+    }
+    const uint lower = minimum > margin ? minimum - margin : 0u;
+    const uint upper = maximum > UINT_MAX - margin ? UINT_MAX : maximum + margin;
+    return value >= lower && value <= upper;
+}
+
+kernel void organism_measure_homeostasis_events(
+    const device uint* tick [[buffer(0)]],
+    const device uint* component_count [[buffer(1)]],
+    const device uint* component_unresolved [[buffer(2)]],
+    const device uint* organizer_count [[buffer(3)]],
+    const device uint* boundary_count [[buffer(4)]],
+    const device uint* interior_count [[buffer(5)]],
+    const device uint* neighbor_overflow [[buffer(6)]],
+    const device uint* physical_overflow [[buffer(7)]],
+    const device uint* perception_truncation [[buffer(8)]],
+    const device uint* deposit_saturation [[buffer(9)]],
+    const device float* current_energy [[buffer(10)]],
+    const device uint* perturbation_window [[buffer(11)]],
+    device uint* invariant_violations [[buffer(12)]],
+    device float* perturbation_energy_min [[buffer(13)]],
+    uint index [[thread_position_in_grid]])
+{
+    if (index != 0) return;
+    const uint now = tick[0];
+    if (now >= 3200u) {
+        const bool invalid =
+            component_count[0] != 1u ||
+            component_unresolved[0] != 0u ||
+            organizer_count[0] != 1u ||
+            boundary_count[0] == 0u ||
+            interior_count[0] == 0u ||
+            neighbor_overflow[0] != 0u ||
+            physical_overflow[0] != 0u ||
+            perception_truncation[0] != 0u ||
+            deposit_saturation[0] != 0u;
+        invariant_violations[0] += uint(invalid);
+    }
+    if (now >= perturbation_window[0] && now < perturbation_window[1]) {
+        perturbation_energy_min[0] = now == perturbation_window[0]
+            ? current_energy[0]
+            : min(perturbation_energy_min[0], current_energy[0]);
+    }
+}
+
+kernel void organism_audit_homeostasis(
+    const device uint* tick [[buffer(0)]],
+    const device uint* population [[buffer(1)]],
+    const device uint* component_count [[buffer(2)]],
+    const device uint* component_unresolved [[buffer(3)]],
+    const device uint* organizer_count [[buffer(4)]],
+    const device uint* boundary_count [[buffer(5)]],
+    const device uint* interior_count [[buffer(6)]],
+    const device uint* area_q16 [[buffer(7)]],
+    const device uint* perimeter_q16 [[buffer(8)]],
+    const device uint* compactness_q16 [[buffer(9)]],
+    const device int* centroid_x_q16 [[buffer(10)]],
+    const device int* centroid_y_q16 [[buffer(11)]],
+    const device uint* radial_density [[buffer(12)]],
+    const device float* current_energy [[buffer(13)]],
+    const device uint* neighbor_overflow [[buffer(14)]],
+    const device uint* physical_overflow [[buffer(15)]],
+    const device uint* perception_truncation [[buffer(16)]],
+    const device uint* deposit_saturation [[buffer(17)]],
+    device uint* metric_min [[buffer(18)]],
+    device uint* metric_max [[buffer(19)]],
+    device float* metric_sum [[buffer(20)]],
+    device float* metric_sum_sq [[buffer(21)]],
+    device float* energy_min [[buffer(22)]],
+    device float* energy_max [[buffer(23)]],
+    device float* energy_sum [[buffer(24)]],
+    device float* energy_sum_sq [[buffer(25)]],
+    device uint* reference_samples [[buffer(26)]],
+    device uint* validation_samples [[buffer(27)]],
+    device uint* validation_violations [[buffer(28)]],
+    const device uint* window [[buffer(29)]],
+    uint index [[thread_position_in_grid]])
+{
+    if (index != 0) return;
+    const uint now = tick[0];
+    const uint reference_start = window[0];
+    const uint reference_end = window[1];
+    const uint validation_start = window[2];
+    const uint validation_end = window[3];
+    uint metrics[16] = {
+        population[0],
+        boundary_count[0],
+        interior_count[0],
+        area_q16[0],
+        perimeter_q16[0],
+        compactness_q16[0],
+        uint(clamp(centroid_x_q16[0] + 65536, 0, 131072)),
+        uint(clamp(centroid_y_q16[0] + 65536, 0, 131072)),
+        radial_density[0],
+        radial_density[1],
+        radial_density[2],
+        radial_density[3],
+        radial_density[4],
+        radial_density[5],
+        radial_density[6],
+        radial_density[7]
+    };
+
+    if (now >= reference_start && now < reference_end) {
+        if (reference_samples[0] == 0u) {
+            for (uint metric = 0; metric < 16u; ++metric) {
+                metric_min[metric] = UINT_MAX;
+                metric_max[metric] = 0u;
+                metric_sum[metric] = 0.0f;
+                metric_sum_sq[metric] = 0.0f;
+            }
+            energy_min[0] = INFINITY;
+            energy_max[0] = 0.0f;
+            energy_sum[0] = 0.0f;
+            energy_sum_sq[0] = 0.0f;
+        }
+        for (uint metric = 0; metric < 16u; ++metric) {
+            metric_min[metric] = min(metric_min[metric], metrics[metric]);
+            metric_max[metric] = max(metric_max[metric], metrics[metric]);
+            const float value = float(metrics[metric]);
+            metric_sum[metric] += value;
+            metric_sum_sq[metric] += value * value;
+        }
+        energy_min[0] = min(energy_min[0], current_energy[0]);
+        energy_max[0] = max(energy_max[0], current_energy[0]);
+        energy_sum[0] += current_energy[0];
+        energy_sum_sq[0] += current_energy[0] * current_energy[0];
+        reference_samples[0] += 1u;
+    }
+
+    if (now >= validation_start && now < validation_end) {
+        bool invalid =
+            reference_samples[0] == 0u ||
+            component_count[0] != 1u ||
+            component_unresolved[0] != 0u ||
+            organizer_count[0] != 1u ||
+            boundary_count[0] == 0u ||
+            interior_count[0] == 0u ||
+            neighbor_overflow[0] != 0u ||
+            physical_overflow[0] != 0u ||
+            perception_truncation[0] != 0u ||
+            deposit_saturation[0] != 0u;
+        for (uint metric = 0; metric < 16u; ++metric) {
+            invalid = invalid || !homeostasis_metric_within(
+                metrics[metric], metric_min[metric], metric_max[metric], metric);
+        }
+        const float energy_margin =
+            max(0.001f, max(abs(energy_min[0]), abs(energy_max[0])) * 0.10f);
+        invalid = invalid ||
+            current_energy[0] < energy_min[0] - energy_margin ||
+            current_energy[0] > energy_max[0] + energy_margin;
+        validation_samples[0] += 1u;
+        validation_violations[0] += uint(invalid);
+    }
+}
+
+kernel void organism_advance_tick(
+    device uint* tick [[buffer(0)]],
+    uint index [[thread_position_in_grid]])
+{
+    if (index == 0) tick[0] += 1u;
+}
+
+kernel void organism_set_nutrient_supply(
+    device float* nutrient_supply [[buffer(0)]],
+    constant float& requested_supply [[buffer(1)]],
+    uint index [[thread_position_in_grid]])
+{
+    if (index == 0) {
+        nutrient_supply[0] = clamp(requested_supply, 0.0f, 1.0f);
+    }
 }
 
 constant uint LOOM_RADIX_BUCKETS = 16;
@@ -1098,7 +1406,7 @@ kernel void organism_scatter_population_core(
         stage_position[destination] = position[source];
         stage_radius[destination] = radius[source];
         stage_energy[destination] =
-            accepted_birth ? max(0.0f, energy[source] - 1.0f) : energy[source];
+            accepted_birth ? max(0.0f, energy[source] - 1.1f) : energy[source];
         stage_event_hash[destination] = event_hash[source];
         if (accepted_birth) {
             const uint rank = birth_prefix[index] - 1;

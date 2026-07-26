@@ -2854,6 +2854,9 @@ mod tests {
     struct DevelopmentProbe {
         metrics: Vec<u32>,
         radial_density: Vec<u32>,
+        ledger_bits: Vec<u32>,
+        homeostasis_u32: Vec<u32>,
+        homeostasis_f32_bits: Vec<u32>,
         logical_state: Vec<u32>,
     }
 
@@ -2887,6 +2890,22 @@ mod tests {
         ]
         .map(stream_id);
         let radial_id = stream_id("morphology.radial_density");
+        let ledger_ids = [
+            "ledger.previous_total",
+            "ledger.absorbed",
+            "ledger.maintenance",
+            "ledger.decisions",
+            "ledger.motion",
+            "ledger.signaling",
+            "ledger.division",
+            "ledger.environmental_death_loss",
+            "ledger.current_total",
+            "ledger.residual",
+            "ledger.cumulative_residual",
+            "environment.nutrient_supply",
+            "simulation.tick",
+        ]
+        .map(stream_id);
         let logical_ids = [
             "cells.stable_id",
             "cells.parent_id",
@@ -2897,10 +2916,29 @@ mod tests {
             "perception.inhibitor_bin",
         ]
         .map(stream_id);
+        let homeostasis_scalar_ids = [
+            "homeostasis.reference_samples",
+            "homeostasis.validation_samples",
+            "homeostasis.validation_violations",
+            "homeostasis.invariant_violations",
+        ]
+        .map(stream_id);
+        let homeostasis_metric_min_id = stream_id("homeostasis.metric_min");
+        let homeostasis_metric_max_id = stream_id("homeostasis.metric_max");
+        let homeostasis_metric_sum_id = stream_id("homeostasis.metric_sum");
+        let homeostasis_metric_sum_sq_id = stream_id("homeostasis.metric_sum_sq");
+        let homeostasis_energy_ids = [
+            "homeostasis.energy_min",
+            "homeostasis.energy_max",
+            "homeostasis.energy_sum",
+            "homeostasis.energy_sum_sq",
+            "homeostasis.perturbation_energy_min",
+        ]
+        .map(stream_id);
         let report = Validator::validate(&graph);
         assert!(
             report.is_valid(),
-            "Gate 3 diagnostics: {:#?}",
+            "Hello Organism diagnostics: {:#?}",
             report.diagnostics
         );
         let device = metal::Device::system_default().expect("Metal device");
@@ -2920,9 +2958,12 @@ mod tests {
                     ..BenchmarkConfig::default()
                 },
             )
-            .expect("one organizer must execute the Gate 3 developmental program");
+            .expect("one organizer must execute the developmental program");
 
-        let metric_words = metric_ids.len() + 8;
+        let homeostasis_u32_words = homeostasis_scalar_ids.len() + 2 * 16;
+        let homeostasis_f32_words = 2 * 16 + homeostasis_energy_ids.len();
+        let metric_words =
+            metric_ids.len() + 8 + ledger_ids.len() + homeostasis_u32_words + homeostasis_f32_words;
         let logical_words = logical_ids.len() * config.capacity as usize;
         let readback = device.new_buffer(
             ((metric_words + logical_words) * 4) as u64,
@@ -2946,6 +2987,65 @@ mod tests {
             (metric_ids.len() * 4) as u64,
             8 * 4,
         );
+        for (index, ledger) in ledger_ids.iter().enumerate() {
+            blit.copy_from_buffer(
+                &state.stream_buffers[ledger.0 as usize][0],
+                0,
+                &readback,
+                ((metric_ids.len() + 8 + index) * 4) as u64,
+                4,
+            );
+        }
+        let homeostasis_u32_offset = metric_ids.len() + 8 + ledger_ids.len();
+        for (index, scalar) in homeostasis_scalar_ids.iter().enumerate() {
+            blit.copy_from_buffer(
+                &state.stream_buffers[scalar.0 as usize][0],
+                0,
+                &readback,
+                ((homeostasis_u32_offset + index) * 4) as u64,
+                4,
+            );
+        }
+        let metric_min_offset = homeostasis_u32_offset + homeostasis_scalar_ids.len();
+        blit.copy_from_buffer(
+            &state.stream_buffers[homeostasis_metric_min_id.0 as usize][0],
+            0,
+            &readback,
+            (metric_min_offset * 4) as u64,
+            16 * 4,
+        );
+        let metric_max_offset = metric_min_offset + 16;
+        blit.copy_from_buffer(
+            &state.stream_buffers[homeostasis_metric_max_id.0 as usize][0],
+            0,
+            &readback,
+            (metric_max_offset * 4) as u64,
+            16 * 4,
+        );
+        let homeostasis_f32_offset = homeostasis_u32_offset + homeostasis_u32_words;
+        blit.copy_from_buffer(
+            &state.stream_buffers[homeostasis_metric_sum_id.0 as usize][0],
+            0,
+            &readback,
+            (homeostasis_f32_offset * 4) as u64,
+            16 * 4,
+        );
+        blit.copy_from_buffer(
+            &state.stream_buffers[homeostasis_metric_sum_sq_id.0 as usize][0],
+            0,
+            &readback,
+            ((homeostasis_f32_offset + 16) * 4) as u64,
+            16 * 4,
+        );
+        for (index, energy) in homeostasis_energy_ids.iter().enumerate() {
+            blit.copy_from_buffer(
+                &state.stream_buffers[energy.0 as usize][0],
+                0,
+                &readback,
+                ((homeostasis_f32_offset + 32 + index) * 4) as u64,
+                4,
+            );
+        }
         for (index, stream) in logical_ids.iter().enumerate() {
             blit.copy_from_buffer(
                 &state.stream_buffers[stream.0 as usize][0],
@@ -2973,7 +3073,15 @@ mod tests {
             .collect();
         DevelopmentProbe {
             metrics: words[..metric_ids.len()].to_vec(),
-            radial_density: words[metric_ids.len()..metric_words].to_vec(),
+            radial_density: words[metric_ids.len()..metric_ids.len() + 8].to_vec(),
+            ledger_bits: words[metric_ids.len() + 8..metric_ids.len() + 8 + ledger_ids.len()]
+                .to_vec(),
+            homeostasis_u32: words
+                [homeostasis_u32_offset..homeostasis_u32_offset + homeostasis_u32_words]
+                .to_vec(),
+            homeostasis_f32_bits: words
+                [homeostasis_f32_offset..homeostasis_f32_offset + homeostasis_f32_words]
+                .to_vec(),
             logical_state,
         }
     }
@@ -2995,7 +3103,7 @@ mod tests {
         assert!(metrics[7] > 0, "interior tissue must differentiate");
         assert_eq!(
             (metrics[1], metrics[6], metrics[7]),
-            (39, 17, 21),
+            (39, 16, 22),
             "the deterministic reference morphology changed: {probe:?}"
         );
         assert!(metrics[8] > 0 && metrics[9] > 0 && metrics[10] > 0);
@@ -3008,6 +3116,19 @@ mod tests {
             &metrics[11..],
             &[0, 0, 0, 0],
             "reference development must remain within all declared bounds"
+        );
+        let ledger = probe.ledger_bits[..12]
+            .iter()
+            .map(|bits| f32::from_bits(*bits))
+            .collect::<Vec<_>>();
+        assert_eq!(probe.ledger_bits[12], DEADLINE);
+        assert!(
+            ledger[9].abs() <= 0.001 && ledger[10].abs() <= 0.1,
+            "energy accounting residuals must remain bounded: {ledger:?}"
+        );
+        assert!(
+            (metrics[1] as f32..=metrics[1] as f32 * 5.0).contains(&ledger[8]),
+            "total energy must remain locally bounded: {ledger:?}"
         );
     }
 
@@ -3048,6 +3169,176 @@ mod tests {
             without_inhibitor.metrics[1] > 48,
             "without inhibitor transport growth must leave the reference envelope: \
              reference={reference:?}, inhibitor_off={without_inhibitor:?}"
+        );
+    }
+
+    #[test]
+    fn organism_sustains_a_bounded_homeostatic_state() {
+        const CAPACITY: u32 = 1_024;
+        const DEADLINE: u32 = 30_000;
+        let probe = run_development_probe(HelloOrganismConfig::reference(CAPACITY), DEADLINE);
+        let ledger = probe.ledger_bits[..12]
+            .iter()
+            .map(|bits| f32::from_bits(*bits))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            (probe.metrics[1], probe.metrics[2], probe.metrics[4]),
+            (39, 1, 1),
+            "homeostasis must retain the reference connected organism: {probe:?}"
+        );
+        assert_eq!((probe.metrics[6], probe.metrics[7]), (16, 22));
+        assert_eq!(&probe.metrics[11..], &[0, 0, 0, 0]);
+        assert_eq!(probe.ledger_bits[12], DEADLINE);
+        assert_eq!(
+            &probe.homeostasis_u32[..4],
+            &[1_000, 1_000, 0, 0],
+            "the reference and validation windows must both pass completely: {probe:?}"
+        );
+        let metric_min = &probe.homeostasis_u32[4..20];
+        let metric_max = &probe.homeostasis_u32[20..36];
+        assert!(
+            metric_min
+                .iter()
+                .zip(metric_max)
+                .all(|(minimum, maximum)| minimum <= maximum),
+            "every morphology envelope must be initialized: {probe:?}"
+        );
+        let homeostasis = probe
+            .homeostasis_f32_bits
+            .iter()
+            .map(|bits| f32::from_bits(*bits))
+            .collect::<Vec<_>>();
+        let energy_min = homeostasis[32];
+        let energy_max = homeostasis[33];
+        let energy_mean = homeostasis[34] / 1_000.0;
+        assert!(
+            energy_min.is_finite()
+                && energy_max.is_finite()
+                && energy_min <= energy_mean + 0.01
+                && energy_mean <= energy_max + 0.01,
+            "the reference energy envelope must be finite and ordered: {homeostasis:?}"
+        );
+        assert!(
+            ledger[9].abs() <= 0.001 && (ledger[10] / DEADLINE as f32).abs() <= 0.000_02,
+            "per-tick and mean cumulative accounting residuals must remain bounded: {ledger:?}"
+        );
+        assert!(
+            (probe.metrics[1] as f32..=probe.metrics[1] as f32 * 5.0).contains(&ledger[8]),
+            "energy must remain locally bounded without a global corrective clamp: {ledger:?}"
+        );
+    }
+
+    #[test]
+    fn organism_returns_to_its_reference_envelope_after_nutrient_perturbation() {
+        const CAPACITY: u32 = 1_024;
+        const DEADLINE: u64 = 30_000;
+        let graph = hello_organism_builder_with_config(HelloOrganismConfig::reference(CAPACITY))
+            .build()
+            .unwrap();
+        let stream_id = |name: &str| {
+            graph
+                .resources
+                .streams
+                .iter()
+                .find(|stream| stream.name == name)
+                .unwrap()
+                .id
+        };
+        let u32_ids = [
+            "simulation.tick",
+            "morphology.population",
+            "morphology.component_count",
+            "morphology.component_unresolved",
+            "morphology.organizer_count",
+            "morphology.boundary_count",
+            "morphology.interior_count",
+            "population.neighbor_overflow",
+            "population.physical_neighbor_overflow",
+            "population.perception_truncation",
+            "deposit.saturation_count",
+            "homeostasis.reference_samples",
+            "homeostasis.validation_samples",
+            "homeostasis.validation_violations",
+            "homeostasis.invariant_violations",
+        ]
+        .map(stream_id);
+        let f32_ids = [
+            "environment.nutrient_supply",
+            "ledger.current_total",
+            "ledger.residual",
+            "ledger.cumulative_residual",
+            "homeostasis.energy_min",
+            "homeostasis.perturbation_energy_min",
+        ]
+        .map(stream_id);
+        let scenario = graph
+            .scenarios
+            .iter()
+            .find(|scenario| scenario.name == "homeostasis_perturbation")
+            .cloned()
+            .unwrap();
+        let report = Validator::validate(&graph);
+        assert!(
+            report.is_valid(),
+            "Gate 4 perturbation diagnostics: {:#?}",
+            report.diagnostics
+        );
+        let device = metal::Device::system_default().expect("Metal device");
+        let layer = metal::MetalLayer::new();
+        layer.set_device(&device);
+        layer.set_pixel_format(metal::MTLPixelFormat::BGRA8Unorm);
+        let mut state =
+            RuntimeState::new(report.validated.unwrap(), device.clone(), layer).unwrap();
+        let events = state
+            .execute_scenario(&device, &scenario, DEADLINE)
+            .expect("recorded nutrient perturbation must execute");
+        assert_eq!(events.len(), 2);
+        assert_eq!((events[0].tick, events[1].tick), (12_000, 14_000));
+        assert!(
+            events
+                .iter()
+                .all(|event| event.pass == "set_nutrient_supply"
+                    && event.value_overrides == vec!["environment.reference_nutrient_supply"]),
+            "both environmental changes must be canonical recorded interventions: {events:?}"
+        );
+
+        let word_count = u32_ids.len() + f32_ids.len();
+        let readback = device.new_buffer(
+            (word_count * 4) as u64,
+            metal::MTLResourceOptions::StorageModeShared,
+        );
+        let command_buffer = state.queue.new_command_buffer();
+        let blit = command_buffer.new_blit_command_encoder();
+        for (index, stream) in u32_ids.iter().chain(f32_ids.iter()).enumerate() {
+            blit.copy_from_buffer(
+                &state.stream_buffers[stream.0 as usize][0],
+                0,
+                &readback,
+                (index * 4) as u64,
+                4,
+            );
+        }
+        blit.end_encoding();
+        command_buffer.commit();
+        command_buffer.wait_until_completed();
+        let words =
+            unsafe { std::slice::from_raw_parts(readback.contents().cast::<u32>(), word_count) };
+        let floats = words[u32_ids.len()..]
+            .iter()
+            .map(|bits| f32::from_bits(*bits))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            &words[..u32_ids.len()],
+            &[30_000, 39, 1, 0, 1, 16, 22, 0, 0, 0, 0, 1_000, 1_000, 0, 0,],
+            "the organism must recover its connected differentiated reference envelope"
+        );
+        assert_eq!(floats[0], 1.0, "the nutrient supply must be restored");
+        assert!(
+            (39.0..=195.0).contains(&floats[1])
+                && floats[2].abs() <= 0.001
+                && (floats[3] / DEADLINE as f32).abs() <= 0.000_02
+                && floats[5] < floats[4],
+            "the recovered organism must retain bounded, auditable energy: {floats:?}"
         );
     }
 

@@ -22,6 +22,8 @@ systems:
   boundary, parent-contact, and simultaneous-candidate qualification,
 - explicit activator/inhibitor transport controls, cumulative overflow and
   Q16.16 deposit-saturation audits, and per-lineage logical trajectory hashes,
+- a per-tick energy ledger, declared nutrient-supply intervention, disjoint
+  reference/validation envelopes, and long-horizon invariant counters,
 - deterministic reference rules for transitions, quantization, deposits,
   neighborhoods, contact connectivity, stable compaction, allocation, energy,
   and sustained recovery envelopes.
@@ -44,6 +46,8 @@ committed state T
 → diffuse into next fields
 → commit fields
 → resolve deaths and births
+→ reconcile energy ledger
+→ audit sustained morphology and energy
 → committed state T+1
 ```
 
@@ -75,6 +79,10 @@ perception, decisions, deposits, component labels, or reductions.
   only when `component_unresolved == 0`.
 - Morphology: population, fate counts, components, quantized area/perimeter,
   centroid, compactness, and eight-bin radial density.
+- Homeostasis: ticks 10,000–11,000 establish the organism's own morphology and
+  energy envelope; ticks 29,000–30,000 must remain inside the declared expanded
+  bounds. A separate counter audits connectivity, organizer uniqueness,
+  differentiated fates, and all overflow conditions after tick 3,200.
 
 The backend-neutral reference implementation lives in `loom_core::emergent`.
 Metal implementations are required to match its logical rules and declared
@@ -90,7 +98,7 @@ Implemented and tested:
 - the coupled organism executes 300 ticks,
 - the organizer produces at least one daughter,
 - one organizer reaches a deterministic 39-cell connected body by tick 3,200,
-  with one organizer, 17 boundary cells, 21 interior cells, complete radial
+  with one organizer, 16 boundary cells, 22 interior cells, complete radial
   accounting, nonzero area/perimeter/compactness, converged components, and
   zero cumulative overflow, truncation, or deposit saturation,
 - a second reference run reproduces the complete integer morphology state,
@@ -107,15 +115,28 @@ Implemented and tested:
 - unauthorized writes and malformed membership capabilities are rejected,
 - transition tables, quantization, reflective diffusion, storage-order
   independence, contact connectivity, stable allocation, energy ledgers, and
-  sustained recovery checks have deterministic reference tests.
+  sustained recovery checks have deterministic reference tests,
+- a 30,000-tick run records 1,000 reference samples and 1,000 disjoint
+  validation samples with zero envelope or post-development invariant
+  violations,
+- a recorded nutrient perturbation lowers supply to 25% at tick 12,000,
+  restores it at tick 14,000, measurably lowers total energy, and returns the
+  connected 39-cell differentiated organism to its original envelope for all
+  1,000 validation ticks,
+- every tick reports previous/current energy, absorption, maintenance,
+  decisions, accepted motion, signaling, division, death loss, per-tick
+  residual, and cumulative residual; accepted motion is explicitly zero for
+  this non-locomoting specimen, and the 30,000-tick proofs bound both
+  instantaneous and mean cumulative accounting error.
 
 Not yet claimed:
 
 - real-time 16,384-cell morphogenesis,
-- 30,000-tick homeostasis and 50,000-tick regeneration acceptance,
+- 50,000-tick lesion and regeneration acceptance,
 - measurement cadence optimization and populated 256/1,024/4,096/16,384 scaling,
 - adaptive fine-to-coarse aggregation,
 - cross-domain material and abstract-network proofs.
 
-The one-seed developmental gate is now closed. Homeostasis and regeneration
-remain separate claims and must be measured before promotion.
+The one-seed developmental and sustained-homeostasis gates are now closed.
+Structural lesion and regeneration remain separate claims and must be measured
+before promotion.

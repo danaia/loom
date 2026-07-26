@@ -11,6 +11,7 @@ const SPATIAL_BIN_CAPACITY: u32 = 128;
 const SPATIAL_INDEX_COUNT: u32 = SPATIAL_BIN_COUNT * SPATIAL_BIN_CAPACITY;
 const SCAN_BLOCK_SIZE: u32 = 256;
 const COMPONENT_RELAXATION_ROUNDS: u32 = 64;
+const HOMEOSTASIS_METRIC_COUNT: u32 = 16;
 
 /// Causal controls for the Hello Organism reference and field ablations.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -93,7 +94,8 @@ fn dynamic_stream(
 /// eight-sector exposure from those bins. Convergence-audited component labels
 /// feed GPU morphology reductions. One organizer constructs a connected,
 /// differentiated reference body through local field and placement laws.
-/// Sustained homeostasis remains a later gate.
+/// Per-tick energy accounting and disjoint envelope audits prove sustained
+/// homeostasis and return after a recorded nutrient perturbation.
 pub fn hello_organism_builder(capacity: u32) -> ModuleBuilder {
     hello_organism_builder_with_config(HelloOrganismConfig::reference(capacity))
 }
@@ -153,6 +155,12 @@ pub fn hello_organism_builder_with_config(config: HelloOrganismConfig) -> Module
         "intent.activator_deposit",
         "intent.inhibitor_deposit",
     ];
+    let ledger_cells = [
+        "ledger.cell_absorbed",
+        "ledger.cell_maintenance",
+        "ledger.cell_decisions",
+        "ledger.cell_signaling",
+    ];
     let field_state = [
         "field.activator",
         "field.inhibitor",
@@ -193,6 +201,12 @@ pub fn hello_organism_builder_with_config(config: HelloOrganismConfig) -> Module
             Literal::f32(if config.inhibitor_transport { 1.0 } else { 0.0 }),
         ))
         .value(ValueDraft::constant(
+            "environment.reference_nutrient_supply",
+            f32_type.clone(),
+            Unit::DIMENSIONLESS,
+            Literal::f32(1.0),
+        ))
+        .value(ValueDraft::constant(
             "population.scan_block_count",
             u32_type.clone(),
             Unit::DIMENSIONLESS,
@@ -215,6 +229,48 @@ pub fn hello_organism_builder_with_config(config: HelloOrganismConfig) -> Module
             .length(1)
             .write_authority("mutate_cell_state")
             .initial(Literal::Array(vec![Literal::U32(2)])),
+        )
+        .stream(
+            StreamDraft::new("simulation.tick", u32_type.clone(), Unit::DIMENSIONLESS)
+                .capacity(1)
+                .length(1)
+                .write_authority("advance_simulation_time")
+                .initial(Literal::Array(vec![Literal::U32(0)])),
+        )
+        .stream(
+            StreamDraft::new(
+                "environment.nutrient_supply",
+                f32_type.clone(),
+                Unit::DIMENSIONLESS,
+            )
+            .capacity(1)
+            .length(1)
+            .write_authority("mutate_environment")
+            .initial(Literal::Array(vec![Literal::f32(1.0)])),
+        )
+        .stream(
+            StreamDraft::new("homeostasis.window", u32_type.clone(), Unit::DIMENSIONLESS)
+                .capacity(4)
+                .length(4)
+                .initial(Literal::Array(vec![
+                    Literal::U32(10_000),
+                    Literal::U32(11_000),
+                    Literal::U32(29_000),
+                    Literal::U32(30_000),
+                ])),
+        )
+        .stream(
+            StreamDraft::new(
+                "homeostasis.perturbation_window",
+                u32_type.clone(),
+                Unit::DIMENSIONLESS,
+            )
+            .capacity(2)
+            .length(2)
+            .initial(Literal::Array(vec![
+                Literal::U32(12_000),
+                Literal::U32(14_000),
+            ])),
         );
 
     for (name, data_type, unit, initial) in [
@@ -339,6 +395,79 @@ pub fn hello_organism_builder_with_config(config: HelloOrganismConfig) -> Module
             capacity,
             None,
         ));
+    }
+    for name in ledger_cells {
+        builder = builder.stream(dynamic_stream(
+            name,
+            f32_type.clone(),
+            Unit::DIMENSIONLESS,
+            Literal::f32(0.0),
+            capacity,
+            None,
+        ));
+    }
+    for name in [
+        "ledger.previous_total",
+        "ledger.absorbed",
+        "ledger.maintenance",
+        "ledger.decisions",
+        "ledger.motion",
+        "ledger.signaling",
+        "ledger.division",
+        "ledger.environmental_death_loss",
+        "ledger.current_total",
+        "ledger.residual",
+        "ledger.cumulative_residual",
+    ] {
+        builder = builder.stream(
+            StreamDraft::new(name, f32_type.clone(), Unit::DIMENSIONLESS)
+                .capacity(1)
+                .length(1)
+                .initial(Literal::Array(vec![Literal::f32(0.0)])),
+        );
+    }
+    for name in ["homeostasis.metric_min", "homeostasis.metric_max"] {
+        builder = builder.stream(
+            StreamDraft::new(name, u32_type.clone(), Unit::DIMENSIONLESS)
+                .capacity(HOMEOSTASIS_METRIC_COUNT)
+                .length(HOMEOSTASIS_METRIC_COUNT)
+                .initial_repeat(Literal::U32(0), HOMEOSTASIS_METRIC_COUNT),
+        );
+    }
+    for name in ["homeostasis.metric_sum", "homeostasis.metric_sum_sq"] {
+        builder = builder.stream(
+            StreamDraft::new(name, f32_type.clone(), Unit::DIMENSIONLESS)
+                .capacity(HOMEOSTASIS_METRIC_COUNT)
+                .length(HOMEOSTASIS_METRIC_COUNT)
+                .initial_repeat(Literal::f32(0.0), HOMEOSTASIS_METRIC_COUNT),
+        );
+    }
+    for name in [
+        "homeostasis.reference_samples",
+        "homeostasis.validation_samples",
+        "homeostasis.validation_violations",
+        "homeostasis.invariant_violations",
+    ] {
+        builder = builder.stream(
+            StreamDraft::new(name, u32_type.clone(), Unit::DIMENSIONLESS)
+                .capacity(1)
+                .length(1)
+                .initial(Literal::Array(vec![Literal::U32(0)])),
+        );
+    }
+    for name in [
+        "homeostasis.energy_min",
+        "homeostasis.energy_max",
+        "homeostasis.energy_sum",
+        "homeostasis.energy_sum_sq",
+        "homeostasis.perturbation_energy_min",
+    ] {
+        builder = builder.stream(
+            StreamDraft::new(name, f32_type.clone(), Unit::DIMENSIONLESS)
+                .capacity(1)
+                .length(1)
+                .initial(Literal::Array(vec![Literal::f32(0.0)])),
+        );
     }
     for name in field_state {
         let initial = if name == "field.nutrient" || name == "field.nutrient_next" {
@@ -819,10 +948,12 @@ pub fn hello_organism_builder_with_config(config: HelloOrganismConfig) -> Module
         .run_after("reduce_morphology", "clear_morphology")
         .run_after("finalize_morphology", "reduce_morphology")
         .run_after("reduce_radial_density", "finalize_morphology")
-        .run_after("sample", "reduce_radial_density")
+        .run_after("begin_energy_ledger", "reduce_radial_density")
+        .run_after("sample", "begin_energy_ledger")
         .run_after("decide", "sample")
         .run_after("resolve_state", "decide")
-        .run_after("clear_deposits", "resolve_state")
+        .run_after("reduce_energy_ledger", "resolve_state")
+        .run_after("clear_deposits", "reduce_energy_ledger")
         .run_after("deposit", "clear_deposits")
         .run_after("diffuse", "deposit")
         .run_after("commit_fields", "diffuse")
@@ -844,7 +975,11 @@ pub fn hello_organism_builder_with_config(config: HelloOrganismConfig) -> Module
         .run_after("commit_population_core", "scatter_population_development")
         .run_after("commit_population_development", "commit_population_core")
         .run_after("finalize_population", "commit_population_development")
-        .show_after("organism", "finalize_population")
+        .run_after("finalize_energy_ledger", "finalize_population")
+        .run_after("measure_homeostasis_events", "finalize_energy_ledger")
+        .run_after("audit_homeostasis", "measure_homeostasis_events")
+        .run_after("advance_tick", "audit_homeostasis")
+        .show_after("organism", "advance_tick")
         .tick_overlap(TickOverlapPolicy::QueueOrderedReuse)
         .presentation_lifetime(PresentationLifetimePolicy::QueueOrderedReuse)
         .queue_model(QueueModel::SingleSerialQueue);
@@ -984,6 +1119,32 @@ pub fn hello_organism_builder_with_config(config: HelloOrganismConfig) -> Module
                 stream_slot("active_count", u32_type.clone(), SlotAccess::Read, true),
                 stream_slot("stable_id", u32_type.clone(), SlotAccess::Read, false),
                 stream_slot("event_hash", u32_type.clone(), SlotAccess::ReadWrite, false),
+                stream_slot("divide_intent", u32_type.clone(), SlotAccess::Read, false),
+                stream_slot("death_intent", u32_type.clone(), SlotAccess::Read, false),
+                stream_slot(
+                    "ledger_absorbed",
+                    f32_type.clone(),
+                    SlotAccess::Write,
+                    false,
+                ),
+                stream_slot(
+                    "ledger_maintenance",
+                    f32_type.clone(),
+                    SlotAccess::Write,
+                    false,
+                ),
+                stream_slot(
+                    "ledger_decisions",
+                    f32_type.clone(),
+                    SlotAccess::Write,
+                    false,
+                ),
+                stream_slot(
+                    "ledger_signaling",
+                    f32_type.clone(),
+                    SlotAccess::Write,
+                    false,
+                ),
             ],
         ))
         .kernel(packaged_kernel(
@@ -1058,6 +1219,7 @@ pub fn hello_organism_builder_with_config(config: HelloOrganismConfig) -> Module
                 value_slot("width", u32_type.clone()),
                 value_slot("activator_transport", f32_type.clone()),
                 value_slot("inhibitor_transport", f32_type.clone()),
+                stream_slot("nutrient_supply", f32_type.clone(), SlotAccess::Read, true),
             ],
         ))
         .kernel(packaged_kernel(
@@ -1077,6 +1239,254 @@ pub fn hello_organism_builder_with_config(config: HelloOrganismConfig) -> Module
             .into_iter()
             .map(|(name, access)| stream_slot(name, f32_type.clone(), access, false))
             .collect(),
+        ))
+        .kernel(packaged_kernel(
+            "organism_begin_energy_ledger",
+            vec![
+                stream_slot("active_count", u32_type.clone(), SlotAccess::Read, true),
+                stream_slot("energy", f32_type.clone(), SlotAccess::Read, true),
+                stream_slot("previous_total", f32_type.clone(), SlotAccess::Write, true),
+                stream_slot("absorbed", f32_type.clone(), SlotAccess::Write, true),
+                stream_slot("maintenance", f32_type.clone(), SlotAccess::Write, true),
+                stream_slot("decisions", f32_type.clone(), SlotAccess::Write, true),
+                stream_slot("motion", f32_type.clone(), SlotAccess::Write, true),
+                stream_slot("signaling", f32_type.clone(), SlotAccess::Write, true),
+                stream_slot("division", f32_type.clone(), SlotAccess::Write, true),
+                stream_slot(
+                    "environmental_death_loss",
+                    f32_type.clone(),
+                    SlotAccess::Write,
+                    true,
+                ),
+                stream_slot("current_total", f32_type.clone(), SlotAccess::Write, true),
+                stream_slot("residual", f32_type.clone(), SlotAccess::Write, true),
+            ],
+        ))
+        .kernel(packaged_kernel(
+            "organism_reduce_energy_ledger",
+            vec![
+                stream_slot("active_count", u32_type.clone(), SlotAccess::Read, true),
+                stream_slot("cell_absorbed", f32_type.clone(), SlotAccess::Read, true),
+                stream_slot("cell_maintenance", f32_type.clone(), SlotAccess::Read, true),
+                stream_slot("cell_decisions", f32_type.clone(), SlotAccess::Read, true),
+                stream_slot("cell_signaling", f32_type.clone(), SlotAccess::Read, true),
+                stream_slot("death_intent", u32_type.clone(), SlotAccess::Read, true),
+                stream_slot("energy", f32_type.clone(), SlotAccess::Read, true),
+                stream_slot("absorbed", f32_type.clone(), SlotAccess::Write, true),
+                stream_slot("maintenance", f32_type.clone(), SlotAccess::Write, true),
+                stream_slot("decisions", f32_type.clone(), SlotAccess::Write, true),
+                stream_slot("signaling", f32_type.clone(), SlotAccess::Write, true),
+                stream_slot(
+                    "environmental_death_loss",
+                    f32_type.clone(),
+                    SlotAccess::Write,
+                    true,
+                ),
+            ],
+        ))
+        .kernel(packaged_kernel(
+            "organism_finalize_energy_ledger",
+            vec![
+                stream_slot("active_count", u32_type.clone(), SlotAccess::Read, true),
+                stream_slot("energy", f32_type.clone(), SlotAccess::Read, true),
+                stream_slot(
+                    "accepted_birth_count",
+                    u32_type.clone(),
+                    SlotAccess::Read,
+                    true,
+                ),
+                stream_slot("previous_total", f32_type.clone(), SlotAccess::Read, true),
+                stream_slot("absorbed", f32_type.clone(), SlotAccess::Read, true),
+                stream_slot("maintenance", f32_type.clone(), SlotAccess::Read, true),
+                stream_slot("decisions", f32_type.clone(), SlotAccess::Read, true),
+                stream_slot("motion", f32_type.clone(), SlotAccess::Read, true),
+                stream_slot("signaling", f32_type.clone(), SlotAccess::Read, true),
+                stream_slot("division", f32_type.clone(), SlotAccess::Write, true),
+                stream_slot(
+                    "environmental_death_loss",
+                    f32_type.clone(),
+                    SlotAccess::Read,
+                    true,
+                ),
+                stream_slot("current_total", f32_type.clone(), SlotAccess::Write, true),
+                stream_slot("residual", f32_type.clone(), SlotAccess::Write, true),
+                stream_slot(
+                    "cumulative_residual",
+                    f32_type.clone(),
+                    SlotAccess::ReadWrite,
+                    true,
+                ),
+            ],
+        ))
+        .kernel(packaged_kernel(
+            "organism_measure_homeostasis_events",
+            vec![
+                stream_slot("tick", u32_type.clone(), SlotAccess::Read, true),
+                stream_slot("component_count", u32_type.clone(), SlotAccess::Read, true),
+                stream_slot(
+                    "component_unresolved",
+                    u32_type.clone(),
+                    SlotAccess::Read,
+                    true,
+                ),
+                stream_slot("organizer_count", u32_type.clone(), SlotAccess::Read, true),
+                stream_slot("boundary_count", u32_type.clone(), SlotAccess::Read, true),
+                stream_slot("interior_count", u32_type.clone(), SlotAccess::Read, true),
+                stream_slot(
+                    "neighbor_overflow",
+                    u32_type.clone(),
+                    SlotAccess::Read,
+                    true,
+                ),
+                stream_slot(
+                    "physical_overflow",
+                    u32_type.clone(),
+                    SlotAccess::Read,
+                    true,
+                ),
+                stream_slot(
+                    "perception_truncation",
+                    u32_type.clone(),
+                    SlotAccess::Read,
+                    true,
+                ),
+                stream_slot(
+                    "deposit_saturation",
+                    u32_type.clone(),
+                    SlotAccess::Read,
+                    true,
+                ),
+                stream_slot("current_energy", f32_type.clone(), SlotAccess::Read, true),
+                stream_slot(
+                    "perturbation_window",
+                    u32_type.clone(),
+                    SlotAccess::Read,
+                    true,
+                ),
+                stream_slot(
+                    "invariant_violations",
+                    u32_type.clone(),
+                    SlotAccess::ReadWrite,
+                    true,
+                ),
+                stream_slot(
+                    "perturbation_energy_min",
+                    f32_type.clone(),
+                    SlotAccess::ReadWrite,
+                    true,
+                ),
+            ],
+        ))
+        .kernel(packaged_kernel(
+            "organism_audit_homeostasis",
+            vec![
+                stream_slot("tick", u32_type.clone(), SlotAccess::Read, true),
+                stream_slot("population", u32_type.clone(), SlotAccess::Read, true),
+                stream_slot("component_count", u32_type.clone(), SlotAccess::Read, true),
+                stream_slot(
+                    "component_unresolved",
+                    u32_type.clone(),
+                    SlotAccess::Read,
+                    true,
+                ),
+                stream_slot("organizer_count", u32_type.clone(), SlotAccess::Read, true),
+                stream_slot("boundary_count", u32_type.clone(), SlotAccess::Read, true),
+                stream_slot("interior_count", u32_type.clone(), SlotAccess::Read, true),
+                stream_slot("area_q16", u32_type.clone(), SlotAccess::Read, true),
+                stream_slot("perimeter_q16", u32_type.clone(), SlotAccess::Read, true),
+                stream_slot("compactness_q16", u32_type.clone(), SlotAccess::Read, true),
+                stream_slot(
+                    "centroid_x_q16",
+                    DataType::Scalar(ScalarType::I32),
+                    SlotAccess::Read,
+                    true,
+                ),
+                stream_slot(
+                    "centroid_y_q16",
+                    DataType::Scalar(ScalarType::I32),
+                    SlotAccess::Read,
+                    true,
+                ),
+                stream_slot("radial_density", u32_type.clone(), SlotAccess::Read, true),
+                stream_slot("current_energy", f32_type.clone(), SlotAccess::Read, true),
+                stream_slot(
+                    "neighbor_overflow",
+                    u32_type.clone(),
+                    SlotAccess::Read,
+                    true,
+                ),
+                stream_slot(
+                    "physical_overflow",
+                    u32_type.clone(),
+                    SlotAccess::Read,
+                    true,
+                ),
+                stream_slot(
+                    "perception_truncation",
+                    u32_type.clone(),
+                    SlotAccess::Read,
+                    true,
+                ),
+                stream_slot(
+                    "deposit_saturation",
+                    u32_type.clone(),
+                    SlotAccess::Read,
+                    true,
+                ),
+                stream_slot("metric_min", u32_type.clone(), SlotAccess::ReadWrite, true),
+                stream_slot("metric_max", u32_type.clone(), SlotAccess::ReadWrite, true),
+                stream_slot("metric_sum", f32_type.clone(), SlotAccess::ReadWrite, true),
+                stream_slot(
+                    "metric_sum_sq",
+                    f32_type.clone(),
+                    SlotAccess::ReadWrite,
+                    true,
+                ),
+                stream_slot("energy_min", f32_type.clone(), SlotAccess::ReadWrite, true),
+                stream_slot("energy_max", f32_type.clone(), SlotAccess::ReadWrite, true),
+                stream_slot("energy_sum", f32_type.clone(), SlotAccess::ReadWrite, true),
+                stream_slot(
+                    "energy_sum_sq",
+                    f32_type.clone(),
+                    SlotAccess::ReadWrite,
+                    true,
+                ),
+                stream_slot(
+                    "reference_samples",
+                    u32_type.clone(),
+                    SlotAccess::ReadWrite,
+                    true,
+                ),
+                stream_slot(
+                    "validation_samples",
+                    u32_type.clone(),
+                    SlotAccess::ReadWrite,
+                    true,
+                ),
+                stream_slot(
+                    "validation_violations",
+                    u32_type.clone(),
+                    SlotAccess::ReadWrite,
+                    true,
+                ),
+                stream_slot("window", u32_type.clone(), SlotAccess::Read, true),
+            ],
+        ))
+        .kernel(packaged_kernel(
+            "organism_advance_tick",
+            vec![stream_slot(
+                "tick",
+                u32_type.clone(),
+                SlotAccess::ReadWrite,
+                true,
+            )],
+        ))
+        .kernel(packaged_kernel(
+            "organism_set_nutrient_supply",
+            vec![
+                stream_slot("nutrient_supply", f32_type.clone(), SlotAccess::Write, true),
+                value_slot("requested_supply", f32_type.clone()),
+            ],
         ))
         .kernel(packaged_kernel(
             "organism_initialize_population_order",
@@ -1881,6 +2291,30 @@ pub fn hello_organism_builder_with_config(config: HelloOrganismConfig) -> Module
             ],
         ))
         .pass(
+            PassDraft::new("begin_energy_ledger", "organism_begin_energy_ledger")
+                .bind("active_count", "cells.active_count")
+                .bind("energy", "cells.energy")
+                .bind("previous_total", "ledger.previous_total")
+                .bind("absorbed", "ledger.absorbed")
+                .bind("maintenance", "ledger.maintenance")
+                .bind("decisions", "ledger.decisions")
+                .bind("motion", "ledger.motion")
+                .bind("signaling", "ledger.signaling")
+                .bind("division", "ledger.division")
+                .bind(
+                    "environmental_death_loss",
+                    "ledger.environmental_death_loss",
+                )
+                .bind("current_total", "ledger.current_total")
+                .bind("residual", "ledger.residual"),
+        )
+        .pass(
+            PassDraft::new("set_nutrient_supply", "organism_set_nutrient_supply")
+                .bind("nutrient_supply", "environment.nutrient_supply")
+                .bind("requested_supply", "environment.reference_nutrient_supply")
+                .grant("mutate_environment"),
+        )
+        .pass(
             PassDraft::new("sample", "organism_sample")
                 .bind("position", "cells.position")
                 .bind("energy", "cells.energy")
@@ -1952,8 +2386,32 @@ pub fn hello_organism_builder_with_config(config: HelloOrganismConfig) -> Module
                 .bind("active_count", "cells.active_count")
                 .bind("stable_id", "cells.stable_id")
                 .bind("event_hash", "cells.event_hash")
+                .bind("divide_intent", "intent.divide")
+                .bind("death_intent", "intent.death")
+                .bind("ledger_absorbed", "ledger.cell_absorbed")
+                .bind("ledger_maintenance", "ledger.cell_maintenance")
+                .bind("ledger_decisions", "ledger.cell_decisions")
+                .bind("ledger_signaling", "ledger.cell_signaling")
                 .dispatch_over("cells.stable_id")
                 .grant("mutate_cell_state"),
+        )
+        .pass(
+            PassDraft::new("reduce_energy_ledger", "organism_reduce_energy_ledger")
+                .bind("active_count", "cells.active_count")
+                .bind("cell_absorbed", "ledger.cell_absorbed")
+                .bind("cell_maintenance", "ledger.cell_maintenance")
+                .bind("cell_decisions", "ledger.cell_decisions")
+                .bind("cell_signaling", "ledger.cell_signaling")
+                .bind("death_intent", "intent.death")
+                .bind("energy", "cells.energy")
+                .bind("absorbed", "ledger.absorbed")
+                .bind("maintenance", "ledger.maintenance")
+                .bind("decisions", "ledger.decisions")
+                .bind("signaling", "ledger.signaling")
+                .bind(
+                    "environmental_death_loss",
+                    "ledger.environmental_death_loss",
+                ),
         )
         .pass(
             PassDraft::new("clear_deposits", "organism_clear_deposits")
@@ -1993,6 +2451,7 @@ pub fn hello_organism_builder_with_config(config: HelloOrganismConfig) -> Module
                 .bind("width", "field.width")
                 .bind("activator_transport", "field.activator_transport")
                 .bind("inhibitor_transport", "field.inhibitor_transport")
+                .bind("nutrient_supply", "environment.nutrient_supply")
                 .dispatch_over("field.activator")
                 .grant("mutate_field_state"),
         )
@@ -2285,6 +2744,87 @@ pub fn hello_organism_builder_with_config(config: HelloOrganismConfig) -> Module
                 .grant("mutate_cell_state")
                 .grant("mutate_cell_membership"),
         )
+        .pass(
+            PassDraft::new("finalize_energy_ledger", "organism_finalize_energy_ledger")
+                .bind("active_count", "cells.active_count")
+                .bind("energy", "cells.energy")
+                .bind("accepted_birth_count", "population.accepted_birth_count")
+                .bind("previous_total", "ledger.previous_total")
+                .bind("absorbed", "ledger.absorbed")
+                .bind("maintenance", "ledger.maintenance")
+                .bind("decisions", "ledger.decisions")
+                .bind("motion", "ledger.motion")
+                .bind("signaling", "ledger.signaling")
+                .bind("division", "ledger.division")
+                .bind(
+                    "environmental_death_loss",
+                    "ledger.environmental_death_loss",
+                )
+                .bind("current_total", "ledger.current_total")
+                .bind("residual", "ledger.residual")
+                .bind("cumulative_residual", "ledger.cumulative_residual"),
+        )
+        .pass(
+            PassDraft::new(
+                "measure_homeostasis_events",
+                "organism_measure_homeostasis_events",
+            )
+            .bind("tick", "simulation.tick")
+            .bind("component_count", "morphology.component_count")
+            .bind("component_unresolved", "morphology.component_unresolved")
+            .bind("organizer_count", "morphology.organizer_count")
+            .bind("boundary_count", "morphology.boundary_count")
+            .bind("interior_count", "morphology.interior_count")
+            .bind("neighbor_overflow", "population.neighbor_overflow")
+            .bind("physical_overflow", "population.physical_neighbor_overflow")
+            .bind("perception_truncation", "population.perception_truncation")
+            .bind("deposit_saturation", "deposit.saturation_count")
+            .bind("current_energy", "ledger.current_total")
+            .bind("perturbation_window", "homeostasis.perturbation_window")
+            .bind("invariant_violations", "homeostasis.invariant_violations")
+            .bind(
+                "perturbation_energy_min",
+                "homeostasis.perturbation_energy_min",
+            ),
+        )
+        .pass(
+            PassDraft::new("audit_homeostasis", "organism_audit_homeostasis")
+                .bind("tick", "simulation.tick")
+                .bind("population", "morphology.population")
+                .bind("component_count", "morphology.component_count")
+                .bind("component_unresolved", "morphology.component_unresolved")
+                .bind("organizer_count", "morphology.organizer_count")
+                .bind("boundary_count", "morphology.boundary_count")
+                .bind("interior_count", "morphology.interior_count")
+                .bind("area_q16", "morphology.area_q16")
+                .bind("perimeter_q16", "morphology.perimeter_q16")
+                .bind("compactness_q16", "morphology.compactness_q16")
+                .bind("centroid_x_q16", "morphology.centroid_x_q16")
+                .bind("centroid_y_q16", "morphology.centroid_y_q16")
+                .bind("radial_density", "morphology.radial_density")
+                .bind("current_energy", "ledger.current_total")
+                .bind("neighbor_overflow", "population.neighbor_overflow")
+                .bind("physical_overflow", "population.physical_neighbor_overflow")
+                .bind("perception_truncation", "population.perception_truncation")
+                .bind("deposit_saturation", "deposit.saturation_count")
+                .bind("metric_min", "homeostasis.metric_min")
+                .bind("metric_max", "homeostasis.metric_max")
+                .bind("metric_sum", "homeostasis.metric_sum")
+                .bind("metric_sum_sq", "homeostasis.metric_sum_sq")
+                .bind("energy_min", "homeostasis.energy_min")
+                .bind("energy_max", "homeostasis.energy_max")
+                .bind("energy_sum", "homeostasis.energy_sum")
+                .bind("energy_sum_sq", "homeostasis.energy_sum_sq")
+                .bind("reference_samples", "homeostasis.reference_samples")
+                .bind("validation_samples", "homeostasis.validation_samples")
+                .bind("validation_violations", "homeostasis.validation_violations")
+                .bind("window", "homeostasis.window"),
+        )
+        .pass(
+            PassDraft::new("advance_tick", "organism_advance_tick")
+                .bind("tick", "simulation.tick")
+                .grant("advance_simulation_time"),
+        )
         .view(
             ViewDraft::render(
                 "organism",
@@ -2321,6 +2861,28 @@ pub fn hello_organism_builder_with_config(config: HelloOrganismConfig) -> Module
                 ]),
             ),
         )
+        .scenario(
+            ScenarioDraft::new("homeostasis_perturbation", "simulation", 30_000)
+                .intervene(
+                    12_000,
+                    "set_nutrient_supply",
+                    [("environment.reference_nutrient_supply", Literal::f32(0.25))],
+                )
+                .intervene(
+                    14_000,
+                    "set_nutrient_supply",
+                    [("environment.reference_nutrient_supply", Literal::f32(1.0))],
+                )
+                .expect(
+                    ObservationDraft::AfterTickExecution("simulation".to_owned()),
+                    PredicateDraft::FiniteStreams(vec![
+                        "cells.energy".to_owned(),
+                        "ledger.current_total".to_owned(),
+                        "ledger.residual".to_owned(),
+                        "ledger.cumulative_residual".to_owned(),
+                    ]),
+                ),
+        )
         .capability(CapabilityDraft::state_mutate(
             "mutate_cell_state",
             committed
@@ -2330,10 +2892,18 @@ pub fn hello_organism_builder_with_config(config: HelloOrganismConfig) -> Module
         .capability(CapabilityDraft::membership_mutate(
             "mutate_cell_membership",
             "cells.active_count",
-            committed.into_iter().chain(transient),
+            committed.into_iter().chain(transient).chain(ledger_cells),
         ))
         .capability(CapabilityDraft::state_mutate(
             "mutate_field_state",
             field_state,
+        ))
+        .capability(CapabilityDraft::state_mutate(
+            "mutate_environment",
+            ["environment.nutrient_supply"],
+        ))
+        .capability(CapabilityDraft::state_mutate(
+            "advance_simulation_time",
+            ["simulation.tick"],
         ))
 }

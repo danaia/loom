@@ -143,8 +143,8 @@ pub fn update_energy(
     requested_signal_q16: u32,
     emitted_intents: u32,
 ) -> f32 {
-    let absorbed = nutrient_bin.min(DECISION_BIN_MAX) as f32 / DECISION_BIN_MAX as f32 * 0.003;
-    let maintenance = 0.001;
+    let absorbed = nutrient_bin.min(DECISION_BIN_MAX) as f32 / DECISION_BIN_MAX as f32 * 0.009_78;
+    let maintenance = 0.001 + previous * 0.002_2;
     let signaling = requested_signal_q16 as f32 / Q16_SCALE as f32 * 0.0001;
     let decisions = emitted_intents as f32 * 0.00001;
     (previous + absorbed - maintenance - signaling - decisions).max(0.0)

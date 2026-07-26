@@ -2,6 +2,12 @@
 
 Date: 2026-07-25
 
+This is the archived Gate 3 proof record. Gate 4 adds metabolic regulation,
+ledger, and audit passes and shifts the current deterministic fate split to 16
+boundary and 22 interior cells. See
+`hello-organism-homeostasis-gate-m4-pro.md` for the current correctness boundary;
+the timing below describes the earlier Gate 3 schedule.
+
 ## Correctness load
 
 The Metal test `one_organizer_constructs_a_connected_differentiated_body` starts

@@ -141,9 +141,17 @@ inhibitor transport disabled, growth reaches 55 cells and leaves the declared
 lineage, developmental state, morphology, quantized decisions, and per-lineage
 trajectory hashes exactly.
 
-The remaining organism gates are:
+The sustained-homeostasis gate is also implemented. The organism establishes its
+own morphology and energy envelope during ticks 10,000–11,000 and returns to that
+envelope for every tick from 29,000–30,000. A separate long-horizon audit reports
+zero post-development connectivity, organizer, fate, overflow, truncation, or
+saturation violations. A canonical scenario lowers nutrient supply to 25% at
+tick 12,000 and restores it at tick 14,000; energy leaves the reference envelope,
+then the same connected 39-cell differentiated body returns to it. The per-tick
+energy ledger bounds instantaneous and cumulative accounting residual.
 
-- a stable pre-lesion envelope before tick 30,000,
+The remaining organism gate is:
+
 - recorded injury and recovery by tick 50,000,
 - 500 consecutive ticks inside the recovery envelope.
 
