@@ -1,0 +1,613 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="A visual, beginner-friendly guide to Loom: programming millions of tiny agents that grow, organize, adapt, and repair."
+    />
+    <meta name="theme-color" content="#f3f0e7" />
+    <title>Loom — Programming Systems That Build Themselves</title>
+    <link rel="stylesheet" href="./styles.css" />
+    <script src="./app.js" defer></script>
+  </head>
+  <body>
+    <div class="reading-progress" aria-hidden="true"><span></span></div>
+
+    <header class="site-header">
+      <a class="brand" href="#top" aria-label="Loom handbook home">
+        <svg viewBox="0 0 44 44" aria-hidden="true">
+          <path d="M22 4 38 13v18L22 40 6 31V13Z" />
+          <circle cx="22" cy="22" r="5" />
+          <path d="m22 9 0 8m0 10 0 8M10 15l7 4m10 6 7 4m0-14-7 4m-10 6-7 4" />
+        </svg>
+        <span>LOOM</span>
+      </a>
+      <nav class="desktop-nav" aria-label="Primary navigation">
+        <a href="#idea">The idea</a>
+        <a href="#mechanism">How it works</a>
+        <a href="#proof">Proof</a>
+        <a href="#possibilities">Possibilities</a>
+        <a href="#build">Build yours</a>
+      </nav>
+      <button class="menu-toggle" type="button" aria-expanded="false" aria-controls="mobile-nav">
+        <span></span><span></span>
+        <span class="sr-only">Open navigation</span>
+      </button>
+      <nav id="mobile-nav" class="mobile-nav" aria-label="Mobile navigation">
+        <a href="#idea">The idea</a>
+        <a href="#mechanism">How it works</a>
+        <a href="#proof">Proof</a>
+        <a href="#possibilities">Possibilities</a>
+        <a href="#build">Build yours</a>
+      </nav>
+    </header>
+
+    <main id="top">
+      <section class="hero">
+        <div class="hero-copy">
+          <p class="eyebrow reveal">A visual handbook for curious builders</p>
+          <h1 class="reveal">Programming systems that <em>build themselves.</em></h1>
+          <p class="hero-deck reveal">
+            What if you could program a million tiny agents, give them simple rules, and
+            watch them grow a crystal, repair a wound, or organize live data?
+          </p>
+          <div class="hero-actions reveal">
+            <a class="button button-dark" href="#idea">Start with the idea <span>↓</span></a>
+            <button class="text-button" data-scroll-to="proof" type="button">Jump to the proof <span>↗</span></button>
+          </div>
+        </div>
+
+        <div class="hero-lab reveal" data-simulation="organism">
+          <div class="lab-toolbar">
+            <span class="live-dot"></span>
+            <span>LIVE RULE STUDY</span>
+            <span class="lab-count"><strong>1</strong> seed</span>
+          </div>
+          <canvas id="agent-canvas" aria-label="Animated simulation of agents organizing"></canvas>
+          <div class="lab-caption">
+            <div>
+              <span class="chapter-no">RULE 01</span>
+              <strong>Stay close. Avoid crowding. Follow the signal.</strong>
+            </div>
+            <button id="restart-simulation" type="button" aria-label="Restart agent simulation">↻</button>
+          </div>
+          <div class="mode-switcher" role="group" aria-label="Simulation example">
+            <button class="is-active" type="button" data-mode="organism">Organism</button>
+            <button type="button" data-mode="crystal">Crystal</button>
+            <button type="button" data-mode="swarm">Swarm</button>
+          </div>
+        </div>
+        <p class="hero-note">No final shape is stored. Only the rules that create it.</p>
+      </section>
+
+      <section class="manifesto" id="idea">
+        <div class="section-marker">
+          <span>01</span>
+          <p>THE IDEA</p>
+        </div>
+        <div class="manifesto-copy">
+          <h2>Most software describes the answer. Loom describes how the answer <em>comes to exist.</em></h2>
+          <p>
+            A normal program often starts with a finished object, then moves or updates it.
+            Loom starts with small actors and local rules. The finished form is what happens
+            when those rules run together, many times, in parallel.
+          </p>
+        </div>
+
+        <div class="comparison reveal">
+          <article>
+            <span class="comparison-label">TRADITIONAL SOFTWARE</span>
+            <div class="comparison-diagram traditional">
+              <div class="object-shape">
+                <span></span><span></span><span></span><span></span>
+              </div>
+              <div class="diagram-arrow">→</div>
+              <div class="instruction-stack">
+                <i>BUILD</i><i>ANIMATE</i><i>UPDATE</i>
+              </div>
+            </div>
+            <p>Build the final object, then tell it what to do.</p>
+          </article>
+          <article class="comparison-loom">
+            <span class="comparison-label">LOOM</span>
+            <div class="comparison-diagram emergent">
+              <div class="local-rules">
+                <i>+</i><i>↗</i><i>○</i>
+              </div>
+              <div class="diagram-arrow">→</div>
+              <div class="emergent-shape" aria-hidden="true">
+                <span></span><span></span><span></span><span></span><span></span>
+                <span></span><span></span><span></span><span></span><span></span>
+                <span></span><span></span><span></span><span></span><span></span>
+              </div>
+            </div>
+            <p>Define local rules, then let structure emerge.</p>
+          </article>
+        </div>
+
+        <blockquote class="pull-quote reveal">
+          <span>“</span>
+          <p>Loom does not draw the answer first. It runs the rules that create the answer.</p>
+        </blockquote>
+      </section>
+
+      <section class="particle-explainer">
+        <div class="section-marker section-marker-light">
+          <span>02</span>
+          <p>THE TINY AGENT</p>
+        </div>
+        <div class="particle-intro">
+          <p class="eyebrow">What is an intelligent particle?</p>
+          <h2>Not magic. Just a small actor with enough context to make one local choice.</h2>
+        </div>
+
+        <div class="particle-anatomy reveal">
+          <div class="agent-orbit" aria-hidden="true">
+            <span class="orbit orbit-one"></span>
+            <span class="orbit orbit-two"></span>
+            <span class="agent-core">A</span>
+            <i class="satellite satellite-a">ID</i>
+            <i class="satellite satellite-b">XY</i>
+            <i class="satellite satellite-c">⚡</i>
+            <i class="satellite satellite-d">↗</i>
+          </div>
+          <div class="agent-facts">
+            <article>
+              <span>01</span>
+              <div><h3>State</h3><p>Where am I? What role do I have? How much energy remains?</p></div>
+            </article>
+            <article>
+              <span>02</span>
+              <div><h3>Local perception</h3><p>Who is nearby? What signals or conditions can I sense?</p></div>
+            </article>
+            <article>
+              <span>03</span>
+              <div><h3>Legal actions</h3><p>May I move, divide, attach, repair, signal, or claim work?</p></div>
+            </article>
+            <article>
+              <span>04</span>
+              <div><h3>Memory + limits</h3><p>What happened before? What resources and permissions constrain me?</p></div>
+            </article>
+          </div>
+        </div>
+
+        <div class="hallway-analogy reveal">
+          <div>
+            <span class="mini-label">A FAMILIAR EXAMPLE</span>
+            <h3>The school hallway has no master controller.</h3>
+          </div>
+          <p>
+            Each student sees nearby people and chooses a path. Together they form lanes,
+            clusters, traffic jams, and flows. A Loom particle works the same way: local
+            information in, local choice out, larger pattern over time.
+          </p>
+        </div>
+
+        <div class="equation reveal" aria-label="Simple local behavior times many agents times repeated interaction equals complex global structure">
+          <div><strong>simple rules</strong><span>what one agent does</span></div>
+          <b>×</b>
+          <div><strong>many agents</strong><span>running together</span></div>
+          <b>×</b>
+          <div><strong>repetition</strong><span>over many ticks</span></div>
+          <b>=</b>
+          <div class="equation-result"><strong>emergence</strong><span>a global pattern</span></div>
+        </div>
+      </section>
+
+      <section class="mechanism" id="mechanism">
+        <div class="section-marker">
+          <span>03</span>
+          <p>HOW LOOM WORKS</p>
+        </div>
+        <div class="mechanism-heading">
+          <h2>Particles make choices. Fields carry information. Resolvers keep the world honest.</h2>
+          <p>Three simple ideas create a system that can be large, fast, inspectable, and safe.</p>
+        </div>
+
+        <div class="building-blocks">
+          <article class="block-card particles-card reveal">
+            <span class="card-index">01 / PARTICLES</span>
+            <div class="mini-particles" aria-hidden="true"></div>
+            <h3>Individual identity and state</h3>
+            <p>A particle can represent a cell, crystal unit, robot, wallet, task, or point in a fluid.</p>
+            <ul>
+              <li>position + velocity</li>
+              <li>energy + memory</li>
+              <li>identity + role</li>
+            </ul>
+          </article>
+          <article class="block-card fields-card reveal">
+            <span class="card-index">02 / FIELDS</span>
+            <div class="field-map" aria-hidden="true"><i></i><i></i><i></i></div>
+            <h3>Information spread through space</h3>
+            <p>Fields are the shared environment: weather, sound, scent, pressure, danger, or demand.</p>
+            <ul>
+              <li>nutrient + injury</li>
+              <li>heat + pressure</li>
+              <li>risk + attention</li>
+            </ul>
+          </article>
+          <article class="block-card resolver-card reveal">
+            <span class="card-index">03 / RESOLVERS</span>
+            <div class="resolver-gate" aria-hidden="true">
+              <span>REQUEST</span><i>✓</i><span>UPDATE</span>
+            </div>
+            <h3>A referee for every action</h3>
+            <p>An agent may request a move. A resolver checks whether it is legal before state changes.</p>
+            <ul>
+              <li>enough energy?</li>
+              <li>room available?</li>
+              <li>permission granted?</li>
+            </ul>
+          </article>
+        </div>
+
+        <div class="system-loop reveal">
+          <div class="loop-copy">
+            <span class="mini-label">ONE TICK IN THE LIFE OF AN AGENT</span>
+            <h3>Sense. Decide. Request. Resolve. Update.</h3>
+            <p>
+              The split between requesting and resolving matters. It keeps one ambitious
+              particle from rewriting the world, colliding with a neighbor, or spending
+              energy it does not have.
+            </p>
+          </div>
+          <ol class="loop-steps">
+            <li><span>01</span><strong>Sense</strong><small>read neighbors + fields</small></li>
+            <li><span>02</span><strong>Decide</strong><small>choose a local response</small></li>
+            <li><span>03</span><strong>Request</strong><small>propose an action</small></li>
+            <li><span>04</span><strong>Resolve</strong><small>check rules + conflicts</small></li>
+            <li><span>05</span><strong>Update</strong><small>commit legal changes</small></li>
+          </ol>
+        </div>
+      </section>
+
+      <section class="gpu-section">
+        <div class="gpu-copy">
+          <div class="section-marker section-marker-inline">
+            <span>04</span><p>WHY THE GPU MATTERS</p>
+          </div>
+          <h2>One complicated job? Call the CPU. One simple job, a million times? That is GPU territory.</h2>
+          <p>
+            Think of a CPU as a few expert chefs. A GPU is a giant kitchen with thousands
+            of stations, all preparing the same kind of step at once.
+          </p>
+          <p>
+            Loom keeps state on the GPU: it stores, updates, measures, and renders the
+            particles without hauling a million records back and forth every frame.
+          </p>
+        </div>
+        <div class="compute-comparison reveal">
+          <article>
+            <div class="cpu-visual" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+            <span>CPU</span>
+            <strong>A few complex workers</strong>
+          </article>
+          <article class="gpu-card">
+            <div class="gpu-visual" aria-hidden="true"></div>
+            <span>GPU</span>
+            <strong>Thousands of parallel workers</strong>
+          </article>
+        </div>
+        <div class="residency-strip reveal">
+          <div class="bad-path">
+            <span>CONVENTIONAL LOOP</span>
+            <p>CPU update <b>→</b> upload <b>→</b> render <b>→</b> repeat</p>
+          </div>
+          <div class="good-path">
+            <span>LOOM’S GPU-RESIDENT LOOP</span>
+            <p>store <b>→</b> update <b>→</b> measure <b>→</b> render <b>↻</b></p>
+          </div>
+        </div>
+      </section>
+
+      <section class="language-now">
+        <div class="section-marker">
+          <span>05</span>
+          <p>WHAT EXISTS TODAY</p>
+        </div>
+        <div class="language-grid">
+          <div>
+            <p class="eyebrow">A clear boundary builds trust</p>
+            <h2>Loom describes the system. Metal currently describes the detailed math.</h2>
+            <p>
+              Loom v0 is real, but it is not a finished general-purpose language. Today it
+              defines the data, work, permissions, dependencies, views, and correctness
+              contracts. Packaged Metal kernels perform the math on Apple GPUs.
+            </p>
+          </div>
+          <div class="now-future reveal">
+            <article>
+              <span>NOW</span>
+              <h3>Loom declares</h3>
+              <ul>
+                <li>what exists</li><li>what runs</li><li>what may change</li>
+                <li>what depends on what</li><li>how much work executes</li>
+              </ul>
+              <p>Metal kernels describe the detailed operation.</p>
+            </article>
+            <div class="future-arrow">→</div>
+            <article class="future-card">
+              <span>THE DIRECTION</span>
+              <h3>Native Loom code</h3>
+              <div class="compiler-flow">
+                <i>LOOM</i><b>→</b><i>COMPILER</i><b>→</b><i>METAL</i><b>→</b><i>GPU</i>
+              </div>
+              <p>The compiler generates the GPU work from Loom source.</p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="proof-section" id="proof">
+        <div class="section-marker section-marker-light">
+          <span>06</span>
+          <p>THE PROOF</p>
+        </div>
+        <div class="proof-heading">
+          <p class="eyebrow">Two very different systems. One substrate.</p>
+          <h2>If the same foundation can grow tissue and crystal, the invention is underneath the demos.</h2>
+        </div>
+
+        <article class="specimen organism-specimen">
+          <div class="specimen-copy">
+            <span class="specimen-tag">SPECIMEN 01 / HELLO ORGANISM</span>
+            <h3>A body that grows, stabilizes, gets hurt, and repairs itself.</h3>
+            <p>
+              One organizer cell reads local fields. Cells divide, specialize into boundary
+              and interior tissue, and form a connected body. At tick 30,000, a controlled
+              lesion removes nine cells. Injury signals spread. Local repair rules rebuild.
+            </p>
+            <blockquote>The final body was never stored as a map.</blockquote>
+            <a href="../milestones/hello-organism-v0.1.md">Read the frozen proof manifest <span>↗</span></a>
+          </div>
+          <div class="organism-timeline">
+            <div class="stage">
+              <div class="cell-stage seed-stage" aria-hidden="true"><i></i></div>
+              <span>START</span><strong>1 organizer</strong>
+            </div>
+            <div class="timeline-arrow">→</div>
+            <div class="stage">
+              <div class="cell-stage body-stage" aria-hidden="true"></div>
+              <span>HOMEOSTASIS</span><strong>39 cells</strong>
+            </div>
+            <div class="timeline-arrow">→</div>
+            <div class="stage">
+              <div class="cell-stage lesion-stage" aria-hidden="true"></div>
+              <span>LESION</span><strong>−9 cells</strong>
+            </div>
+            <div class="timeline-arrow">→</div>
+            <div class="stage">
+              <div class="cell-stage repair-stage" aria-hidden="true"></div>
+              <span>RECOVERY</span><strong>40 cells</strong>
+            </div>
+          </div>
+          <div class="metric-row">
+            <div><strong>30,000</strong><span>lesion tick</span></div>
+            <div><strong>30,806</strong><span>first accepted recovery</span></div>
+            <div><strong>1</strong><span>connected component</span></div>
+            <div><strong>0</strong><span>final injury signal</span></div>
+          </div>
+          <p class="evidence-note"><span>MEASURED PROOF</span> Apple M4 Pro · deterministic checkpoint · causal no-injury and no-repair branches</p>
+        </article>
+
+        <article class="specimen crystal-specimen">
+          <div class="crystal-visual" aria-hidden="true">
+            <div class="crystal-shadow"></div>
+            <svg viewBox="0 0 560 420">
+              <defs>
+                <linearGradient id="crystalTop" x1="0" x2="1" y1="0" y2="1">
+                  <stop stop-color="#f8ffb4"/><stop offset="1" stop-color="#69d7c2"/>
+                </linearGradient>
+                <linearGradient id="crystalSide" x1="0" x2="1">
+                  <stop stop-color="#218f94"/><stop offset="1" stop-color="#103f57"/>
+                </linearGradient>
+              </defs>
+              <polygon points="280,42 446,135 402,326 196,365 88,198" fill="url(#crystalSide)"/>
+              <polygon points="280,42 446,135 280,218 88,198" fill="url(#crystalTop)"/>
+              <polygon points="280,218 446,135 402,326 280,374" fill="#176c78"/>
+              <polygon points="88,198 280,218 280,374 196,365" fill="#0d4d65"/>
+              <path d="M280 42v176M88 198l192 20 166-83M280 218v156" fill="none" stroke="#e5ffd2" stroke-opacity=".45" stroke-width="2"/>
+              <path class="crystal-cut" d="m150 245 243-64M147 252l244-64" fill="none" stroke="#ff785d" stroke-width="3" stroke-dasharray="7 8"/>
+            </svg>
+            <span class="slice-label">POINTER SLICE</span>
+          </div>
+          <div class="specimen-copy">
+            <span class="specimen-tag">SPECIMEN 02 / HELLO CRYSTAL</span>
+            <h3>One seed. One million material cells. A cut that can heal.</h3>
+            <p>
+              The crystal grows facets from distributed state. A pointer slice is an explicit
+              intervention: it removes material, identifies components, and lets fragments
+              move. Healing behavior then comes from local rules.
+            </p>
+            <div class="crystal-metrics">
+              <div><strong>1,000,000</strong><span>declared elements</span></div>
+              <div><strong>2.87 ms</strong><span>mean GPU time*</span></div>
+              <div><strong>0</strong><span>steady-state copies</span></div>
+            </div>
+            <p class="boundary-callout">
+              <strong>Honest boundary:</strong> this is a short execution smoke proof. The cut
+              is explicit, and full stress-driven fracture remains future work.
+            </p>
+            <a href="../benchmarks/hello-crystal-1m-m4-pro.md">Inspect the 1M smoke proof <span>↗</span></a>
+            <small>*Three measured samples on Apple M4 Pro; not a sustained performance baseline.</small>
+          </div>
+        </article>
+
+        <a class="full-proof-link" href="../visuals/hello-organism-gate-5.svg">
+          <span>Open the complete organism evidence view</span>
+          <strong>Development → lesion → regeneration → causal ablations</strong>
+          <i>↗</i>
+        </a>
+      </section>
+
+      <section class="possibilities" id="possibilities">
+        <div class="section-marker">
+          <span>07</span>
+          <p>WHAT ELSE COULD GROW?</p>
+        </div>
+        <div class="possibilities-heading">
+          <h2>Change what a particle represents, and the same ideas open very different doors.</h2>
+          <p>These are directions, not finished products. The visual behavior only matters when it corresponds to real state and measurable rules.</p>
+        </div>
+        <div class="possibility-grid">
+          <article class="possibility-card swarm-card reveal">
+            <div class="card-art" aria-hidden="true"></div>
+            <span>ROBOT SWARMS</span>
+            <h3>Coordination without a single point of failure</h3>
+            <p>Robots sense obstacles, battery, nearby teammates, communication, and work demand—then reorganize when one fails.</p>
+            <ul><li>particle → robot</li><li>field → danger / demand</li></ul>
+          </article>
+          <article class="possibility-card data-card reveal">
+            <div class="card-art" aria-hidden="true"></div>
+            <span>LIVING DATA</span>
+            <h3>Data that becomes a changing structure</h3>
+            <p>Wallets, processes, or documents become agents. Real relationships drive clustering, tension, flow, and deformation.</p>
+            <ul><li>particle → record</li><li>field → risk / attention</li></ul>
+          </article>
+          <article class="possibility-card material-card reveal">
+            <div class="card-art" aria-hidden="true"></div>
+            <span>ARTIFICIAL MATERIALS</span>
+            <h3>Surfaces and structures with local repair rules</h3>
+            <p>Explore fracture, erosion, heat response, adaptive structures, and materials that reorganize after damage.</p>
+            <ul><li>particle → material unit</li><li>field → heat / stress</li></ul>
+          </article>
+          <article class="possibility-card world-card reveal">
+            <div class="card-art" aria-hidden="true"></div>
+            <span>DIGITAL WORLDS</span>
+            <h3>Worlds that simulate change instead of playing it back</h3>
+            <p>Forests adapt, terrain erodes, creatures develop, and structures recover from their actual local state.</p>
+            <ul><li>particle → cell / grain</li><li>field → water / nutrient</li></ul>
+          </article>
+          <article class="possibility-card agents-card reveal">
+            <div class="card-art" aria-hidden="true"></div>
+            <span>AGENT AUTOMATION</span>
+            <h3>Many small workers, shared limits, visible coordination</h3>
+            <p>Research, coding, monitoring, or planning agents request work while resolvers enforce permissions and resources.</p>
+            <ul><li>particle → task agent</li><li>field → urgency / confidence</li></ul>
+          </article>
+        </div>
+      </section>
+
+      <section class="contracts">
+        <div class="contracts-copy">
+          <div class="section-marker section-marker-inline section-marker-light">
+            <span>08</span><p>AGENT-NATIVE PROGRAMMING</p>
+          </div>
+          <h2>“Make something cool” is not a specification.</h2>
+          <p>
+            Loom is being designed so AI builders can reason about state, permissions,
+            dependencies, costs, invariants, tests, and performance—not only appearance.
+          </p>
+          <blockquote>
+            Create a swarm that maintains coverage while minimizing energy and never allowing collisions.
+          </blockquote>
+        </div>
+        <div class="contract-card reveal">
+          <div class="contract-header">
+            <span>CONTRACT / SWARM_COVERAGE</span><i>VALID</i>
+          </div>
+          <div class="contract-line"><span>MUST</span><p>cover ≥ 98% of the mission area</p></div>
+          <div class="contract-line"><span>NEVER</span><p>allow two robots to collide</p></div>
+          <div class="contract-line"><span>BUDGET</span><p>finish each tick below 8.33 ms</p></div>
+          <div class="contract-line"><span>PROVE</span><p>replay the same logical outcome</p></div>
+          <div class="contract-footer"><span>✓ 4 checks defined</span><span>measure, don’t guess</span></div>
+        </div>
+      </section>
+
+      <section class="build-section" id="build">
+        <div class="section-marker">
+          <span>09</span>
+          <p>BUILD YOUR FIRST IDEA</p>
+        </div>
+        <div class="build-heading">
+          <p class="eyebrow">Start smaller than the system you imagine</p>
+          <h2>Design the smallest actor, the information it senses, and the rules it cannot break.</h2>
+        </div>
+
+        <div class="builder">
+          <div class="builder-steps" role="tablist" aria-label="Idea builder steps">
+            <button class="is-active" type="button" role="tab" aria-selected="true" data-builder-step="0"><span>01</span>Choose the actor</button>
+            <button type="button" role="tab" aria-selected="false" data-builder-step="1"><span>02</span>Give it state</button>
+            <button type="button" role="tab" aria-selected="false" data-builder-step="2"><span>03</span>Define fields</button>
+            <button type="button" role="tab" aria-selected="false" data-builder-step="3"><span>04</span>Limit actions</button>
+            <button type="button" role="tab" aria-selected="false" data-builder-step="4"><span>05</span>Measure success</button>
+          </div>
+          <div class="builder-panel" aria-live="polite">
+            <span class="builder-kicker">QUESTION 01</span>
+            <h3>What is the smallest useful actor in your system?</h3>
+            <p>Choose a unit that can make one meaningful local decision. Do not start with the whole world.</p>
+            <div class="choice-chips">
+              <button type="button">cell</button><button type="button">robot</button>
+              <button type="button">transaction</button><button type="button">grain</button>
+              <button type="button">task</button><button type="button">idea</button>
+            </div>
+            <div class="builder-takeaway"><span>TAKEAWAY</span><strong>Good emergence starts with a clear unit of agency.</strong></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="limits">
+        <div class="limits-heading">
+          <div class="section-marker section-marker-inline section-marker-light">
+            <span>10</span><p>HONEST LIMITS</p>
+          </div>
+          <h2>A substrate for emergence is not a shortcut around hard science.</h2>
+        </div>
+        <div class="limits-grid">
+          <div>
+            <h3>Loom is not yet…</h3>
+            <ul>
+              <li>a biologically exact simulator</li>
+              <li>an atom-by-atom material model</li>
+              <li>a replacement for every game engine</li>
+              <li>a finished general-purpose language</li>
+              <li>automatically intelligent</li>
+            </ul>
+          </div>
+          <div>
+            <h3>The difficult work remains…</h3>
+            <ul>
+              <li>choosing useful local rules</li>
+              <li>avoiding runaway feedback</li>
+              <li>measuring global structure</li>
+              <li>validating behavior against reality</li>
+              <li>making complex systems understandable</li>
+            </ul>
+          </div>
+        </div>
+        <blockquote>Loom provides the machinery for emergent systems. It does not automatically discover the right rules.</blockquote>
+      </section>
+
+      <section class="closing">
+        <div class="closing-canvas" aria-hidden="true"></div>
+        <p class="eyebrow">THE LARGER VISION</p>
+        <h2>Software as a <em>living process.</em></h2>
+        <p>
+          Loom is an experiment in programming systems that are not fully drawn in
+          advance. Instead, agents perceive, fields communicate, rules constrain,
+          structures emerge, and systems sometimes repair themselves.
+        </p>
+        <a class="button button-light" href="../README.md">Explore the technical project <span>↗</span></a>
+        <div class="closing-line">
+          <span>LOOM / 2026</span>
+          <span>Grow · organize · adapt · repair</span>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <a class="brand" href="#top" aria-label="Back to top">
+        <svg viewBox="0 0 44 44" aria-hidden="true">
+          <path d="M22 4 38 13v18L22 40 6 31V13Z" />
+          <circle cx="22" cy="22" r="5" />
+        </svg>
+        <span>LOOM</span>
+      </a>
+      <p>A beginner-friendly guide to intelligent particles, GPU computing, artificial organisms, and agent-based programming.</p>
+      <a href="#top">Back to top ↑</a>
+    </footer>
+  </body>
+</html>

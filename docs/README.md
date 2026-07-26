@@ -1,5 +1,12 @@
 # Loom Language Design
 
+## Start with the visual handbook
+
+New to Loom? Open [`handbook/index.html`](handbook/index.html) for
+**Loom: Programming Systems That Build Themselves** — a visual, beginner-friendly
+introduction to intelligent particles, fields, GPU computing, Hello Organism,
+Hello Crystal, agent-native contracts, and Loom's current limits.
+
 The language documents are read in this order:
 
 1. [`00-language-charter.md`](00-language-charter.md) — immutable principles and the intended agent experience.
