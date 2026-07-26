@@ -12,14 +12,11 @@ if [[ "${HOST_OS}" != "Darwin" ]]; then
   exit 1
 fi
 
-case "${HOST_ARCH}" in
-  arm64) PACKAGE_ARCH="arm64" ;;
-  x86_64) PACKAGE_ARCH="x86_64" ;;
-  *)
-    echo "error: unsupported macOS architecture ${HOST_ARCH}" >&2
-    exit 1
-    ;;
-esac
+if [[ "${HOST_ARCH}" != "arm64" ]]; then
+  echo "error: Loom release packages require Apple Silicon (arm64)" >&2
+  exit 1
+fi
+PACKAGE_ARCH="arm64"
 
 VERSION="$(
   sed -n '/^\[workspace\.package\]/,/^\[/s/^version = "\([^"]*\)"/\1/p' \

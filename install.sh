@@ -23,11 +23,9 @@ safe_loom_home "${LOOM_HOME}" || fail "refusing unsafe LOOM_HOME: ${LOOM_HOME}"
 [ "$(uname -s)" = "Darwin" ] ||
   fail "Loom execution currently requires macOS and Metal"
 
-case "$(uname -m)" in
-  arm64) LOOM_ARCH="arm64" ;;
-  x86_64) LOOM_ARCH="x86_64" ;;
-  *) fail "unsupported architecture: $(uname -m)" ;;
-esac
+[ "$(uname -m)" = "arm64" ] ||
+  fail "Loom currently requires an Apple Silicon Mac (arm64)"
+LOOM_ARCH="arm64"
 
 command -v curl >/dev/null 2>&1 || fail "curl is required"
 command -v tar >/dev/null 2>&1 || fail "tar is required"

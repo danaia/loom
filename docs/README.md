@@ -64,7 +64,7 @@ The first executable `.loom` compiler parses native kernel arithmetic, checks
 its types, units, and effects, generates packaged Metal, and lowers canonical
 agent source into the same typed graph used by the Rust builders.
 
-Install the complete macOS distribution:
+Install the complete Apple Silicon macOS distribution:
 
 ```text
 curl -fsSL https://raw.githubusercontent.com/danaia/loom/main/install.sh | sh
