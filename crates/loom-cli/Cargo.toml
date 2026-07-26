@@ -1,25 +1,19 @@
 [package]
-name = "loom-metal"
+name = "loom-cli"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [dependencies]
-block = "0.1"
-core-graphics-types = "0.1"
-libc = "0.2"
 loom-core = { path = "../loom-core" }
+loom-syntax = { path = "../loom-syntax" }
 loom-validator = { path = "../loom-validator" }
-metal = "0.29"
-objc = "0.2"
 serde.workspace = true
 serde_json.workspace = true
-sha2.workspace = true
-winit = "0.28"
 
-[dev-dependencies]
-loom-syntax = { path = "../loom-syntax" }
+[target.'cfg(target_os = "macos")'.dependencies]
+loom-metal = { path = "../loom-metal" }
 
 [[bin]]
-name = "hello-particle-view"
+name = "loom"
 path = "src/main.rs"

@@ -503,6 +503,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0ceec5bc11778974d1bcb055b18002eba7f4b3518b6a0081b3af5f21666da9ad"
 
 [[package]]
+name = "loom-cli"
+version = "0.1.0"
+dependencies = [
+ "loom-core",
+ "loom-metal",
+ "loom-syntax",
+ "loom-validator",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "loom-core"
 version = "0.1.0"
 dependencies = [
@@ -519,6 +531,7 @@ dependencies = [
  "core-graphics-types",
  "libc",
  "loom-core",
+ "loom-syntax",
  "loom-validator",
  "metal",
  "objc",
@@ -526,6 +539,15 @@ dependencies = [
  "serde_json",
  "sha2",
  "winit",
+]
+
+[[package]]
+name = "loom-syntax"
+version = "0.1.0"
+dependencies = [
+ "loom-core",
+ "loom-validator",
+ "serde",
 ]
 
 [[package]]

@@ -1,7 +1,9 @@
 [workspace]
 members = [
+    "crates/loom-cli",
     "crates/loom-core",
     "crates/loom-metal",
+    "crates/loom-syntax",
     "crates/loom-validator",
 ]
 resolver = "2"

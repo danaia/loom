@@ -29,28 +29,30 @@ the implementation and normative documents win.
 
 ## Know the current boundary
 
-Loom v0 is a typed compute/render graph with a validated execution model. Kernel
-arithmetic is currently supplied by external backend code, initially Metal.
+Loom v0 is a typed compute/render graph with a validated execution model. Its
+first native kernel subset generates Metal for f32 scalar/vector indexed
+arithmetic. Complex arithmetic is still supplied by explicit external Metal.
 
 The executable path today is:
 
 ```text
 Loom typed declarations
+→ native expression type/unit/effect checking
 → validator
 → execution plan
 → loom-metal
-→ packaged Metal kernels and shaders
+→ generated or explicit packaged Metal
 → Metal pipelines
 → GPU execution
 ```
 
-The `.loom` file in
-[`examples/hello-particle/hello-particle.loom`](../examples/hello-particle/hello-particle.loom)
-is the canonical textual specimen. The larger crystal and organism programs are
-currently constructed through the Rust builder API. Do not invent native Loom
-kernel-body syntax and present it as executable v0 code.
+The executable agent-native source is
+[`examples/hello-particle/hello-particle.agent.loom`](../examples/hello-particle/hello-particle.agent.loom).
+Its integration kernel is native Loom and its contact kernel demonstrates the
+explicit Metal escape hatch. The larger crystal and organism programs are still
+constructed through the Rust builder API.
 
-The planned path is:
+The growing native path is:
 
 ```text
 Loom declarations plus native kernel bodies
@@ -60,16 +62,17 @@ Loom declarations plus native kernel bodies
 → compiled pipelines
 ```
 
-The optimization rules in this handbook apply to both paths. Only the place where
-kernel arithmetic is written changes.
+The optimization rules in this handbook apply to both native and external
+paths. Only the place where kernel arithmetic is written changes.
 
 Use these labels when documenting examples:
 
-- **Executable v0** — represented by the current typed graph and external Metal.
+- **Executable v0** — represented by native Loom and/or explicit Metal lowered
+  through the current typed graph.
 - **Canonical text** — valid semantic shape illustrated by the checked-in `.loom`
   specimen; punctuation may still evolve.
-- **Conceptual future syntax** — design discussion only; never imply that it
-  compiles today.
+- **Conceptual future syntax** — branches, loops, atomics, threadgroup memory,
+  SIMD-group operations, and other forms not accepted by the current parser.
 
 ## Use the GPU execution model
 

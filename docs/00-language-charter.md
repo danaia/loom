@@ -7,11 +7,12 @@ create and modify Loom programs. Deterministic compilers, validators, verifiers,
 runtimes decide what is legal and what executes. No AI model lives inside a Loom
 program or participates in its simulation loop.
 
-Today, Loom is an early agent-native systems DSL with a low-level typed execution
-model. It controls memory, effects, bindings, scheduling, synchronization,
-validation, and orchestration. Kernel arithmetic remains in external backend code,
-initially Metal. A native kernel-body language is a later evolutionary boundary,
-not part of Loom v0.
+Today, Loom is an early agent-native systems language with a low-level typed
+execution model. It controls memory, effects, bindings, scheduling,
+synchronization, validation, and orchestration. Its first native kernel-body
+subset type-checks f32 scalar/vector arithmetic and generates Metal. Complex
+kernel arithmetic may still use explicit external Metal while the native
+language grows.
 
 Its longer-term thesis is emergent computation: explicit stateful entities and
 distributed fields cooperating through typed intents and authoritative
@@ -59,9 +60,10 @@ agent intention
 ```
 
 Loom v0 is therefore both a typed compute/render graph and an executable physical
-specification. Metal currently performs the arithmetic behind target-neutral kernel
-signatures. This separation lets Loom establish safe execution policy before it
-grows into a complete low-level kernel language.
+specification. Native Loom arithmetic lowers to generated Metal behind
+target-neutral kernel signatures; explicit Metal remains a bootstrap escape
+hatch. This separation lets Loom grow its kernel language without weakening the
+validated execution policy.
 
 ## Constitution
 

@@ -311,31 +311,31 @@
         <div class="language-grid">
           <div>
             <p class="eyebrow">A clear boundary builds trust</p>
-            <h2>Loom describes the system. Metal currently describes the detailed math.</h2>
+            <h2>Loom now writes its first GPU math. Metal remains the advanced escape hatch.</h2>
             <p>
-              Loom v0 is real, but it is not a finished general-purpose language. Today it
-              defines the data, work, permissions, dependencies, views, and correctness
-              contracts. Packaged Metal kernels perform the math on Apple GPUs.
+              Loom v0 is real, but it is not a finished general-purpose language. Native
+              Loom kernels now type-check scalar and vector arithmetic and generate Metal.
+              Complex kernels can still use explicit packaged Metal while the language grows.
             </p>
           </div>
           <div class="now-future reveal">
             <article>
               <span>NOW</span>
-              <h3>Loom declares</h3>
+              <h3>Loom compiles</h3>
               <ul>
                 <li>what exists</li><li>what runs</li><li>what may change</li>
                 <li>what depends on what</li><li>how much work executes</li>
               </ul>
-              <p>Metal kernels describe the detailed operation.</p>
+              <p>Simple native kernels generate Metal; advanced kernels can opt into it.</p>
             </article>
             <div class="future-arrow">→</div>
             <article class="future-card">
-              <span>THE DIRECTION</span>
+              <span>NOW GROWING</span>
               <h3>Native Loom code</h3>
               <div class="compiler-flow">
                 <i>LOOM</i><b>→</b><i>COMPILER</i><b>→</b><i>METAL</i><b>→</b><i>GPU</i>
               </div>
-              <p>The compiler generates the GPU work from Loom source.</p>
+              <p>The first end-to-end native kernel path now generates and executes GPU work.</p>
             </article>
           </div>
         </div>
