@@ -121,6 +121,9 @@ fn run() -> Result<(), String> {
                 .inner_size(window_arguments.width, window_arguments.height)
                 .min_inner_size(320.0, 520.0)
                 .resizable(true)
+                .focused(true)
+                .always_on_top(true)
+                .visible_on_all_workspaces(true)
                 .build()?;
             Ok(())
         })

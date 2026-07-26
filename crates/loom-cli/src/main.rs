@@ -79,7 +79,7 @@ fn run() -> Result<(), u8> {
         CliAction::Execute { command, path } => (command, path),
     };
 
-    let loaded = match package::load(&path) {
+    let loaded = match package::load(&path, command == Command::Run) {
         Ok(loaded) => loaded,
         Err(error) => {
             print_json(&serde_json::json!({

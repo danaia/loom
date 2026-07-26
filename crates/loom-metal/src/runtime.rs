@@ -133,7 +133,6 @@ impl MetalRuntime {
             .as_deref()
             .map(ProjectExtension::load)
             .transpose()?;
-        let mut project_panel = project_ui.map(PanelBridge::launch).transpose()?;
         let interactive_crystal = validated.graph().name == "hello_crystal";
         let interactive_worm = validated.graph().name == "hello_worm";
         let title = if let Some(extension) = project_extension.as_ref() {
@@ -156,6 +155,7 @@ impl MetalRuntime {
                     error.to_string(),
                 )
             })?;
+        let mut project_panel = project_ui.map(PanelBridge::launch).transpose()?;
         let device = Device::system_default().ok_or_else(|| {
             RuntimeDiagnostic::new(
                 RuntimeDiagnosticCode::DeviceUnavailable,

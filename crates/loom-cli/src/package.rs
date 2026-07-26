@@ -95,7 +95,7 @@ impl LoadedProgram {
     }
 }
 
-pub(crate) fn load(path: &str) -> Result<LoadedProgram, String> {
+pub(crate) fn load(path: &str, prepare_source_project: bool) -> Result<LoadedProgram, String> {
     let path = Path::new(path);
     if path.extension().and_then(|value| value.to_str()) == Some("lmp") {
         load_package(path)
@@ -104,11 +104,23 @@ pub(crate) fn load(path: &str) -> Result<LoadedProgram, String> {
         let project_root = project_parent(path)
             .canonicalize()
             .map_err(|error| error.to_string())?;
+        let (extension_path, ui) = if prepare_source_project {
+            let module = path
+                .file_stem()
+                .and_then(|value| value.to_str())
+                .unwrap_or("project");
+            (
+                compile_project_extension(&project_root)?,
+                load_source_ui(&project_root, module)?,
+            )
+        } else {
+            (None, None)
+        };
         Ok(LoadedProgram {
             source,
             project_root,
-            extension_path: None,
-            ui: None,
+            extension_path,
+            ui,
             _extracted: None,
         })
     }
@@ -149,31 +161,10 @@ pub(crate) fn build(path: &str, graph: &ModuleGraph) -> Result<String, String> {
         }
     }
 
-    let extension_source = root.join("src/runtime.rs");
-    let build_directory = root.join(".loom/build");
-    fs::create_dir_all(&build_directory)
-        .map_err(|error| format!("could not create project build directory: {error}"))?;
     let target = host_target()?;
     let extension_archive_path = format!("runtime/{target}/libloom_project.dylib");
-    let extension_disk_path = build_directory.join("libloom_project.dylib");
-    let extension = if extension_source.is_file() {
-        let output = Command::new("rustc")
-            .args(["--crate-type", "cdylib", "--edition", "2021"])
-            .arg("-C")
-            .arg("opt-level=2")
-            .arg(&extension_source)
-            .arg("-o")
-            .arg(&extension_disk_path)
-            .output()
-            .map_err(|error| {
-                format!("could not invoke rustc for the project extension: {error}")
-            })?;
-        if !output.status.success() {
-            return Err(format!(
-                "project Rust extension failed to compile:\n{}",
-                String::from_utf8_lossy(&output.stderr).trim()
-            ));
-        }
+    let extension_disk_path = compile_project_extension(&root)?;
+    let extension = if extension_disk_path.is_some() {
         source_files.insert("src/runtime.rs".to_owned());
         Some(PackageExtension {
             abi: PROJECT_ABI_VERSION,
@@ -231,7 +222,9 @@ pub(crate) fn build(path: &str, graph: &ModuleGraph) -> Result<String, String> {
     if manifest.extension.is_some() {
         add_file(
             &mut archive,
-            &extension_disk_path,
+            extension_disk_path
+                .as_deref()
+                .expect("package extension has a compiled library"),
             &extension_archive_path,
             options.unix_permissions(0o755),
         )?;
@@ -354,41 +347,10 @@ fn build_ui(
     source_files: &mut BTreeSet<String>,
 ) -> Result<Option<PackageUi>, String> {
     let ui_root = root.join("ui");
-    let config_path = ui_root.join("loom-ui.json");
-    if !config_path.is_file() {
+    let Some(config) = read_ui_config(&ui_root)? else {
         return Ok(None);
-    }
-    let config = serde_json::from_slice::<UiSourceConfig>(
-        &fs::read(&config_path)
-            .map_err(|error| format!("could not read `{}`: {error}", config_path.display()))?,
-    )
-    .map_err(|error| format!("invalid `{}`: {error}", config_path.display()))?;
-    if config.framework != "vue3" {
-        return Err(format!(
-            "UI framework `{}` is unsupported; expected `vue3`",
-            config.framework
-        ));
-    }
-    validate_relative_path(&config.dist)?;
-    validate_relative_path(&config.entry)?;
-    validate_ui_dimension(config.width, "width")?;
-    validate_ui_dimension(config.height, "height")?;
-
-    let package_json = ui_root.join("package.json");
-    if package_json.is_file() {
-        let npm = std::env::var_os("LOOM_NPM").unwrap_or_else(|| "npm".into());
-        let output = Command::new(npm)
-            .args(["run", "build", "--prefix"])
-            .arg(&ui_root)
-            .output()
-            .map_err(|error| format!("could not build project UI with npm: {error}"))?;
-        if !output.status.success() {
-            return Err(format!(
-                "project UI failed to build:\n{}",
-                String::from_utf8_lossy(&output.stderr).trim()
-            ));
-        }
-    }
+    };
+    build_ui_assets(&ui_root)?;
 
     let asset_root = ui_root.join(&config.dist);
     let entry_path = asset_root.join(&config.entry);
@@ -409,6 +371,101 @@ fn build_ui(
         width: config.width,
         height: config.height,
     }))
+}
+
+fn load_source_ui(root: &Path, module: &str) -> Result<Option<LoadedUi>, String> {
+    let ui_root = root.join("ui");
+    let Some(config) = read_ui_config(&ui_root)? else {
+        return Ok(None);
+    };
+    build_ui_assets(&ui_root)?;
+    let asset_root = ui_root.join(&config.dist);
+    let entry = asset_root.join(&config.entry);
+    if !entry.is_file() {
+        return Err(format!(
+            "project UI entry `{}` is missing after build",
+            entry.display()
+        ));
+    }
+    Ok(Some(LoadedUi {
+        asset_root,
+        entry: config.entry,
+        title: config
+            .title
+            .unwrap_or_else(|| format!("Loom — {}", module.replace('_', " "))),
+        width: config.width,
+        height: config.height,
+    }))
+}
+
+fn read_ui_config(ui_root: &Path) -> Result<Option<UiSourceConfig>, String> {
+    let config_path = ui_root.join("loom-ui.json");
+    if !config_path.is_file() {
+        return Ok(None);
+    }
+    let config = serde_json::from_slice::<UiSourceConfig>(
+        &fs::read(&config_path)
+            .map_err(|error| format!("could not read `{}`: {error}", config_path.display()))?,
+    )
+    .map_err(|error| format!("invalid `{}`: {error}", config_path.display()))?;
+    if config.framework != "vue3" {
+        return Err(format!(
+            "UI framework `{}` is unsupported; expected `vue3`",
+            config.framework
+        ));
+    }
+    validate_relative_path(&config.dist)?;
+    validate_relative_path(&config.entry)?;
+    validate_ui_dimension(config.width, "width")?;
+    validate_ui_dimension(config.height, "height")?;
+    Ok(Some(config))
+}
+
+fn build_ui_assets(ui_root: &Path) -> Result<(), String> {
+    let package_json = ui_root.join("package.json");
+    if !package_json.is_file() {
+        return Ok(());
+    }
+    let npm = std::env::var_os("LOOM_NPM").unwrap_or_else(|| "npm".into());
+    let output = Command::new(npm)
+        .args(["run", "build", "--prefix"])
+        .arg(ui_root)
+        .output()
+        .map_err(|error| format!("could not build project UI with npm: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "project UI failed to build:\n{}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    Ok(())
+}
+
+fn compile_project_extension(root: &Path) -> Result<Option<PathBuf>, String> {
+    let source = root.join("src/runtime.rs");
+    if !source.is_file() {
+        return Ok(None);
+    }
+    let build_directory = root.join(".loom/build");
+    fs::create_dir_all(&build_directory)
+        .map_err(|error| format!("could not create project build directory: {error}"))?;
+    let output_path = build_directory.join("libloom_project.dylib");
+    let output = Command::new("rustc")
+        .args(["--crate-type", "cdylib", "--edition", "2021"])
+        .arg("-C")
+        .arg("opt-level=2")
+        .arg(&source)
+        .arg("-o")
+        .arg(&output_path)
+        .output()
+        .map_err(|error| format!("could not invoke rustc for the project extension: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "project Rust extension failed to compile:\n{}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    Ok(Some(output_path))
 }
 
 fn collect_ui_files(
@@ -517,9 +574,9 @@ fn host_target() -> Result<String, String> {
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
+    use std::{fs, path::Path};
 
-    use super::project_parent;
+    use super::{load, project_parent};
 
     #[test]
     fn bare_source_filename_uses_current_directory() {
@@ -531,5 +588,48 @@ mod tests {
             project_parent(Path::new("./marble-water.loom")),
             Path::new(".")
         );
+    }
+
+    #[test]
+    fn source_run_discovers_built_project_ui() {
+        let project = tempfile::tempdir().expect("temporary project");
+        fs::write(
+            project.path().join("demo.loom"),
+            "loom 0.1\nmodule demo\ntarget metal\n",
+        )
+        .expect("source");
+        fs::create_dir_all(project.path().join("ui/dist")).expect("UI directories");
+        fs::write(
+            project.path().join("ui/loom-ui.json"),
+            r#"{
+              "framework": "vue3",
+              "dist": "dist",
+              "entry": "index.html",
+              "title": "Demo Controls",
+              "width": 360,
+              "height": 650
+            }"#,
+        )
+        .expect("UI config");
+        fs::write(
+            project.path().join("ui/dist/index.html"),
+            "<!doctype html><title>Demo</title>",
+        )
+        .expect("UI entry");
+
+        let program = load(
+            project
+                .path()
+                .join("demo.loom")
+                .to_str()
+                .expect("UTF-8 path"),
+            true,
+        )
+        .expect("source project loads");
+        let ui = program.ui().expect("source UI");
+        assert_eq!(ui.title, "Demo Controls");
+        assert_eq!(ui.width, 360.0);
+        assert_eq!(ui.height, 650.0);
+        assert!(ui.asset_root.join(&ui.entry).is_file());
     }
 }
