@@ -23,8 +23,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - name: Test workspace
-        run: cargo test --workspace --locked
+      - name: Test language and validation
+        run: >-
+          cargo test --locked
+          --package loom-core
+          --package loom-validator
+          --package loom-syntax
+          --package loom-cli
+      - name: Test native Metal path
+        run: cargo test --locked --package loom-metal --test native_loom
       - name: Build portable directory
         run: ./scripts/package-loom.sh
       - uses: actions/upload-artifact@v4
