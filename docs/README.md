@@ -18,6 +18,8 @@ The language documents are read in this order:
 14. [`benchmarks/hello-organism-regeneration-gate-m4-pro.md`](benchmarks/hello-organism-regeneration-gate-m4-pro.md) — committed-checkpoint lesion, local repair, sustained recovery, and causal ablations.
 15. [`visuals/hello-organism-gate-5.svg`](visuals/hello-organism-gate-5.svg) — visual evidence summary of development, lesion, local regeneration, and causal ablations.
 16. [`milestones/hello-organism-v0.1.md`](milestones/hello-organism-v0.1.md) — frozen Gate 1–5 proof manifest, hashes, event record, timing, and limitations.
+17. [`../examples/hello-crystal/README.md`](../examples/hello-crystal/README.md) — runnable 3D mesoscopic crystal growth, cleavage, component, fragment, metric, and surface specimen.
+18. [`benchmarks/hello-crystal-1m-m4-pro.md`](benchmarks/hello-crystal-1m-m4-pro.md) — one-million-cell M4 Pro execution smoke proof and its explicit evidence boundary.
 
 Planned specifications:
 
@@ -69,6 +71,8 @@ Select the conformance experiment through the same launcher:
 ./scripts/run-hello-particle.sh field --bench headless --samples 300
 ./scripts/run-hello-particle.sh organism 16384
 ./scripts/run-hello-particle.sh organism 16384 --bench headless --samples 300
+./scripts/run-hello-particle.sh crystal 1m
+./scripts/run-hello-particle.sh crystal 32768 --bench headless --samples 300
 ```
 
 `batch` defaults to 1,000 particles. Counts accept exact positive integers plus

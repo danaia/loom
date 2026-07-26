@@ -2241,7 +2241,20 @@ fn benchmark_dispatch_count(
                     )
             )
         })
-        .or_else(|| schedule.passes.first())
+        .or_else(|| {
+            schedule
+                .passes
+                .iter()
+                .max_by_key(|pass| match pass.dispatch {
+                    DispatchDomain::Fixed(count) => u64::from(count),
+                    DispatchDomain::OverStream(stream) => {
+                        match graph.stream(stream).unwrap().length {
+                            StreamLength::Fixed(length) => u64::from(length),
+                            StreamLength::Dynamic(_) => 0,
+                        }
+                    }
+                })
+        })
         .ok_or_else(|| {
             RuntimeDiagnostic::new(
                 RuntimeDiagnosticCode::UnsupportedGraph,
@@ -2358,9 +2371,10 @@ mod tests {
     use crate::fingerprint::sha256;
     use crate::{BenchmarkConfig, BenchmarkMode, BenchmarkRunner};
     use loom_core::{
-        DataType, HelloOrganismConfig, Literal, StreamInitializer,
+        DataType, HelloCrystalConfig, HelloOrganismConfig, Literal, StreamInitializer,
         conformance::{hello_field_builder, hello_population_builder},
-        hello_organism_builder, hello_organism_builder_with_config,
+        hello_crystal_builder_with_config, hello_organism_builder,
+        hello_organism_builder_with_config,
     };
     use loom_validator::Validator;
     use std::time::Duration;
@@ -2545,6 +2559,63 @@ mod tests {
             active_count > 1,
             "the organizer should have produced at least one daughter"
         );
+    }
+
+    #[test]
+    fn packaged_crystal_grows_and_records_impact_damage() {
+        let graph = hello_crystal_builder_with_config(HelloCrystalConfig {
+            cell_count: 32 * 32 * 32,
+            impact_tick: 24,
+            impact_magnitude: 4.0,
+        })
+        .build()
+        .unwrap();
+        let metrics = graph
+            .resources
+            .streams
+            .iter()
+            .find(|stream| stream.name == "metrics.snapshot")
+            .unwrap()
+            .id;
+        let validated = Validator::validate(&graph)
+            .validated
+            .expect("crystal graph must validate");
+        let device = metal::Device::system_default().expect("Metal device");
+        let layer = metal::MetalLayer::new();
+        layer.set_device(&device);
+        layer.set_pixel_format(metal::MTLPixelFormat::BGRA8Unorm);
+        let mut state = RuntimeState::new(validated, device.clone(), layer).unwrap();
+        state
+            .run_benchmark(
+                &device,
+                BenchmarkConfig {
+                    mode: BenchmarkMode::Headless,
+                    runner: BenchmarkRunner::LoomPlan,
+                    warmup_ticks: 0,
+                    sample_ticks: 100,
+                    ..BenchmarkConfig::default()
+                },
+            )
+            .expect("crystal specimen must execute through Metal");
+
+        let byte_count = (16 * std::mem::size_of::<u32>()) as u64;
+        let readback = device.new_buffer(byte_count, metal::MTLResourceOptions::StorageModeShared);
+        let command_buffer = state.queue.new_command_buffer();
+        let blit = command_buffer.new_blit_command_encoder();
+        blit.copy_from_buffer(
+            &state.stream_buffers[metrics.0 as usize][0],
+            0,
+            &readback,
+            0,
+            byte_count,
+        );
+        blit.end_encoding();
+        command_buffer.commit();
+        command_buffer.wait_until_completed();
+        let snapshot = unsafe { std::slice::from_raw_parts(readback.contents().cast::<u32>(), 16) };
+        assert!(snapshot[0] > 56, "solid phase must grow beyond the seed");
+        assert!(snapshot[2] > 0, "the grown crystal must expose a surface");
+        assert!(snapshot[3] > 0, "the impact must nucleate cleavage damage");
     }
 
     #[test]

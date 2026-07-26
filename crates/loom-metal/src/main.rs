@@ -3,7 +3,7 @@ use loom_core::{
         HelloParticleConfig, hello_batch_builder, hello_field_builder, hello_particle_builder,
         hello_population_builder,
     },
-    hello_organism_builder,
+    hello_crystal_builder, hello_organism_builder,
 };
 use loom_metal::{BenchmarkConfig, BenchmarkMode, BenchmarkRunner, MetalRuntime};
 use loom_validator::Validator;
@@ -38,11 +38,15 @@ fn run() -> Result<(), loom_metal::RuntimeDiagnostic> {
             let (capacity, benchmark) = parse_experiment_arguments(&arguments[1..], 16_384)?;
             (hello_organism_builder(capacity), benchmark)
         }
+        Some("crystal") => {
+            let (cell_count, benchmark) = parse_experiment_arguments(&arguments[1..], 1_000_000)?;
+            (hello_crystal_builder(cell_count), benchmark)
+        }
         Some(other) => {
             return Err(loom_metal::RuntimeDiagnostic {
                 code: loom_metal::RuntimeDiagnosticCode::UnsupportedGraph,
                 message: format!(
-                    "unknown experiment `{other}`; expected `particle`, `batch [COUNT]`, `population [CAPACITY]`, `field`, or `organism [CAPACITY]`"
+                    "unknown experiment `{other}`; expected `particle`, `batch [COUNT]`, `population [CAPACITY]`, `field`, `organism [CAPACITY]`, or `crystal [CUBIC_CELL_COUNT]`"
                 ),
                 semantic_path: None,
             });

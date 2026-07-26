@@ -1,6 +1,7 @@
 pub mod builder;
 pub mod canonical;
 pub mod conformance;
+pub mod crystal;
 pub mod diagnostic;
 pub mod emergent;
 pub mod ids;
@@ -9,6 +10,7 @@ pub mod organism;
 
 pub use builder::*;
 pub use canonical::*;
+pub use crystal::*;
 pub use diagnostic::*;
 pub use emergent::*;
 pub use ids::*;

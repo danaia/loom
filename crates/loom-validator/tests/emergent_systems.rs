@@ -229,6 +229,65 @@ fn organism_specimen_separates_decision_state_field_and_membership_authority() {
 }
 
 #[test]
+fn crystal_specimen_declares_growth_fracture_components_metrics_and_surface_order() {
+    let graph = loom_core::hello_crystal_builder(32 * 32 * 32)
+        .build()
+        .unwrap();
+    let report = Validator::validate(&graph);
+    assert!(
+        report.is_valid(),
+        "unexpected diagnostics: {:#?}",
+        report.diagnostics
+    );
+
+    for resource in [
+        "field.phase",
+        "field.solute",
+        "field.temperature",
+        "material.damage",
+        "material.component",
+        "material.position",
+        "metrics.snapshot",
+    ] {
+        assert!(
+            graph
+                .resources
+                .streams
+                .iter()
+                .any(|stream| stream.name == resource),
+            "missing crystal resource {resource}"
+        );
+    }
+
+    let validated = report.validated.unwrap();
+    let schedule = &validated.execution_plan().schedules[0];
+    let names = schedule
+        .order
+        .iter()
+        .filter_map(|item| match item {
+            loom_core::ScheduleItemId::Pass(id) => Some(graph.pass(*id).unwrap().name.as_str()),
+            loom_core::ScheduleItemId::View(_) => None,
+        })
+        .collect::<Vec<_>>();
+    let at = |name: &str| {
+        names
+            .iter()
+            .position(|candidate| *candidate == name)
+            .unwrap()
+    };
+    assert!(at("evolve_growth_fields") < at("apply_reference_impact"));
+    assert!(at("apply_reference_impact") < at("relax_solid_components_0"));
+    assert!(at("relax_solid_components_7") < at("integrate_fragments"));
+    assert!(at("extract_crystal_surface") < at("reduce_crystal_metrics"));
+}
+
+#[test]
+#[should_panic(expected = "perfect cube")]
+fn crystal_rejects_a_non_cubic_dense_field() {
+    let _ = loom_core::hello_crystal_builder(1_000_001);
+}
+
+#[test]
 fn invalid_threadgroup_width_is_rejected_before_runtime_lowering() {
     let mut graph = dynamic_population_builder(true).build().unwrap();
     graph.passes.nodes[0].threads_per_threadgroup = Some(0);
