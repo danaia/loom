@@ -3,9 +3,59 @@
 Loom is an agent-native language for building GPU applications on Apple
 Silicon.
 
+
+## Why this is different
+
+Most tools handle one part of the problem:
+
+- an AI agent writes code
+- a GPU framework runs kernels
+- a graphics engine renders output
+- a simulation framework coordinates many actors
+- a validator checks whether the program is safe to run
+
+Loom is designed to combine these parts in one language and runtime.
+
+An AI agent can author a low-level GPU program, validate its memory and resource
+access, inspect the generated Metal, run millions of parallel elements, render
+the result, and continue refining the same `.loom` source.
+
+This combination is unusual. Loom is not a prompt wrapper, a shader toy, or a
+finished simulation engine. It is an attempt to make agent-authored autonomous
+systems a first-class GPU programming model.
+
 You write a `.loom` program. Loom validates it, generates Metal for supported
 kernels, connects declared Metal kernels, schedules the GPU work, and opens a
 native window.
+
+## What that power can be used for
+
+A Loom element can represent a particle, robot, cell, transaction, material
+point, network node, order, or task. The GPU can update large populations of
+these elements in parallel while Loom keeps their memory, rules, passes, and
+effects explicit.
+
+That creates a useful foundation for:
+
+- **Robotics:** sensor processing, multi-robot coordination, path search,
+  collision avoidance, and digital twins
+- **Finance:** market simulation, portfolio stress testing, risk scenarios,
+  fraud-pattern analysis, and large transaction models
+- **Cryptocurrency networks:** transaction-graph analysis, network simulation,
+  consensus experiments, and adversarial testing
+- **Biology and medicine:** cell populations, tissue development, reaction
+  fields, injury, and regeneration research
+- **Materials and manufacturing:** crystal growth, fracture, repair, granular
+  systems, and process simulation
+- **Graphics and games:** particles, crowds, procedural worlds, physics, and
+  native GPU rendering
+- **Infrastructure and logistics:** traffic, routing, scheduling, supply
+  networks, and resource allocation
+- **Autonomous software:** many local decision-makers operating inside bounded,
+  validated rules
+
+Loom does not automatically solve these industries. It provides a low-level
+way to build and test the large parallel systems they increasingly depend on.
 
 ## Get started
 
@@ -51,7 +101,7 @@ parses the .loom source
 → runs the program on the Apple GPU
 ```
 
-## Why Loom is different
+## How Loom is different technically
 
 Loom is not a Python wrapper around a finished engine. The `.loom` file owns the
 GPU program.
