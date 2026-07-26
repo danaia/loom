@@ -1,7 +1,16 @@
 # Runnable Loom examples
 
-Every `.loom` entry point in this directory can be checked or launched directly
-with the Loom CLI.
+Every `.loom` entry point in this directory can be launched directly with the
+Loom CLI.
+
+From the repository root:
+
+```text
+loom examples/hello-particle/hello-particle.loom
+loom examples/hello-crystal/crystal.loom
+```
+
+From inside an example directory:
 
 ```text
 cd examples/hello-particle
@@ -18,9 +27,9 @@ loom ~/.loom/examples/hello-particle.loom
 loom ~/.loom/examples/crystal.loom
 ```
 
-Use `loom check FILE` to validate without opening a window and `loom explain
-FILE` to inspect the canonical graph, execution plan, and generated or packaged
-Metal.
+`loom run FILE` is the explicit equivalent of `loom FILE`. Use `loom check FILE`
+to validate without opening a window and `loom explain FILE` to inspect the
+canonical graph, execution plan, and generated or packaged Metal.
 
 Update the installed compiler and runtime with:
 
