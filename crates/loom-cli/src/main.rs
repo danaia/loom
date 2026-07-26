@@ -320,7 +320,9 @@ fn run_window(
     extension_path: Option<std::path::PathBuf>,
     ui: Option<package::LoadedUi>,
 ) -> Result<(), u8> {
+    let ui_project_root = project_root.clone();
     let ui = ui.map(|ui| loom_metal::ProjectUi {
+        project_root: ui_project_root.unwrap_or_else(|| ui.asset_root.clone()),
         asset_root: ui.asset_root,
         entry: ui.entry,
         title: ui.title,

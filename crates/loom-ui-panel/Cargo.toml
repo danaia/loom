@@ -11,7 +11,10 @@ tauri-build = "2.6"
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
+keyring.workspace = true
+reqwest.workspace = true
 tauri = "2.11"
+zeroize.workspace = true
 
 [[bin]]
 name = "loom-ui-panel"

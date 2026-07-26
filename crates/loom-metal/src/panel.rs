@@ -23,6 +23,7 @@ static SESSION_COUNTER: AtomicU64 = AtomicU64::new(1);
 #[derive(Clone, Debug)]
 pub struct ProjectUi {
     pub asset_root: PathBuf,
+    pub project_root: PathBuf,
     pub entry: String,
     pub title: String,
     pub width: f64,
@@ -35,21 +36,35 @@ pub(crate) struct PanelControl {
     pub(crate) value: f32,
 }
 
+#[derive(Clone, Debug)]
+pub(crate) enum PanelCommand {
+    Set(PanelControl),
+    Reload { generation: u64 },
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum PanelToViewer {
     Hello { token: String },
     Set { name: String, value: f32 },
+    Reload { generation: u64 },
 }
 
 #[derive(Debug, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum ViewerToPanel<'a> {
-    Snapshot { values: &'a BTreeMap<String, f32> },
+    Snapshot {
+        values: &'a BTreeMap<String, f32>,
+    },
+    ReloadStatus {
+        generation: u64,
+        ok: bool,
+        message: &'a str,
+    },
 }
 
 pub(crate) struct PanelBridge {
-    controls: Receiver<PanelControl>,
+    commands: Receiver<PanelCommand>,
     writer: Arc<Mutex<Option<TcpStream>>>,
     child: Child,
     last_publish: Instant,
@@ -69,9 +84,9 @@ impl PanelBridge {
             .local_addr()
             .map_err(|error| panel_error(format!("could not inspect panel bridge: {error}")))?;
         let token = session_token();
-        let (control_sender, controls) = mpsc::channel();
+        let (command_sender, commands) = mpsc::channel();
         let writer = Arc::new(Mutex::new(None));
-        accept_panel(listener, token.clone(), control_sender, Arc::clone(&writer));
+        accept_panel(listener, token.clone(), command_sender, Arc::clone(&writer));
 
         let executable = panel_executable()?;
         let child = Command::new(&executable)
@@ -82,6 +97,8 @@ impl PanelBridge {
                 &token,
                 "--root",
                 &ui.asset_root.to_string_lossy(),
+                "--project-root",
+                &ui.project_root.to_string_lossy(),
                 "--entry",
                 &ui.entry,
                 "--title",
@@ -103,15 +120,15 @@ impl PanelBridge {
             })?;
 
         Ok(Self {
-            controls,
+            commands,
             writer,
             child,
             last_publish: Instant::now() - Duration::from_secs(1),
         })
     }
 
-    pub(crate) fn drain_controls(&self) -> impl Iterator<Item = PanelControl> + '_ {
-        self.controls.try_iter()
+    pub(crate) fn drain_commands(&self) -> impl Iterator<Item = PanelCommand> + '_ {
+        self.commands.try_iter()
     }
 
     pub(crate) fn publish(&mut self, values: &[(String, f32)]) {
@@ -134,6 +151,33 @@ impl PanelBridge {
             *writer = None;
         }
     }
+
+    pub(crate) fn publish_reload_status(&mut self, generation: u64, result: &Result<(), String>) {
+        let (ok, message) = match result {
+            Ok(()) => (true, "Metal view reloaded"),
+            Err(message) => (false, message.as_str()),
+        };
+        let Ok(mut writer) = self.writer.lock() else {
+            return;
+        };
+        let Some(stream) = writer.as_mut() else {
+            return;
+        };
+        if serde_json::to_writer(
+            &mut *stream,
+            &ViewerToPanel::ReloadStatus {
+                generation,
+                ok,
+                message,
+            },
+        )
+        .and_then(|_| stream.write_all(b"\n").map_err(serde_json::Error::io))
+        .and_then(|_| stream.flush().map_err(serde_json::Error::io))
+        .is_err()
+        {
+            *writer = None;
+        }
+    }
 }
 
 impl Drop for PanelBridge {
@@ -146,7 +190,7 @@ impl Drop for PanelBridge {
 fn accept_panel(
     listener: TcpListener,
     token: String,
-    controls: mpsc::Sender<PanelControl>,
+    commands: mpsc::Sender<PanelCommand>,
     writer: Arc<Mutex<Option<TcpStream>>>,
 ) {
     thread::spawn(move || {
@@ -182,15 +226,19 @@ fn accept_panel(
             let Ok(line) = line else {
                 break;
             };
-            let Ok(PanelToViewer::Set { name, value }) =
-                serde_json::from_str::<PanelToViewer>(&line)
-            else {
+            let Ok(message) = serde_json::from_str::<PanelToViewer>(&line) else {
                 continue;
             };
-            if name.is_empty() || name.len() >= 96 || !value.is_finite() {
-                continue;
-            }
-            if controls.send(PanelControl { name, value }).is_err() {
+            let command = match message {
+                PanelToViewer::Set { name, value }
+                    if !name.is_empty() && name.len() < 96 && value.is_finite() =>
+                {
+                    PanelCommand::Set(PanelControl { name, value })
+                }
+                PanelToViewer::Reload { generation } => PanelCommand::Reload { generation },
+                PanelToViewer::Hello { .. } | PanelToViewer::Set { .. } => continue,
+            };
+            if commands.send(command).is_err() {
                 break;
             }
         }

@@ -20,7 +20,7 @@ use loom_core::{
 };
 use loom_validator::{
     CompletionEnforcement, CompletionRequirement, ExecutionSchedule, PlannedPass, PlannedView,
-    ValidatedModuleGraph,
+    ValidatedModuleGraph, Validator,
 };
 use metal::{
     Buffer, CommandQueue, CompileOptions, ComputePipelineState, Device, MTLBlendFactor,
@@ -45,7 +45,7 @@ use crate::{
     PipelineIdentity, PresentationResult, ResourceMetrics, RuntimeDiagnostic,
     RuntimeDiagnosticCode, RuntimeFingerprint, ShaderIdentity, ViewportSize,
     display_link::{DisplayLinkDriver, DisplayUpdate},
-    panel::{PanelBridge, ProjectUi},
+    panel::{PanelBridge, PanelCommand, ProjectUi},
     project::{
         EVENT_CURSOR_MOVED, EVENT_KEY, EVENT_LEFT_MOUSE, EVENT_RESIZED, EVENT_SCROLL, KEY_A, KEY_D,
         KEY_DOWN, KEY_LEFT, KEY_RIGHT, KEY_S, KEY_UP, KEY_W, ProjectEventV1, ProjectExtension,
@@ -171,7 +171,7 @@ impl MetalRuntime {
         resize_layer(&window, &layer);
 
         let mut state =
-            RuntimeState::new_with_project_root(validated, device, layer, project_root)?;
+            RuntimeState::new_with_project_root(validated, device, layer, project_root.clone())?;
         println!(
             "runtime_fingerprint:\n{}",
             serde_json::to_string_pretty(&state.fingerprint)
@@ -205,7 +205,7 @@ impl MetalRuntime {
             dragged: bool,
         }
 
-        let tick_interval = Duration::from_nanos(1_000_000_000 / state.rate_hz as u64);
+        let mut tick_interval = Duration::from_nanos(1_000_000_000 / state.rate_hz as u64);
         let mut next_tick = Instant::now();
         let mut cursor = (0.0_f64, 0.0_f64);
         let mut crystal_gesture = None::<CrystalGesture>;
@@ -432,27 +432,61 @@ impl MetalRuntime {
                 }
                 Event::RedrawRequested(_) => {
                     if let Some(panel) = project_panel.as_ref() {
-                        let controls = panel.drain_controls().collect::<Vec<_>>();
-                        for control in controls {
-                            let result = project_extension
-                                .as_mut()
-                                .ok_or_else(|| {
-                                    RuntimeDiagnostic::new(
-                                        RuntimeDiagnosticCode::ProjectPanelFailed,
-                                        "project panel requires a project extension",
-                                    )
-                                })
-                                .and_then(|extension| {
-                                    extension.control(&control.name, control.value).map(|_| ())
-                                });
-                            if let Err(diagnostic) = result {
-                                eprintln!(
-                                    "{}",
-                                    serde_json::to_string_pretty(&diagnostic)
-                                        .unwrap_or_else(|_| diagnostic.to_string())
-                                );
-                                *control_flow = ControlFlow::Exit;
-                                return;
+                        let commands = panel.drain_commands().collect::<Vec<_>>();
+                        for command in commands {
+                            match command {
+                                PanelCommand::Set(control) => {
+                                    let result = project_extension
+                                        .as_mut()
+                                        .ok_or_else(|| {
+                                            RuntimeDiagnostic::new(
+                                                RuntimeDiagnosticCode::ProjectPanelFailed,
+                                                "project panel requires a project extension",
+                                            )
+                                        })
+                                        .and_then(|extension| {
+                                            extension
+                                                .control(&control.name, control.value)
+                                                .map(|_| ())
+                                        });
+                                    if let Err(diagnostic) = result {
+                                        eprintln!(
+                                            "{}",
+                                            serde_json::to_string_pretty(&diagnostic)
+                                                .unwrap_or_else(|_| diagnostic.to_string())
+                                        );
+                                        *control_flow = ControlFlow::Exit;
+                                        return;
+                                    }
+                                }
+                                PanelCommand::Reload { generation } => {
+                                    let result = project_root
+                                        .as_deref()
+                                        .ok_or_else(|| {
+                                            "the running project has no source root".to_owned()
+                                        })
+                                        .and_then(|root| {
+                                            hot_reload_state(&state, root).map_err(|diagnostic| {
+                                                serde_json::to_string_pretty(&diagnostic)
+                                                    .unwrap_or_else(|_| diagnostic.to_string())
+                                            })
+                                        });
+                                    let status = match result {
+                                        Ok(reloaded) => {
+                                            state = reloaded;
+                                            tick_interval = Duration::from_nanos(
+                                                1_000_000_000 / state.rate_hz as u64,
+                                            );
+                                            next_tick = Instant::now();
+                                            window.request_redraw();
+                                            Ok(())
+                                        }
+                                        Err(message) => Err(message),
+                                    };
+                                    if let Some(panel) = project_panel.as_mut() {
+                                        panel.publish_reload_status(generation, &status);
+                                    }
+                                }
                             }
                         }
                     }
@@ -3044,6 +3078,77 @@ fn shader_source<'a>(
             format!("no packaged Metal source for `{}`", implementation.source),
         )),
     }
+}
+
+fn hot_reload_state(
+    current: &RuntimeState,
+    project_root: &Path,
+) -> Result<RuntimeState, RuntimeDiagnostic> {
+    let module_name = current.validated.graph().name.as_str();
+    let preferred = project_root.join(format!("{module_name}.loom"));
+    let entry = if preferred.is_file() {
+        preferred
+    } else {
+        let mut candidates = fs::read_dir(project_root)
+            .map_err(|error| {
+                RuntimeDiagnostic::new(
+                    RuntimeDiagnosticCode::UnsupportedGraph,
+                    format!(
+                        "could not inspect hot-reload project root `{}`: {error}",
+                        project_root.display()
+                    ),
+                )
+            })?
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.is_file()
+                    && path.extension().and_then(|extension| extension.to_str()) == Some("loom")
+            })
+            .collect::<Vec<_>>();
+        candidates.sort();
+        candidates.into_iter().next().ok_or_else(|| {
+            RuntimeDiagnostic::new(
+                RuntimeDiagnosticCode::UnsupportedGraph,
+                format!(
+                    "hot reload could not find a .loom entry in `{}`",
+                    project_root.display()
+                ),
+            )
+        })?
+    };
+    let source = fs::read_to_string(&entry).map_err(|error| {
+        RuntimeDiagnostic::new(
+            RuntimeDiagnosticCode::UnsupportedGraph,
+            format!(
+                "could not read hot-reload entry `{}`: {error}",
+                entry.display()
+            ),
+        )
+    })?;
+    let graph = loom_syntax::parse(&source).map_err(|diagnostics| {
+        RuntimeDiagnostic::new(
+            RuntimeDiagnosticCode::UnsupportedGraph,
+            format!("hot-reload parse failed:\n{diagnostics:#?}"),
+        )
+    })?;
+    let report = Validator::validate(&graph);
+    let validated = report.validated.ok_or_else(|| {
+        RuntimeDiagnostic::new(
+            RuntimeDiagnosticCode::UnsupportedGraph,
+            format!(
+                "hot-reload validation failed:\n{}",
+                serde_json::to_string_pretty(&report.diagnostics)
+                    .unwrap_or_else(|_| format!("{:#?}", report.diagnostics))
+            ),
+        )
+    })?;
+    RuntimeState::new_with_project_root(
+        validated,
+        current.device.clone(),
+        current.layer.clone(),
+        Some(project_root.to_owned()),
+    )
 }
 
 fn dispatch_count(
