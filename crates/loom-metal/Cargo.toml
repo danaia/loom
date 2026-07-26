@@ -8,6 +8,7 @@ license.workspace = true
 block = "0.1"
 core-graphics-types = "0.1"
 libc = "0.2"
+libloading = "0.8"
 loom-core = { path = "../loom-core" }
 loom-validator = { path = "../loom-validator" }
 metal = "0.29"

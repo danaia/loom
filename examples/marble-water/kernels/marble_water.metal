@@ -254,12 +254,13 @@ kernel void marble_water_force(
     constant float &spacing [[buffer(9)]],
     constant float &density [[buffer(10)]],
     constant float &plane_scale [[buffer(11)]],
-    constant float &spring [[buffer(12)]],
-    constant float &coupling [[buffer(13)]],
-    constant float &damping [[buffer(14)]],
-    constant float &impact_radius [[buffer(15)]],
-    constant float &impact_gain [[buffer(16)]],
-    constant float &dt [[buffer(17)]],
+    constant float &amplification [[buffer(12)]],
+    constant float &spring [[buffer(13)]],
+    constant float &coupling [[buffer(14)]],
+    constant float &damping [[buffer(15)]],
+    constant float &impact_radius [[buffer(16)]],
+    constant float &impact_gain [[buffer(17)]],
+    constant float &dt [[buffer(18)]],
     uint index [[thread_position_in_grid]])
 {
     const uint active_width = active_water_width(density, width);
@@ -279,6 +280,15 @@ kernel void marble_water_force(
     const float rest_x = (float(x) - (float(active_width) - 1.0) * 0.5) * active_spacing;
     const float rest_z = (float(z) - (float(active_height) - 1.0) * 0.5) * active_spacing;
     const float2 rest_point = float2(rest_x, rest_z);
+    const float amplification_amount = clamp(amplification, 0.0, 1.0);
+    const float ripple_gain =
+        1.0 + 5.0 * pow(amplification_amount, 1.25);
+    const float ripple_radius =
+        impact_radius * (1.0 + 0.80 * amplification_amount);
+    const float ripple_coupling =
+        coupling * (1.0 + 0.30 * amplification_amount);
+    const float ripple_damping =
+        damping * (1.0 - 0.50 * amplification_amount);
 
     float neighbor_sum = 0.0;
     uint neighbor_count = 0;
@@ -288,17 +298,17 @@ kernel void marble_water_force(
     if (z + 1 < active_height) { neighbor_sum += float3(positions[index + active_width]).y; neighbor_count++; }
     const float neighbor_average = neighbor_sum / max(float(neighbor_count), 1.0);
     const float acceleration = -spring * position.y
-        + coupling * (neighbor_average - position.y)
-        - damping * velocity.y;
+        + ripple_coupling * (neighbor_average - position.y)
+        - ripple_damping * velocity.y;
     velocity.y += acceleration * dt;
 
     float impulse = impact_impulse(rest_point, float3(player_impact_positions[0]),
-                                   player_impact_speeds[0], impact_radius);
+                                   player_impact_speeds[0], ripple_radius);
     for (uint enemy = 0; enemy < enemy_count; ++enemy) {
         impulse += impact_impulse(rest_point, float3(enemy_impact_positions[enemy]),
-                                  enemy_impact_speeds[enemy], impact_radius);
+                                  enemy_impact_speeds[enemy], ripple_radius);
     }
-    velocity.y += impulse * impact_gain * dt;
+    velocity.y += impulse * impact_gain * ripple_gain * dt;
     velocity.xz = 0.0;
     velocities[index] = packed_float3(velocity);
 }
@@ -317,10 +327,11 @@ kernel void marble_compose_scene(
     constant float &spacing [[buffer(10)]],
     constant float &density [[buffer(11)]],
     constant float &plane_scale [[buffer(12)]],
-    constant float &reset_scene [[buffer(13)]],
-    constant float &hud_fps [[buffer(14)]],
-    constant float &hud_gpu_mb [[buffer(15)]],
-    constant float &marble_radius [[buffer(16)]],
+    constant float &amplification [[buffer(13)]],
+    constant float &reset_scene [[buffer(14)]],
+    constant float &hud_fps [[buffer(15)]],
+    constant float &hud_gpu_mb [[buffer(16)]],
+    constant float &marble_radius [[buffer(17)]],
     uint index [[thread_position_in_grid]])
 {
     const uint active_width = active_water_width(density, width);
@@ -367,6 +378,11 @@ kernel void marble_compose_scene(
             clamp(reset_scene, 0.0, 1.0)
         );
         render_radii[index] = -1.0;
-        render_colors[index] = float4(hud_fps, hud_gpu_mb, 0.0, 1.0);
+        render_colors[index] = float4(
+            hud_fps,
+            hud_gpu_mb,
+            clamp(amplification, 0.0, 1.0),
+            1.0
+        );
     }
 }

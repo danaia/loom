@@ -336,21 +336,21 @@ atomic all u32      → device atomic_uint*
 dispatch index      → uint gid [[thread_position_in_grid]]
 ```
 
-In the installed Loom 0.1 runtime, executable external sources are packaged:
+External Metal paths are project-relative. Every referenced source must live
+under the directory containing the primary `.loom` file:
 
 ```text
-kernels/ground_contact.metal
-shaders/particle.metal
-kernels/neon_flock.metal
-shaders/neon_flock.metal
-kernels/crystal.metal
-shaders/crystal.metal
+project.loom
+kernels/simulation.metal
+shaders/render.metal
+src/runtime.rs
 ```
 
-Do not invent another source path and expect the installed runtime to load it.
-Adding a new external Metal implementation is compiler-repository work: add the
-Metal source, package it in the runtime, test it on Metal, rebuild Loom, and
-release it.
+Use `loom build project.loom` to produce `project.lmp`. The package contains the
+primary graph, all referenced Metal, the optional Rust project extension source,
+and its compiled target library. `loom project.lmp` loads those assets through
+the global runtime; project-specific shaders and controls are never added to the
+runtime executable.
 
 ## 9. Passes
 

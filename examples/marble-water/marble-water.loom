@@ -17,6 +17,7 @@ const interaction.grab_y: f32<m> = 0.641
 const interaction.grab_z: f32<m> = 0.15
 const interaction.water_density: f32 = 0
 const interaction.plane_scale: f32 = 1
+const interaction.water_amplification: f32 = 0
 const interaction.reset_scene: f32 = 0
 const interaction.reset_water: f32 = 0
 const interaction.hud_fps: f32 = 0
@@ -177,6 +178,7 @@ kernel water_force(
   spacing: in value<f32,m>,
   density: in value<f32>,
   plane_scale: in value<f32>,
+  amplification: in value<f32>,
   spring: in value<f32,s^-2>,
   coupling: in value<f32,s^-2>,
   damping: in value<f32,s^-1>,
@@ -210,6 +212,7 @@ kernel compose_scene(
   spacing: in value<f32,m>,
   density: in value<f32>,
   plane_scale: in value<f32>,
+  amplification: in value<f32>,
   reset_scene: in value<f32>,
   hud_fps: in value<f32>,
   hud_gpu_mb: in value<f32>,
@@ -288,6 +291,7 @@ pass disturb_water = water_force(
   spacing=water.spacing
   density=interaction.water_density
   plane_scale=interaction.plane_scale
+  amplification=interaction.water_amplification
   spring=water.spring
   coupling=water.coupling
   damping=water.damping
@@ -316,6 +320,7 @@ pass stage_scene = compose_scene(
   spacing=water.spacing
   density=interaction.water_density
   plane_scale=interaction.plane_scale
+  amplification=interaction.water_amplification
   reset_scene=interaction.reset_scene
   hud_fps=interaction.hud_fps
   hud_gpu_mb=interaction.hud_gpu_mb

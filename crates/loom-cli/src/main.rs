@@ -1,5 +1,5 @@
 use std::{
-    env, fs,
+    env,
     process::{Command as ProcessCommand, ExitCode, Stdio},
 };
 
@@ -7,8 +7,11 @@ use loom_syntax::parse;
 use loom_validator::Validator;
 use serde::Serialize;
 
+mod package;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Command {
+    Build,
     Check,
     Explain,
     Run,
@@ -76,18 +79,19 @@ fn run() -> Result<(), u8> {
         CliAction::Execute { command, path } => (command, path),
     };
 
-    let source = match fs::read_to_string(&path) {
-        Ok(source) => source,
+    let loaded = match package::load(&path) {
+        Ok(loaded) => loaded,
         Err(error) => {
             print_json(&serde_json::json!({
                 "status": "io_error",
                 "path": path,
-                "message": error.to_string(),
+                "message": error,
             }));
             return Err(2);
         }
     };
-    let graph = match parse(&source) {
+    let source = loaded.source();
+    let graph = match parse(source) {
         Ok(graph) => graph,
         Err(diagnostics) => {
             print_json(&serde_json::json!({
@@ -109,8 +113,30 @@ fn run() -> Result<(), u8> {
         return Err(1);
     };
 
-    if command == Command::Run {
-        return run_window(validated.clone());
+    if command == Command::Build {
+        let output = match package::build(&path, &graph) {
+            Ok(output) => output,
+            Err(error) => {
+                print_json(&serde_json::json!({
+                    "status": "package_error",
+                    "path": path,
+                    "message": error,
+                }));
+                return Err(1);
+            }
+        };
+        print_json(&serde_json::json!({
+            "status": "built",
+            "module": graph.name,
+            "package": output,
+            "artifact_fingerprint": validated.artifact_fingerprint(),
+        }));
+    } else if command == Command::Run {
+        return run_window(
+            validated.clone(),
+            loaded.project_root().map(ToOwned::to_owned),
+            loaded.extension_path().map(ToOwned::to_owned),
+        );
     } else if command == Command::Check {
         print_json(&CheckSuccess {
             status: "valid",
@@ -168,6 +194,7 @@ fn parse_arguments(arguments: &[String]) -> Result<CliAction, String> {
         }),
         [command, path] => {
             let command = match command.as_str() {
+                "build" => Command::Build,
                 "check" => Command::Check,
                 "explain" => Command::Explain,
                 "run" => Command::Run,
@@ -193,6 +220,8 @@ fn print_help() {
 
 Usage:
   loom <source.loom>           Run a Loom program
+  loom <project.lmp>           Run a compiled Loom package
+  loom build <source.loom>     Build a portable .lmp package
   loom run <source.loom>       Run a Loom program explicitly
   loom check <source.loom>     Parse, validate, and fingerprint
   loom explain <source.loom>   Print the graph, plan, and generated Metal
@@ -284,18 +313,28 @@ fn update_installation() -> Result<(), u8> {
 }
 
 #[cfg(target_os = "macos")]
-fn run_window(validated: loom_validator::ValidatedModuleGraph) -> Result<(), u8> {
-    loom_metal::MetalRuntime::run(validated).map_err(|diagnostic| {
-        print_json(&serde_json::json!({
-            "status": "runtime_error",
-            "diagnostic": diagnostic,
-        }));
-        1
-    })
+fn run_window(
+    validated: loom_validator::ValidatedModuleGraph,
+    project_root: Option<std::path::PathBuf>,
+    extension_path: Option<std::path::PathBuf>,
+) -> Result<(), u8> {
+    loom_metal::MetalRuntime::run_project(validated, project_root, extension_path).map_err(
+        |diagnostic| {
+            print_json(&serde_json::json!({
+                "status": "runtime_error",
+                "diagnostic": diagnostic,
+            }));
+            1
+        },
+    )
 }
 
 #[cfg(not(target_os = "macos"))]
-fn run_window(_validated: loom_validator::ValidatedModuleGraph) -> Result<(), u8> {
+fn run_window(
+    _validated: loom_validator::ValidatedModuleGraph,
+    _project_root: Option<std::path::PathBuf>,
+    _extension_path: Option<std::path::PathBuf>,
+) -> Result<(), u8> {
     print_json(&serde_json::json!({
         "status": "unsupported",
         "message": "running Loom programs currently requires macOS and Metal",
@@ -335,6 +374,13 @@ mod tests {
             parse_arguments(&args(&["check", "hello-particle.loom"])),
             Ok(CliAction::Execute {
                 command: Command::Check,
+                path: "hello-particle.loom".to_owned(),
+            })
+        );
+        assert_eq!(
+            parse_arguments(&args(&["build", "hello-particle.loom"])),
+            Ok(CliAction::Execute {
+                command: Command::Build,
                 path: "hello-particle.loom".to_owned(),
             })
         );

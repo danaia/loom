@@ -95,6 +95,21 @@ loom ~/.loom/examples/crystal.loom
 
 You do not need Rust or Cargo to use the installed release.
 
+## Portable `.lmp` projects
+
+A Loom project keeps its primary `.loom` file, referenced Metal sources, and
+optional `src/runtime.rs` extension in one directory. Build that directory into
+a single distributable package:
+
+```sh
+loom build examples/marble-water/marble-water.loom
+loom examples/marble-water/marble-water.lmp
+```
+
+The `.lmp` contains the graph, every referenced Metal file, the Rust extension
+source, and its compiled target library. Running the package requires only the
+global `loom` runtime. Building a project with `src/runtime.rs` requires `rustc`.
+
 ## What Loom does
 
 A Loom program defines:

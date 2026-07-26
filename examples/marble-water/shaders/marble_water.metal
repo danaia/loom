@@ -10,6 +10,7 @@ struct MarbleVertexOut {
     float activity;
     float density;
     float plane;
+    float amplification;
     float reset;
 };
 
@@ -41,6 +42,7 @@ vertex MarbleVertexOut marble_water_pipeline_vertex(
         out.density = clamp(float3(positions[instance_id]).x, 0.0, 1.0);
         out.activity = clamp(float3(positions[instance_id]).y, 0.0, 1.0);
         out.plane = clamp((plane_scale - 1.0) * 0.5, 0.0, 1.0);
+        out.amplification = clamp(colors[instance_id].b, 0.0, 1.0);
         out.reset = clamp(float3(positions[instance_id]).z, 0.0, 1.0);
         return out;
     }
@@ -71,6 +73,7 @@ vertex MarbleVertexOut marble_water_pipeline_vertex(
     out.activity = 0.0;
     out.density = 0.0;
     out.plane = 0.0;
+    out.amplification = 0.0;
     out.reset = 0.0;
     return out;
 }
@@ -282,6 +285,38 @@ fragment float4 marble_water_pipeline_fragment(MarbleVertexOut in [[stage_in]])
             max(plane_fill, plane_thumb_mask)
         );
 
+        constexpr float2 amplification_start = float2(-0.650, -0.020);
+        constexpr float2 amplification_end = float2(0.180, -0.020);
+        const float amplification_track = line_mask(
+            in.local,
+            amplification_start,
+            amplification_end,
+            0.030
+        );
+        color = mix(color, float3(0.30, 0.17, 0.08), amplification_track);
+
+        const float2 amplification_thumb = mix(
+            amplification_start,
+            amplification_end,
+            in.amplification
+        );
+        const float amplification_fill = line_mask(
+            in.local,
+            amplification_start,
+            amplification_thumb,
+            0.035
+        );
+        const float amplification_thumb_mask = 1.0 - smoothstep(
+            0.085,
+            0.115,
+            length(in.local - amplification_thumb)
+        );
+        color = mix(
+            color,
+            float3(1.0, 0.52, 0.12),
+            max(amplification_fill, amplification_thumb_mask)
+        );
+
         constexpr float2 reset_center = float2(0.670, 0.700);
         const float reset_button = 1.0 - smoothstep(
             0.190,
@@ -320,14 +355,14 @@ fragment float4 marble_water_pipeline_fragment(MarbleVertexOut in [[stage_in]])
         const float separator = 1.0 - smoothstep(
             0.012,
             0.030,
-            abs(in.local.y - 0.100)
+            abs(in.local.y + 0.230)
         );
         color = mix(color, float3(0.13, 0.24, 0.37), separator * 0.65);
 
-        constexpr float2 w_center = float2(-0.380, -0.210);
-        constexpr float2 a_center = float2(-0.650, -0.660);
-        constexpr float2 s_center = float2(-0.380, -0.660);
-        constexpr float2 d_center = float2(-0.110, -0.660);
+        constexpr float2 w_center = float2(-0.380, -0.410);
+        constexpr float2 a_center = float2(-0.650, -0.750);
+        constexpr float2 s_center = float2(-0.380, -0.750);
+        constexpr float2 d_center = float2(-0.110, -0.750);
         float keys = key_mask(in.local, w_center);
         keys = max(keys, key_mask(in.local, a_center));
         keys = max(keys, key_mask(in.local, s_center));
@@ -348,19 +383,19 @@ fragment float4 marble_water_pipeline_fragment(MarbleVertexOut in [[stage_in]])
 
         const uint fps = uint(clamp(round(in.color.r), 0.0, 999.0));
         const uint gpu_mb = uint(clamp(round(in.color.g), 0.0, 999.0));
-        float labels = small_letter_mask(in.local, float2(0.235, -0.205), 0u);
-        labels = max(labels, small_letter_mask(in.local, float2(0.315, -0.205), 1u));
-        labels = max(labels, small_letter_mask(in.local, float2(0.395, -0.205), 2u));
-        labels = max(labels, small_letter_mask(in.local, float2(0.275, -0.655), 3u));
-        labels = max(labels, small_letter_mask(in.local, float2(0.380, -0.655), 4u));
+        float labels = small_letter_mask(in.local, float2(0.235, -0.405), 0u);
+        labels = max(labels, small_letter_mask(in.local, float2(0.315, -0.405), 1u));
+        labels = max(labels, small_letter_mask(in.local, float2(0.395, -0.405), 2u));
+        labels = max(labels, small_letter_mask(in.local, float2(0.275, -0.745), 3u));
+        labels = max(labels, small_letter_mask(in.local, float2(0.380, -0.745), 4u));
         color = mix(color, float3(0.35, 0.58, 0.72), labels);
 
-        float fps_digits = digit_mask(in.local, float2(0.515, -0.205), (fps / 100u) % 10u);
-        fps_digits = max(fps_digits, digit_mask(in.local, float2(0.665, -0.205), (fps / 10u) % 10u));
-        fps_digits = max(fps_digits, digit_mask(in.local, float2(0.815, -0.205), fps % 10u));
-        float memory_digits = digit_mask(in.local, float2(0.515, -0.655), (gpu_mb / 100u) % 10u);
-        memory_digits = max(memory_digits, digit_mask(in.local, float2(0.665, -0.655), (gpu_mb / 10u) % 10u));
-        memory_digits = max(memory_digits, digit_mask(in.local, float2(0.815, -0.655), gpu_mb % 10u));
+        float fps_digits = digit_mask(in.local, float2(0.515, -0.405), (fps / 100u) % 10u);
+        fps_digits = max(fps_digits, digit_mask(in.local, float2(0.665, -0.405), (fps / 10u) % 10u));
+        fps_digits = max(fps_digits, digit_mask(in.local, float2(0.815, -0.405), fps % 10u));
+        float memory_digits = digit_mask(in.local, float2(0.515, -0.745), (gpu_mb / 100u) % 10u);
+        memory_digits = max(memory_digits, digit_mask(in.local, float2(0.665, -0.745), (gpu_mb / 10u) % 10u));
+        memory_digits = max(memory_digits, digit_mask(in.local, float2(0.815, -0.745), gpu_mb % 10u));
         color = mix(color, float3(0.74, 0.94, 1.0), max(fps_digits, memory_digits));
         return float4(color, alpha);
     }

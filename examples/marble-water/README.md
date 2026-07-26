@@ -7,18 +7,25 @@ A keyboard-controlled Loom/Metal marble experiment with eight GPU-simulated hunt
 - Scroll while holding the marble to raise or lower it, then release to drop it into the water.
 - Drag the cyan HUD slider to vary the active water grid from 3,072 to 30,704 particles.
 - Drag the purple HUD slider to grow the simulated plane from 1× to 3×.
+- Drag the amber HUD slider to amplify wakes and splashes from 1× to 6×.
 - Click the HUD reset button to restore every marble and calm the water.
 - The HUD reports measured presentation FPS and current Metal allocations in MiB.
 - Red enemy marbles slowly chase the player.
 - Drag, gravity, landing detection, speed limits, surface constraints, and bounded movement run on Metal.
 - Marbles stay on top of the enlarged water plane and continuously emit wakes from their horizontal motion.
 - Up to 30,704 spring-coupled water particles consume those wakes and propagate damped waves to their four neighbors.
+- Higher amplification broadens each impact, increases impulse energy and neighbor coupling, and reduces damping for larger, longer-lived ripples.
 - Rendering reads the staged GPU state directly; no CPU-side particle model exists.
 
-From the repository root:
+Build the self-contained Loom package:
 
 ```text
-loom check examples/marble-water/marble-water.loom
-loom explain examples/marble-water/marble-water.loom
-loom examples/marble-water/marble-water.loom
+loom build examples/marble-water/marble-water.loom
+loom check examples/marble-water/marble-water.lmp
+loom examples/marble-water/marble-water.lmp
 ```
+
+`marble-water.lmp` is the distributable project. It contains the primary Loom
+graph, both Metal sources, `src/runtime.rs`, and the compiled Rust extension for
+the build machine's target. The installed global `loom` runtime is its only
+external dependency.

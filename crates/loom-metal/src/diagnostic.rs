@@ -10,6 +10,7 @@ pub enum RuntimeDiagnosticCode {
     DrawableUnavailable,
     CommandBufferFailed,
     WindowCreationFailed,
+    ProjectExtensionFailed,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

@@ -5,6 +5,7 @@ mod benchmark;
 mod diagnostic;
 mod display_link;
 mod fingerprint;
+mod project;
 mod runtime;
 
 pub use benchmark::*;

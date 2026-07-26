@@ -124,8 +124,9 @@ fn marble_water_compiles_and_executes_the_particle_simulation() {
     let validated = Validator::validate(&graph)
         .validated
         .expect("marble water graph must validate");
-    let result = MetalRuntime::benchmark(
+    let result = MetalRuntime::benchmark_project(
         validated,
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../examples/marble-water"),
         BenchmarkConfig {
             mode: BenchmarkMode::Headless,
             runner: BenchmarkRunner::LoomPlan,
