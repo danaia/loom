@@ -65,6 +65,9 @@ install -m 0644 \
 cp -R "${REPO_ROOT}/docs/handbook" "${PACKAGE_ROOT}/share/loom/docs/handbook"
 install -m 0644 "${REPO_ROOT}/docs/README.md" "${PACKAGE_ROOT}/share/loom/docs/README.md"
 install -m 0644 \
+  "${REPO_ROOT}/docs/agent-coding-reference.md" \
+  "${PACKAGE_ROOT}/share/loom/docs/agent-coding-reference.md"
+install -m 0644 \
   "${REPO_ROOT}/docs/native-compiler-gates.md" \
   "${PACKAGE_ROOT}/share/loom/docs/native-compiler-gates.md"
 

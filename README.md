@@ -240,7 +240,8 @@ loom --version             # Print the version
 ## Ask an AI agent to build something
 
 ```text
-Read the Loom grammar and Hello Particle example.
+Read docs/agent-coding-reference.md completely, then read the closest runnable
+example.
 
 Build a runnable .loom particle system with visible GPU motion.
 Use native Loom for supported kernels and explicit extern metal for unsupported
@@ -253,6 +254,10 @@ loom PATH_TO_PROGRAM
 
 Document which kernels are native Loom and which are external Metal.
 ```
+
+The [AI agent coding reference](docs/agent-coding-reference.md) gives smaller
+models a literal executable grammar, a complete experiment template, current
+compiler limits, diagnostic repairs, and an evidence checklist.
 
 ## Current scope
 

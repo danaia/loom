@@ -1742,6 +1742,7 @@ mod tests {
 
     const SOURCE: &str = include_str!("../../../examples/hello-particle/hello-particle.agent.loom");
     const CRYSTAL_SOURCE: &str = include_str!("../../../examples/hello-crystal/crystal.loom");
+    const AGENT_REFERENCE: &str = include_str!("../../../docs/agent-coding-reference.md");
 
     #[test]
     fn agent_source_lowers_to_a_valid_graph() {
@@ -1822,5 +1823,30 @@ mod tests {
                 "zoom_camera",
             ]
         );
+    }
+
+    #[test]
+    fn agent_reference_runnable_experiment_stays_valid() {
+        let marker = "```loom\nloom 0.1\nmodule four_particle_drift";
+        let (_, experiment) = AGENT_REFERENCE
+            .split_once(marker)
+            .expect("agent reference must contain the runnable experiment");
+        let (experiment, _) = experiment
+            .split_once("\n```")
+            .expect("runnable experiment fence must close");
+        let source = format!("loom 0.1\nmodule four_particle_drift{experiment}");
+        let graph = parse(&source).expect("agent reference experiment must parse");
+        let report = Validator::validate(&graph);
+        assert!(
+            report.is_valid(),
+            "unexpected diagnostics: {:#?}",
+            report.diagnostics
+        );
+        assert_eq!(graph.name, "four_particle_drift");
+        assert_eq!(graph.resources.streams.len(), 4);
+        assert_eq!(graph.kernels.len(), 1);
+        assert_eq!(graph.passes.len(), 1);
+        assert_eq!(graph.views.len(), 1);
+        assert_eq!(graph.schedules.len(), 1);
     }
 }
