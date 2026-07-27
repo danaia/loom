@@ -4,21 +4,24 @@ import {
   ApiOutlined,
   ArrowUpOutlined,
   CheckCircleFilled,
+  DeleteOutlined,
   KeyOutlined,
   PlusOutlined,
   SafetyCertificateOutlined,
 } from '@ant-design/icons-vue'
 import {
+  createAgentChat,
   connectAndStartAgent,
+  deleteAgentChat,
   hasAgentApiKey,
+  loadAgentChats,
+  saveAgentChat,
   sendAgentMessage,
   startSavedAgent,
 } from './bridge'
+import type { AgentChat, AgentChatMessage } from './bridge'
 
-type ChatMessage = {
-  role: 'user' | 'agent'
-  text: string
-}
+type ChatMessage = AgentChatMessage
 
 const apiKey = ref('')
 const keyVisible = ref(false)
@@ -27,6 +30,8 @@ const connectionPhase = ref<'idle' | 'connecting' | 'connected' | 'error'>('idle
 const error = ref('')
 const responseId = ref<string | null>(null)
 const messages = ref<ChatMessage[]>([])
+const chats = ref<AgentChat[]>([])
+const activeChatId = ref<string | null>(null)
 const prompt = ref('')
 const sending = ref(false)
 const agentActivity = ref('Thinking')
@@ -95,6 +100,73 @@ function stopAgentActivity() {
   }
 }
 
+function activeChat() {
+  return chats.value.find((chat) => chat.id === activeChatId.value) ?? null
+}
+
+function threadTitle(text: string) {
+  const title = text.replace(/\s+/g, ' ').trim()
+  return title.length > 42 ? `${title.slice(0, 41)}…` : title || 'New agent'
+}
+
+async function persistActiveChat() {
+  const chat = activeChat()
+  if (!chat) return
+  const saved = await saveAgentChat({
+    ...chat,
+    title: chat.title === 'New agent' && messages.value.some((message) => message.role === 'user')
+      ? threadTitle(messages.value.find((message) => message.role === 'user')?.text ?? '')
+      : chat.title,
+    messages: messages.value.map((message) => ({ ...message })),
+    responseId: responseId.value,
+    model: activeModel.value,
+  })
+  const index = chats.value.findIndex((item) => item.id === saved.id)
+  if (index >= 0) chats.value[index] = saved
+  chats.value.sort((left, right) => right.updatedAt - left.updatedAt)
+}
+
+async function selectChat(chat: AgentChat) {
+  if (sending.value || chat.id === activeChatId.value) return
+  activeChatId.value = chat.id
+  messages.value = chat.messages.map((message) => ({ ...message }))
+  responseId.value = chat.responseId
+  activeModel.value = chat.model || modelId
+  error.value = ''
+  void scrollToLatest()
+}
+
+async function createNewChat() {
+  const chat = await createAgentChat()
+  chats.value.unshift(chat)
+  activeChatId.value = chat.id
+  messages.value = []
+  responseId.value = null
+  activeModel.value = modelId
+  return chat
+}
+
+async function removeChat(event: MouseEvent, chat: AgentChat) {
+  event.stopPropagation()
+  if (sending.value) return
+  try {
+    await deleteAgentChat(chat.id)
+    chats.value = chats.value.filter((item) => item.id !== chat.id)
+    if (activeChatId.value === chat.id) {
+      const next = chats.value[0]
+      if (next) {
+        await selectChat(next)
+      } else {
+        activeChatId.value = null
+        messages.value = []
+        responseId.value = null
+      }
+    }
+  } catch (reason) {
+    error.value = describeError(reason, 'This chat could not be removed.')
+  }
+}
+
 function acceptReply(reply: {
   responseId: string
   text: string
@@ -112,6 +184,7 @@ function acceptReply(reply: {
   connectionPhase.value = 'connected'
   error.value = ''
   showKeySetup.value = false
+  void persistActiveChat()
   void scrollToLatest()
 }
 
@@ -123,7 +196,6 @@ async function saveAndConnect() {
     const reply = await connectAndStartAgent(apiKey.value)
     apiKey.value = ''
     keyVisible.value = false
-    messages.value = []
     acceptReply(reply)
   } catch (reason) {
     connectionPhase.value = 'error'
@@ -148,17 +220,37 @@ async function startSavedSession(clearThread = false, promptForKeyOnError = true
 }
 
 async function newAgent() {
+  try {
+    await createNewChat()
+  } catch (reason) {
+    error.value = describeError(reason, 'The new agent chat could not be saved.')
+    return
+  }
   if (!connected.value) {
     showKeySetup.value = true
     return
   }
-  await startSavedSession(true)
+  await startSavedSession(false)
 }
 
 async function sendMessage() {
   const text = prompt.value.trim()
   if (!connected.value || !text || sending.value) return
+  if (!activeChat()) {
+    try {
+      await createNewChat()
+    } catch (reason) {
+      error.value = describeError(reason, 'A new chat could not be created.')
+      return
+    }
+  }
   messages.value.push({ role: 'user', text })
+  try {
+    await persistActiveChat()
+  } catch (reason) {
+    error.value = describeError(reason, 'This message could not be saved to the project history.')
+    return
+  }
   prompt.value = ''
   sending.value = true
   startAgentActivity()
@@ -189,8 +281,15 @@ function handleComposerKeydown(event: KeyboardEvent) {
 
 onMounted(async () => {
   try {
+    chats.value = await loadAgentChats()
+    if (chats.value.length) {
+      await selectChat(chats.value[0])
+    } else {
+      await createNewChat()
+    }
     if (await hasAgentApiKey()) {
-      await startSavedSession(false, false)
+      if (!messages.value.length) await startSavedSession(false, false)
+      else connectionPhase.value = 'connected'
     } else {
       showKeySetup.value = true
     }
@@ -214,24 +313,37 @@ onBeforeUnmount(stopAgentActivity)
           <p>AI workspace for GPU systems</p>
         </div>
       </div>
-      <div class="connection-status" :data-state="connectionPhase">
-        <i></i>{{ statusLabel }}
+      <div class="header-actions">
+        <button class="new-agent new-agent--header" type="button" aria-label="New agent" title="New agent" @click="newAgent">
+          <plus-outlined />
+        </button>
+        <div class="connection-status" :data-state="connectionPhase">
+          <i></i>{{ statusLabel }}
+        </div>
       </div>
     </header>
 
     <div class="workspace">
       <aside class="sidebar">
-        <button class="new-agent" type="button" @click="newAgent">
-          <plus-outlined />
-          New agent
-        </button>
-
         <div class="sidebar-section">
           <p class="eyebrow">RECENT</p>
-          <button class="thread thread--active" type="button">
-            <span class="thread-icon"><api-outlined /></span>
-            <span><strong>Baseline builder</strong><small>{{ connected ? modelLabel : 'Setup required' }}</small></span>
-          </button>
+          <div
+            v-for="chat in chats"
+            :key="chat.id"
+            class="thread"
+            :class="{ 'thread--active': chat.id === activeChatId }"
+          >
+            <button class="thread-select" type="button" @click="selectChat(chat)">
+              <span class="thread-icon"><api-outlined /></span>
+              <span>
+                <strong>{{ chat.title }}</strong>
+                <small>{{ chat.messages.length ? chat.model : 'New session' }}</small>
+              </span>
+            </button>
+            <button class="thread-delete" type="button" :aria-label="`Delete ${chat.title}`" :title="`Delete ${chat.title}`" @click="removeChat($event, chat)">
+              <delete-outlined />
+            </button>
+          </div>
         </div>
 
         <div class="sidebar-footer">
@@ -246,10 +358,6 @@ onBeforeUnmount(stopAgentActivity)
 
       <section class="chat">
         <header class="chat-header">
-          <div>
-            <h2>Baseline builder</h2>
-            <p :title="projectRoot">{{ projectName }} · {{ projectFileCount }} files in context</p>
-          </div>
           <div class="model-pill">
             <span>{{ modelLabel }}</span>
             <small>medium</small>

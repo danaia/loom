@@ -107,6 +107,12 @@ p {
   font-size: 10px;
 }
 
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+}
+
 .connection-status i {
   width: 7px;
   height: 7px;
@@ -175,8 +181,18 @@ p {
   background: #272727;
 }
 
+.new-agent--header {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border-radius: 8px;
+  color: #cfcfcf;
+  background: #232323;
+  font-size: 15px;
+}
+
 .sidebar-section {
-  margin-top: 24px;
+  margin-top: 10px;
 }
 
 .eyebrow {
@@ -188,20 +204,60 @@ p {
 }
 
 .thread {
-  display: grid;
+  display: flex;
   width: 100%;
-  grid-template-columns: 28px 1fr;
   align-items: center;
-  padding: 8px;
-  border: 0;
   border-radius: 7px;
   color: #d5d5d5;
   background: transparent;
-  text-align: left;
 }
 
 .thread--active {
   background: #252525;
+}
+
+.thread + .thread {
+  margin-top: 3px;
+}
+
+.thread-select {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+  grid-template-columns: 28px minmax(0, 1fr);
+  align-items: center;
+  padding: 8px;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  text-align: left;
+}
+
+.thread-delete {
+  display: grid;
+  width: 26px;
+  height: 26px;
+  flex: 0 0 auto;
+  place-items: center;
+  margin-right: 4px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  color: #8a8a8a;
+  background: transparent;
+  font-size: 11px;
+  opacity: 0;
+  transition: opacity 140ms ease, color 140ms ease, background 140ms ease;
+}
+
+.thread:hover .thread-delete,
+.thread:focus-within .thread-delete {
+  opacity: 1;
+}
+
+.thread-delete:hover {
+  color: #f1aba4;
+  background: #3a2523;
 }
 
 .thread-icon {
@@ -286,21 +342,10 @@ p {
 .chat-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   padding: 0 22px;
   border-bottom: 1px solid #303030;
   background: #212121;
-}
-
-.chat-header h2 {
-  font-size: 13px;
-  font-weight: 620;
-}
-
-.chat-header p {
-  margin-top: 3px;
-  color: #818181;
-  font-size: 9px;
 }
 
 .model-pill {

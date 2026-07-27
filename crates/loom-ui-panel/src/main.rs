@@ -9,7 +9,7 @@ use std::{
         atomic::{AtomicU64, Ordering},
     },
     thread,
-    time::Duration,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use serde::{Deserialize, Serialize};
@@ -25,6 +25,11 @@ const PROJECT_CONTEXT_MAX_BYTES: usize = 196 * 1024;
 const PROJECT_FILE_MAX_BYTES: usize = 48 * 1024;
 const AGENT_TOOL_MAX_ROUNDS: usize = 6;
 const RELOAD_TIMEOUT: Duration = Duration::from_secs(12);
+const AGENT_DB_DIRECTORY: &str = "agentDB";
+const AGENT_DB_FILE: &str = "chats.json";
+const AGENT_DB_VERSION: u32 = 1;
+const AGENT_CHAT_MAX_MESSAGES: usize = 2_000;
+const AGENT_CHAT_MAX_TEXT_BYTES: usize = 64 * 1024;
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -35,6 +40,31 @@ struct AgentReply {
     project_name: String,
     project_root: String,
     project_file_count: usize,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AgentChatMessage {
+    role: String,
+    text: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AgentChat {
+    id: String,
+    title: String,
+    messages: Vec<AgentChatMessage>,
+    response_id: Option<String>,
+    model: String,
+    created_at: u64,
+    updated_at: u64,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct AgentDatabase {
+    version: u32,
+    chats: Vec<AgentChat>,
 }
 
 #[derive(Clone, Debug)]
@@ -159,6 +189,76 @@ fn has_agent_api_key(state: tauri::State<'_, PanelState>) -> Result<bool, String
 }
 
 #[tauri::command]
+fn load_agent_chats(state: tauri::State<'_, PanelState>) -> Result<Vec<AgentChat>, String> {
+    let mut database = read_agent_database(&state.project_root)?;
+    database
+        .chats
+        .sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
+    Ok(database.chats)
+}
+
+#[tauri::command]
+fn create_agent_chat(state: tauri::State<'_, PanelState>) -> Result<AgentChat, String> {
+    let now = current_timestamp();
+    let chat = AgentChat {
+        id: format!(
+            "chat-{:x}-{:x}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ),
+        title: "New agent".to_owned(),
+        messages: Vec::new(),
+        response_id: None,
+        model: AGENT_MODEL.to_owned(),
+        created_at: now,
+        updated_at: now,
+    };
+    let mut database = read_agent_database(&state.project_root)?;
+    database.chats.push(chat.clone());
+    write_agent_database(&state.project_root, &database)?;
+    Ok(chat)
+}
+
+#[tauri::command]
+fn save_agent_chat(
+    state: tauri::State<'_, PanelState>,
+    mut chat: AgentChat,
+) -> Result<AgentChat, String> {
+    validate_agent_chat(&chat)?;
+    chat.updated_at = current_timestamp();
+    let mut database = read_agent_database(&state.project_root)?;
+    if let Some(existing) = database
+        .chats
+        .iter_mut()
+        .find(|existing| existing.id == chat.id)
+    {
+        chat.created_at = existing.created_at;
+        *existing = chat.clone();
+    } else {
+        database.chats.push(chat.clone());
+    }
+    write_agent_database(&state.project_root, &database)?;
+    Ok(chat)
+}
+
+#[tauri::command]
+fn delete_agent_chat(state: tauri::State<'_, PanelState>, chat_id: String) -> Result<(), String> {
+    if chat_id.is_empty() || chat_id.len() > 128 {
+        return Err("agent chat has an invalid ID".to_owned());
+    }
+    let mut database = read_agent_database(&state.project_root)?;
+    let original_count = database.chats.len();
+    database.chats.retain(|chat| chat.id != chat_id);
+    if database.chats.len() == original_count {
+        return Err("the requested agent chat no longer exists".to_owned());
+    }
+    write_agent_database(&state.project_root, &database)
+}
+
+#[tauri::command]
 fn connect_and_start_agent(
     state: tauri::State<'_, PanelState>,
     api_key: String,
@@ -219,6 +319,99 @@ fn save_api_key(api_key: &str) -> Result<(), String> {
         return Err("the macOS Keychain returned a different API key after saving".to_owned());
     }
     Ok(())
+}
+
+fn read_agent_database(project_root: &Path) -> Result<AgentDatabase, String> {
+    let path = agent_database_path(project_root)?;
+    if !path.exists() {
+        return Ok(AgentDatabase {
+            version: AGENT_DB_VERSION,
+            chats: Vec::new(),
+        });
+    }
+    let bytes = fs::read(&path)
+        .map_err(|error| format!("could not read agent history `{}`: {error}", path.display()))?;
+    let database: AgentDatabase = serde_json::from_slice(&bytes).map_err(|error| {
+        format!(
+            "could not parse agent history `{}`: {error}",
+            path.display()
+        )
+    })?;
+    if database.version != AGENT_DB_VERSION {
+        return Err(format!(
+            "agent history `{}` uses unsupported version {}",
+            path.display(),
+            database.version
+        ));
+    }
+    for chat in &database.chats {
+        validate_agent_chat(chat)?;
+    }
+    Ok(database)
+}
+
+fn write_agent_database(project_root: &Path, database: &AgentDatabase) -> Result<(), String> {
+    let path = agent_database_path(project_root)?;
+    let directory = path.parent().expect("agent history has a parent directory");
+    fs::create_dir_all(directory).map_err(|error| {
+        format!(
+            "could not create agent history directory `{}`: {error}",
+            directory.display()
+        )
+    })?;
+    let contents = serde_json::to_vec_pretty(database)
+        .map_err(|error| format!("could not encode agent history: {error}"))?;
+    let temporary = directory.join(format!(".{AGENT_DB_FILE}.{:x}.tmp", current_timestamp()));
+    fs::write(&temporary, contents).map_err(|error| {
+        format!(
+            "could not write temporary agent history `{}`: {error}",
+            temporary.display()
+        )
+    })?;
+    fs::rename(&temporary, &path).map_err(|error| {
+        let _ = fs::remove_file(&temporary);
+        format!("could not save agent history `{}`: {error}", path.display())
+    })
+}
+
+fn agent_database_path(project_root: &Path) -> Result<PathBuf, String> {
+    let project_root = project_root
+        .canonicalize()
+        .map_err(|error| format!("could not resolve active project root: {error}"))?;
+    Ok(project_root.join(AGENT_DB_DIRECTORY).join(AGENT_DB_FILE))
+}
+
+fn validate_agent_chat(chat: &AgentChat) -> Result<(), String> {
+    if chat.id.is_empty() || chat.id.len() > 128 {
+        return Err("agent chat has an invalid ID".to_owned());
+    }
+    if chat.title.trim().is_empty() || chat.title.len() > 160 {
+        return Err("agent chat has an invalid title".to_owned());
+    }
+    if chat.messages.len() > AGENT_CHAT_MAX_MESSAGES {
+        return Err("agent chat exceeds the message limit".to_owned());
+    }
+    for message in &chat.messages {
+        if !matches!(message.role.as_str(), "user" | "agent")
+            || message.text.trim().is_empty()
+            || message.text.len() > AGENT_CHAT_MAX_TEXT_BYTES
+        {
+            return Err("agent chat contains an invalid message".to_owned());
+        }
+    }
+    if let Some(response_id) = &chat.response_id
+        && (response_id.is_empty() || response_id.len() > 256)
+    {
+        return Err("agent chat has an invalid response ID".to_owned());
+    }
+    Ok(())
+}
+
+fn current_timestamp() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
 }
 
 fn remember_api_key(state: &PanelState, api_key: &str) -> Result<(), String> {
@@ -773,7 +966,7 @@ fn collect_project_files(
 fn is_ignored_directory(name: &str) -> bool {
     matches!(
         name,
-        ".git" | ".loom" | "node_modules" | "target" | "dist" | "build" | ".cache"
+        ".git" | ".loom" | "node_modules" | "target" | "dist" | "build" | ".cache" | "agentDB"
     )
 }
 
@@ -919,6 +1112,10 @@ fn run() -> Result<(), String> {
             get_snapshot,
             open_agents_window,
             has_agent_api_key,
+            load_agent_chats,
+            create_agent_chat,
+            save_agent_chat,
+            delete_agent_chat,
             connect_and_start_agent,
             start_saved_agent,
             send_agent_message
@@ -1134,8 +1331,9 @@ mod tests {
     };
 
     use super::{
-        PanelSnapshot, build_project_context, resolve_project_source, response_function_calls,
-        response_output_text,
+        AGENT_DB_VERSION, AgentChat, AgentChatMessage, AgentDatabase, PanelSnapshot,
+        build_project_context, read_agent_database, resolve_project_source,
+        response_function_calls, response_output_text, write_agent_database,
     };
     use serde_json::json;
 
@@ -1209,6 +1407,42 @@ mod tests {
         assert!(resolve_project_source(&root, "baseline.loom", true).is_ok());
         assert!(resolve_project_source(&root, ".env", true).is_err());
         assert!(resolve_project_source(&root, "../outside.metal", false).is_err());
+
+        fs::remove_dir_all(root).expect("remove test project");
+    }
+
+    #[test]
+    fn agent_history_round_trips_without_entering_project_context() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "loom-agent-history-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).expect("project directory");
+        let database = AgentDatabase {
+            version: AGENT_DB_VERSION,
+            chats: vec![AgentChat {
+                id: "chat-test".to_owned(),
+                title: "Hello Loom".to_owned(),
+                messages: vec![AgentChatMessage {
+                    role: "user".to_owned(),
+                    text: "Hello".to_owned(),
+                }],
+                response_id: Some("resp_test".to_owned()),
+                model: "gpt-5.6-terra".to_owned(),
+                created_at: 1,
+                updated_at: 1,
+            }],
+        };
+
+        write_agent_database(&root, &database).expect("write history");
+        let loaded = read_agent_database(&root).expect("read history");
+        assert_eq!(loaded.chats.len(), 1);
+        assert_eq!(loaded.chats[0].messages[0].text, "Hello");
+        assert!(root.join("agentDB/chats.json").is_file());
 
         fs::remove_dir_all(root).expect("remove test project");
     }

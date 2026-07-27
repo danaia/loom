@@ -26,6 +26,37 @@ export interface AgentReply {
   projectFileCount: number
 }
 
+export interface AgentChatMessage {
+  role: 'user' | 'agent'
+  text: string
+}
+
+export interface AgentChat {
+  id: string
+  title: string
+  messages: AgentChatMessage[]
+  responseId: string | null
+  model: string
+  createdAt: number
+  updatedAt: number
+}
+
+export function loadAgentChats(): Promise<AgentChat[]> {
+  return invoke<AgentChat[]>('load_agent_chats')
+}
+
+export function createAgentChat(): Promise<AgentChat> {
+  return invoke<AgentChat>('create_agent_chat')
+}
+
+export function saveAgentChat(chat: AgentChat): Promise<AgentChat> {
+  return invoke<AgentChat>('save_agent_chat', { chat })
+}
+
+export function deleteAgentChat(chatId: string): Promise<void> {
+  return invoke<void>('delete_agent_chat', { chatId })
+}
+
 export function connectAndStartAgent(apiKey: string): Promise<AgentReply> {
   return invoke<AgentReply>('connect_and_start_agent', { apiKey })
 }
