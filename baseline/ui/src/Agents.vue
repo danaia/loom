@@ -20,6 +20,7 @@ import {
   startSavedAgent,
 } from './bridge'
 import type { AgentChat, AgentChatMessage } from './bridge'
+import { loadParticleAgents } from './agentRoster'
 
 type ChatMessage = AgentChatMessage
 
@@ -34,9 +35,11 @@ const chats = ref<AgentChat[]>([])
 const activeChatId = ref<string | null>(null)
 const prompt = ref('')
 const sending = ref(false)
+const particleAgents = ref(loadParticleAgents())
 const agentActivity = ref('Thinking')
 const conversation = ref<HTMLElement | null>(null)
 let activityTimer: ReturnType<typeof setInterval> | null = null
+let rosterTimer: ReturnType<typeof setInterval> | null = null
 
 const modelId = 'gpt-5.6-terra'
 const activeModel = ref(modelId)
@@ -280,6 +283,9 @@ function handleComposerKeydown(event: KeyboardEvent) {
 }
 
 onMounted(async () => {
+  rosterTimer = window.setInterval(() => {
+    particleAgents.value = loadParticleAgents()
+  }, 500)
   try {
     chats.value = await loadAgentChats()
     if (chats.value.length) {
@@ -300,7 +306,10 @@ onMounted(async () => {
   }
 })
 
-onBeforeUnmount(stopAgentActivity)
+onBeforeUnmount(() => {
+  stopAgentActivity()
+  if (rosterTimer !== null) clearInterval(rosterTimer)
+})
 </script>
 
 <template>
@@ -325,6 +334,16 @@ onBeforeUnmount(stopAgentActivity)
 
     <div class="workspace">
       <aside class="sidebar">
+        <div class="sidebar-section particle-roster">
+          <p class="eyebrow">PARTICLES</p>
+          <div v-for="agent in particleAgents" :key="agent.id" class="particle-agent">
+            <i :data-type="agent.type"></i>
+            <span>
+              <strong>{{ agent.name }}</strong>
+              <small>{{ agent.type }}</small>
+            </span>
+          </div>
+        </div>
         <div class="sidebar-section">
           <p class="eyebrow">RECENT</p>
           <div

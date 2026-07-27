@@ -4,12 +4,19 @@ import {
   Badge as ABadge,
   Button as AButton,
   ConfigProvider as AConfigProvider,
+  Input as AInput,
   Progress as AProgress,
+  Select as ASelect,
   Slider as ASlider,
   theme,
 } from 'ant-design-vue'
 import { ReloadOutlined } from '@ant-design/icons-vue'
 import { getSnapshot, openAgentsWindow, setControl } from './bridge'
+import {
+  loadParticleAgents,
+  saveParticleAgents,
+  uniqueAgentName,
+} from './agentRoster'
 
 const fps = ref(0)
 const gpuMemory = ref(0)
@@ -17,6 +24,12 @@ const gpuFrameTime = ref(0)
 const gpuBudget = ref(1000 / 120)
 const gpuPressure = ref(0)
 const spaceDrag = ref(0)
+const agentType = ref(0)
+const particleAgents = ref(loadParticleAgents())
+const agentCount = ref(particleAgents.value.length)
+const agentName = ref(
+  uniqueAgentName(`General ${agentCount.value + 1}`, particleAgents.value),
+)
 const connected = ref(false)
 let pollTimer: number | undefined
 
@@ -45,6 +58,14 @@ const pressureColor = computed(() => {
   if (gpuPressure.value >= 70) return '#cca700'
   return '#89d185'
 })
+const agentTypeNames = ['General', 'Scout', 'Builder']
+const agentTypeName = computed(() => agentTypeNames[agentType.value] ?? 'General')
+const agentNameValid = computed(() => {
+  const candidate = agentName.value.trim().toLocaleLowerCase()
+  return candidate.length > 0 &&
+    candidate.length <= 32 &&
+    !particleAgents.value.some((agent) => agent.name.toLocaleLowerCase() === candidate)
+})
 
 function commitControl(name: string, value: number) {
   void setControl(name, value).catch(() => {
@@ -54,6 +75,39 @@ function commitControl(name: string, value: number) {
 
 function commitDrag(value: number | number[]) {
   commitControl('interaction.space_drag', typeof value === 'number' ? value : value[0])
+}
+
+function commitAgentType(value: unknown) {
+  if (typeof value !== 'number') return
+  agentType.value = value
+  commitControl('interaction.agent_type', value)
+}
+
+function reconcileParticleAgents(nextCount: number) {
+  const count = Math.max(1, Math.min(32, Math.round(nextCount)))
+  const countChanged =
+    count !== agentCount.value || count !== particleAgents.value.length
+  if (!countChanged) return
+
+  if (count < particleAgents.value.length) {
+    particleAgents.value = particleAgents.value.slice(0, count)
+  }
+  while (particleAgents.value.length < count) {
+    const preferred = particleAgents.value.length === agentCount.value
+      ? agentName.value
+      : agentTypeName.value
+    particleAgents.value.push({
+      id: particleAgents.value.length,
+      name: uniqueAgentName(preferred, particleAgents.value),
+      type: agentTypeName.value,
+    })
+  }
+  agentCount.value = count
+  saveParticleAgents(particleAgents.value)
+  agentName.value = uniqueAgentName(
+    `${agentTypeName.value} ${count + 1}`,
+    particleAgents.value,
+  )
 }
 
 function resetParticle() {
@@ -79,6 +133,7 @@ async function pollSnapshot() {
       snapshot.values['interaction.hud_gpu_budget_ms'] ?? gpuBudget.value
     gpuPressure.value =
       snapshot.values['interaction.hud_gpu_pressure'] ?? gpuPressure.value
+    reconcileParticleAgents(snapshot.values['interaction.agent_count'] ?? agentCount.value)
   } catch {
     connected.value = false
   }
@@ -102,7 +157,7 @@ onBeforeUnmount(() => {
           <span class="particle-mark" aria-hidden="true"></span>
           <div>
             <h1>Loom Baseline</h1>
-            <p>Single particle · zero gravity</p>
+            <p>Selectable particles · zero gravity</p>
           </div>
         </div>
         <a-badge
@@ -115,7 +170,7 @@ onBeforeUnmount(() => {
         <div class="metrics">
           <div><span>FPS</span><strong>{{ Math.round(fps) }}</strong></div>
           <div><span>GPU memory</span><strong>{{ Math.round(gpuMemory) }}<small> MiB</small></strong></div>
-          <div><span>Particles</span><strong>1</strong></div>
+          <div><span>Add agent</span><strong>⌘ Click</strong></div>
         </div>
         <div class="pressure">
           <div>
@@ -144,6 +199,34 @@ onBeforeUnmount(() => {
         </header>
         <div class="control">
           <div>
+            <label for="agent-type">New agent type</label>
+            <output>{{ agentTypeName }}</output>
+          </div>
+          <a-select
+            id="agent-type"
+            :value="agentType"
+            style="width: 100%"
+            :options="[
+              { value: 0, label: 'General' },
+              { value: 1, label: 'Scout' },
+              { value: 2, label: 'Builder' },
+            ]"
+            @change="commitAgentType"
+          />
+          <a-input
+            v-model:value="agentName"
+            class="agent-name"
+            :maxlength="32"
+            placeholder="Unique agent name"
+            :status="agentNameValid ? undefined : 'error'"
+          />
+          <p>
+            <span>{{ agentNameValid ? 'Unique name' : 'Will add a unique suffix' }}</span>
+            <span>⌘ Click space to add</span>
+          </p>
+        </div>
+        <div class="control">
+          <div>
             <label for="space-drag">Space drag</label>
             <output>{{ spaceDrag.toFixed(2) }} s⁻¹</output>
           </div>
@@ -164,6 +247,7 @@ onBeforeUnmount(() => {
         <a-button block class="agents" @click="openAgents">
           Agents
         </a-button>
+        <p class="interaction-hint">Drag directly · select, then click space to target</p>
       </section>
 
     </main>

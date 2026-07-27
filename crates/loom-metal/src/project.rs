@@ -16,6 +16,7 @@ pub(crate) const EVENT_LEFT_MOUSE: u32 = 2;
 pub(crate) const EVENT_SCROLL: u32 = 3;
 pub(crate) const EVENT_KEY: u32 = 4;
 pub(crate) const EVENT_RESIZED: u32 = 5;
+pub(crate) const MODIFIER_COMMAND: u32 = 1;
 
 pub(crate) const KEY_W: u32 = 1;
 pub(crate) const KEY_A: u32 = 2;

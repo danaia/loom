@@ -1,9 +1,13 @@
 # Loom baseline
 
-A deliberately minimal, complete Loom project: one GPU-resident particle in
-zero gravity. Drag anywhere in the viewer to pull the particle through space,
-scroll while dragging to change its depth, then release it to preserve its
-inertia.
+A deliberately minimal, complete Loom project: a selectable pool of
+GPU-resident particles in zero gravity. Click and drag a particle to reposition
+it directly, or click a particle and then click open space to assign its
+destination. A small gold dot remains at that
+destination until the selected particle arrives and stops. Choose an agent type
+in the control panel, then hold Command and click space to add it at the cursor. New agents
+default to `General`. Each agent must have a unique name; the shared roster is
+also visible in the Loom Agents window.
 
 The project keeps the full application path ready for extension:
 
@@ -23,6 +27,5 @@ loom build baseline/baseline.loom
 loom baseline/baseline.lmp
 ```
 
-`Space drag` defaults to zero, so the released particle follows ideal
-zero-gravity inertial motion. The viewer wraps its position at the edges to
-represent unbounded space without introducing collision forces.
+`Space drag` defaults to zero. The viewer wraps particle positions at the
+edges to represent unbounded space without introducing collision forces.

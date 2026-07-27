@@ -195,6 +195,59 @@ p {
   margin-top: 10px;
 }
 
+.particle-roster {
+  max-height: 190px;
+  overflow-y: auto;
+}
+
+.particle-agent {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 9px;
+  border-radius: 7px;
+  color: #d5d5d5;
+}
+
+.particle-agent > i {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: #2eb4ef;
+  box-shadow: 0 0 7px rgb(46 180 239 / 35%);
+}
+
+.particle-agent > i[data-type="Scout"] {
+  background: #7aeb7a;
+}
+
+.particle-agent > i[data-type="Builder"] {
+  background: #c77aff;
+}
+
+.particle-agent span,
+.particle-agent strong,
+.particle-agent small {
+  display: block;
+  min-width: 0;
+}
+
+.particle-agent strong {
+  overflow: hidden;
+  font-size: 10px;
+  font-weight: 550;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.particle-agent small {
+  margin-top: 1px;
+  color: #777;
+  font-size: 8px;
+}
+
 .eyebrow {
   margin: 0 9px 7px;
   color: #767676;

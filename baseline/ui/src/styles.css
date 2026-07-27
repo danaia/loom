@@ -213,6 +213,27 @@ h1 {
   border-color: #167aa9;
   color: #77d6ff;
 }
+.agent-name {
+  margin-top: 6px;
+}
+
+.interaction-hint {
+  display: inline-flex;
+  width: max-content;
+  max-width: calc(100% - 22px);
+  align-self: flex-start;
+  margin: 0 11px 11px;
+  padding: 3px 7px;
+  border: 1px solid #343a40;
+  border-radius: 999px;
+  color: #8e969e;
+  background: #24282c;
+  font-size: 8px;
+  line-height: 1.25;
+}
+
 .smallp {
   margin-top: 5px;
+  color: #7f8992;
+  font-size: 9px;
 }

@@ -33,8 +33,8 @@ use objc::{msg_send, rc::autoreleasepool, runtime::YES, sel, sel_impl};
 use winit::{
     dpi::{LogicalSize, PhysicalSize},
     event::{
-        ElementState, Event, KeyboardInput, MouseButton, MouseScrollDelta, VirtualKeyCode,
-        WindowEvent,
+        ElementState, Event, KeyboardInput, ModifiersState, MouseButton, MouseScrollDelta,
+        VirtualKeyCode, WindowEvent,
     },
     event_loop::{ControlFlow, EventLoop},
     platform::macos::WindowExtMacOS,
@@ -49,8 +49,8 @@ use crate::{
     panel::{PanelBridge, PanelCommand, ProjectUi},
     project::{
         EVENT_CURSOR_MOVED, EVENT_KEY, EVENT_LEFT_MOUSE, EVENT_RESIZED, EVENT_SCROLL, KEY_A, KEY_D,
-        KEY_DOWN, KEY_LEFT, KEY_RIGHT, KEY_S, KEY_UP, KEY_W, ProjectEventV1, ProjectExtension,
-        ProjectFrameContextV1,
+        KEY_DOWN, KEY_LEFT, KEY_RIGHT, KEY_S, KEY_UP, KEY_W, MODIFIER_COMMAND, ProjectEventV1,
+        ProjectExtension, ProjectFrameContextV1,
     },
     sha256, summarize,
 };
@@ -225,12 +225,16 @@ impl MetalRuntime {
         let mut tick_interval = Duration::from_nanos(1_000_000_000 / state.rate_hz as u64);
         let mut next_tick = Instant::now();
         let mut cursor = (0.0_f64, 0.0_f64);
+        let mut modifiers = ModifiersState::empty();
         let mut crystal_gesture = None::<CrystalGesture>;
         let mut worm_gesture = None::<WormGesture>;
         event_loop.run(move |event, _, control_flow| {
             *control_flow = ControlFlow::WaitUntil(next_tick);
             autoreleasepool(|| match event {
                 Event::WindowEvent { event, .. } => match event {
+                    WindowEvent::ModifiersChanged(next) => {
+                        modifiers = next;
+                    }
                     WindowEvent::CloseRequested => *control_flow = ControlFlow::Exit,
                     WindowEvent::Moved(_) => {
                         follow_linked_panel(
@@ -356,6 +360,11 @@ impl MetalRuntime {
                         if project_extension.as_mut().unwrap().event(ProjectEventV1 {
                             kind: EVENT_LEFT_MOUSE,
                             pressed: 1,
+                            _reserved: if modifiers.logo() {
+                                MODIFIER_COMMAND
+                            } else {
+                                0
+                            },
                             x: cursor.0 as f32,
                             y: cursor.1 as f32,
                             viewport_width: size.width as f32,
@@ -382,6 +391,11 @@ impl MetalRuntime {
                             if extension.event(ProjectEventV1 {
                                 kind: EVENT_LEFT_MOUSE,
                                 pressed: 0,
+                                _reserved: if modifiers.logo() {
+                                    MODIFIER_COMMAND
+                                } else {
+                                    0
+                                },
                                 x: cursor.0 as f32,
                                 y: cursor.1 as f32,
                                 viewport_width: size.width as f32,
