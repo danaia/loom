@@ -1,0 +1,15 @@
+{
+  "chat.useAgentSkills": true,
+  "chat.agentSkillsLocations": {
+    "skills": true,
+    ".github/skills": true,
+    ".claude/skills": true,
+    "~/.copilot/skills": true,
+    "~/.claude/skills": true
+  },
+  "chat.instructionsFilesLocations": {
+    ".github/instructions": true
+  },
+  "chat.includeApplyingInstructions": true,
+  "github.copilot.chat.codeGeneration.useInstructionFiles": true
+}
