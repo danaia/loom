@@ -7,6 +7,8 @@ be absolute or contain `..`.
 ```text
 marble-water/
 ├── marble-water.loom
+├── config/
+│   └── window-layout.json
 ├── kernels/
 │   └── marble_water.metal
 ├── shaders/
@@ -55,6 +57,10 @@ runtime-owned.
 The global Loom runtime owns validation, scheduling, Metal execution, windowing,
 and host statistics. The package owns all application-specific graphs, shaders,
 input behavior, HUD behavior, and value overrides.
+
+`config/window-layout.json` is optional and keeps project-specific snapping,
+detachment, and linked-movement policy outside both the Metal renderer and the
+Vue UI. See [`window-layout.md`](window-layout.md).
 
 ## Extract and edit
 

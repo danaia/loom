@@ -8,6 +8,7 @@ license.workspace = true
 loom-core = { path = "../loom-core" }
 loom-syntax = { path = "../loom-syntax" }
 loom-validator = { path = "../loom-validator" }
+loom-windowing = { path = "../loom-windowing" }
 serde.workspace = true
 serde_json.workspace = true
 tempfile = "3"

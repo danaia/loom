@@ -15,6 +15,7 @@ keyring.workspace = true
 reqwest.workspace = true
 tauri = "2.11"
 zeroize.workspace = true
+loom-windowing = { path = "../loom-windowing" }
 
 [[bin]]
 name = "loom-ui-panel"

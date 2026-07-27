@@ -1,4 +1,19 @@
 {
   "version": 1,
-  "chats": []
+  "chats": [
+    {
+      "id": "chat-17a26-18c607cce13bd168",
+      "title": "New agent",
+      "messages": [
+        {
+          "role": "agent",
+          "text": "The baseline project is connected with read/write project tools available, and successful edits are validated with Metal hot reload enabled."
+        }
+      ],
+      "responseId": "resp_06cfd594f8a1122a006a66d04b373881a3a9afcae41d29b491",
+      "model": "gpt-5.6-terra",
+      "createdAt": 1785122878,
+      "updatedAt": 1785122892
+    }
+  ]
 }

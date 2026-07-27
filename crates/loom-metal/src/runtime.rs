@@ -22,6 +22,7 @@ use loom_validator::{
     CompletionEnforcement, CompletionRequirement, ExecutionSchedule, PlannedPass, PlannedView,
     ValidatedModuleGraph, Validator,
 };
+use loom_windowing::{SnapManager, SnapUpdate, WindowFrame, WindowLayoutConfig};
 use metal::{
     Buffer, CommandQueue, CompileOptions, ComputePipelineState, Device, MTLBlendFactor,
     MTLClearColor, MTLCommandBufferStatus, MTLLoadAction, MTLPixelFormat, MTLPrimitiveType,
@@ -144,9 +145,20 @@ impl MetalRuntime {
         } else {
             format!("Loom — {}", display_name(validated.graph().name.as_str()))
         };
+        let window_layout = project_root
+            .as_deref()
+            .map(WindowLayoutConfig::load)
+            .transpose()
+            .map_err(|message| {
+                RuntimeDiagnostic::new(RuntimeDiagnosticCode::ProjectPanelFailed, message)
+            })?
+            .unwrap_or_default();
         let event_loop = EventLoop::new();
         let window = WindowBuilder::new()
-            .with_inner_size(LogicalSize::new(960.0, 720.0))
+            .with_inner_size(LogicalSize::new(
+                window_layout.viewer_width,
+                window_layout.viewer_height,
+            ))
             .with_title(title)
             .build(&event_loop)
             .map_err(|error| {
@@ -156,6 +168,11 @@ impl MetalRuntime {
                 )
             })?;
         let mut project_panel = project_ui.map(PanelBridge::launch).transpose()?;
+        let mut panel_snap = project_panel.as_ref().map(|panel| {
+            let layout = panel.window_layout().clone();
+            SnapManager::new(layout.clone(), layout.viewer_panel.clone())
+        });
+        let mut panel_frame = None::<WindowFrame>;
         let device = Device::system_default().ok_or_else(|| {
             RuntimeDiagnostic::new(
                 RuntimeDiagnosticCode::DeviceUnavailable,
@@ -215,8 +232,24 @@ impl MetalRuntime {
             autoreleasepool(|| match event {
                 Event::WindowEvent { event, .. } => match event {
                     WindowEvent::CloseRequested => *control_flow = ControlFlow::Exit,
+                    WindowEvent::Moved(_) => {
+                        follow_linked_panel(
+                            &window,
+                            panel_frame,
+                            panel_snap.as_ref(),
+                            project_panel.as_mut(),
+                        );
+                        publish_viewer_frame(&window, project_panel.as_mut());
+                    }
                     WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. } => {
                         resize_layer(&window, &state.layer);
+                        follow_linked_panel(
+                            &window,
+                            panel_frame,
+                            panel_snap.as_ref(),
+                            project_panel.as_mut(),
+                        );
+                        publish_viewer_frame(&window, project_panel.as_mut());
                         if let Some(extension) = project_extension.as_mut() {
                             let size = window.inner_size();
                             if extension.event(ProjectEventV1 {
@@ -487,6 +520,25 @@ impl MetalRuntime {
                                         panel.publish_reload_status(generation, &status);
                                     }
                                 }
+                                PanelCommand::WindowFrame(frame) => {
+                                    panel_frame = Some(frame);
+                                    let Some(anchor) = window_frame(&window) else {
+                                        continue;
+                                    };
+                                    let Some(manager) = panel_snap.as_mut() else {
+                                        continue;
+                                    };
+                                    if let SnapUpdate::Move(position) =
+                                        manager.observe(anchor, frame)
+                                        && let Some(panel) = project_panel.as_mut()
+                                    {
+                                        panel.set_window_position(position);
+                                    }
+                                    if let Some(panel) = project_panel.as_mut() {
+                                        panel.publish_viewer_frame(anchor);
+                                    }
+                                }
+                                PanelCommand::Quit => *control_flow = ControlFlow::Exit,
                             }
                         }
                     }
@@ -2521,6 +2573,40 @@ fn attach_layer(window: &winit::window::Window, layer: &MetalLayer) {
         let layer_object =
             layer.as_ref() as *const metal::MetalLayerRef as *mut objc::runtime::Object;
         let _: () = msg_send![view, setLayer: layer_object];
+    }
+}
+
+fn window_frame(window: &winit::window::Window) -> Option<WindowFrame> {
+    let position = window.outer_position().ok()?;
+    let size = window.outer_size();
+    Some(WindowFrame {
+        x: position.x,
+        y: position.y,
+        width: size.width,
+        height: size.height,
+        scale_factor: window.scale_factor(),
+    })
+}
+
+fn follow_linked_panel(
+    window: &winit::window::Window,
+    panel_frame: Option<WindowFrame>,
+    manager: Option<&SnapManager>,
+    panel: Option<&mut PanelBridge>,
+) {
+    let (Some(anchor), Some(moving), Some(manager), Some(panel)) =
+        (window_frame(window), panel_frame, manager, panel)
+    else {
+        return;
+    };
+    if let Some(position) = manager.follow(anchor, moving) {
+        panel.set_window_position(position);
+    }
+}
+
+fn publish_viewer_frame(window: &winit::window::Window, panel: Option<&mut PanelBridge>) {
+    if let (Some(frame), Some(panel)) = (window_frame(window), panel) {
+        panel.publish_viewer_frame(frame);
     }
 }
 

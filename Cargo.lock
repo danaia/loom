@@ -1982,6 +1982,7 @@ dependencies = [
  "loom-metal",
  "loom-syntax",
  "loom-validator",
+ "loom-windowing",
  "serde",
  "serde_json",
  "tempfile",
@@ -2008,6 +2009,7 @@ dependencies = [
  "loom-core",
  "loom-syntax",
  "loom-validator",
+ "loom-windowing",
  "metal",
  "objc",
  "serde",
@@ -2030,6 +2032,7 @@ name = "loom-ui-panel"
 version = "0.1.5"
 dependencies = [
  "keyring",
+ "loom-windowing",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
@@ -2046,6 +2049,15 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+]
+
+[[package]]
+name = "loom-windowing"
+version = "0.1.5"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]

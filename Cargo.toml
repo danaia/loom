@@ -6,6 +6,7 @@ members = [
     "crates/loom-ui-panel",
     "crates/loom-syntax",
     "crates/loom-validator",
+    "crates/loom-windowing",
 ]
 resolver = "2"
 

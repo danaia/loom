@@ -12,6 +12,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+use loom_windowing::{SnapManager, SnapUpdate, WindowFrame, WindowLayoutConfig, WindowPosition};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder, http};
@@ -85,8 +86,101 @@ struct PanelState {
     snapshot: Arc<Mutex<PanelSnapshot>>,
     agent_api_key: Arc<Mutex<Option<Zeroizing<String>>>>,
     project_root: PathBuf,
+    window_layout: WindowLayoutConfig,
     reload: Arc<(Mutex<ReloadStatus>, Condvar)>,
     next_reload_generation: Arc<AtomicU64>,
+    windows: WindowCoordination,
+}
+
+#[derive(Clone)]
+struct WindowCoordination {
+    panel_window: Arc<Mutex<Option<tauri::WebviewWindow>>>,
+    pending_panel_position: Arc<Mutex<Option<WindowPosition>>>,
+    agents_window: Arc<Mutex<Option<tauri::WebviewWindow>>>,
+    viewer_frame: Arc<Mutex<Option<WindowFrame>>>,
+    agents_snap: Arc<Mutex<SnapManager>>,
+}
+
+impl WindowCoordination {
+    fn new(layout: WindowLayoutConfig) -> Self {
+        Self {
+            panel_window: Arc::new(Mutex::new(None)),
+            pending_panel_position: Arc::new(Mutex::new(None)),
+            agents_window: Arc::new(Mutex::new(None)),
+            viewer_frame: Arc::new(Mutex::new(None)),
+            agents_snap: Arc::new(Mutex::new(SnapManager::new(
+                layout.clone(),
+                layout.viewer_agents.clone(),
+            ))),
+        }
+    }
+
+    fn install_panel(&self, window: tauri::WebviewWindow) {
+        if let Ok(mut panel_window) = self.panel_window.lock() {
+            *panel_window = Some(window.clone());
+        }
+        let pending = self
+            .pending_panel_position
+            .lock()
+            .ok()
+            .and_then(|mut position| position.take());
+        if let Some(position) = pending {
+            let _ = set_window_position(&window, position);
+        }
+    }
+
+    fn set_panel_position(&self, position: WindowPosition) {
+        let window = self
+            .panel_window
+            .lock()
+            .ok()
+            .and_then(|window| window.clone());
+        if let Some(window) = window {
+            let window_for_update = window.clone();
+            let _ = window.run_on_main_thread(move || {
+                let _ = set_window_position(&window_for_update, position);
+            });
+        } else if let Ok(mut pending) = self.pending_panel_position.lock() {
+            *pending = Some(position);
+        }
+    }
+
+    fn install_agents(&self, window: tauri::WebviewWindow) {
+        if let Ok(mut agents_window) = self.agents_window.lock() {
+            *agents_window = Some(window);
+        }
+    }
+
+    fn viewer_frame(&self) -> Option<WindowFrame> {
+        self.viewer_frame.lock().ok().and_then(|frame| *frame)
+    }
+
+    fn set_viewer_frame(&self, frame: WindowFrame) {
+        if let Ok(mut viewer_frame) = self.viewer_frame.lock() {
+            *viewer_frame = Some(frame);
+        }
+        let agents = self
+            .agents_window
+            .lock()
+            .ok()
+            .and_then(|window| window.clone());
+        let Some(agents) = agents else {
+            return;
+        };
+        let Some(moving) = window_frame(&agents) else {
+            return;
+        };
+        let update = self.agents_snap.lock().ok().and_then(|mut manager| {
+            if manager.is_linked() {
+                manager.follow(frame, moving).map(SnapUpdate::Move)
+            } else {
+                Some(manager.observe(frame, moving))
+            }
+        });
+        if let Some(SnapUpdate::Move(position)) = update {
+            let _ = set_window_position(&agents, position);
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -109,6 +203,8 @@ enum PanelToViewer {
     Hello { token: String },
     Set { name: String, value: f32 },
     Reload { generation: u64 },
+    WindowFrame { frame: WindowFrame },
+    Quit,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -121,6 +217,12 @@ enum ViewerToPanel {
         generation: u64,
         ok: bool,
         message: String,
+    },
+    SetWindowPosition {
+        position: WindowPosition,
+    },
+    ViewerFrame {
+        frame: WindowFrame,
     },
 }
 
@@ -146,7 +248,10 @@ fn get_snapshot(state: tauri::State<'_, PanelState>) -> Result<PanelSnapshot, St
 }
 
 #[tauri::command]
-fn open_agents_window(app: tauri::AppHandle) -> Result<(), String> {
+fn open_agents_window(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, PanelState>,
+) -> Result<(), String> {
     const LABEL: &str = "loom-project-agents";
     if let Some(window) = app.get_webview_window(LABEL) {
         window.show().map_err(|error| error.to_string())?;
@@ -156,9 +261,12 @@ fn open_agents_window(app: tauri::AppHandle) -> Result<(), String> {
 
     let url = tauri::Url::parse("loom-ui://localhost/agents.html")
         .map_err(|error| format!("invalid agents window URL: {error}"))?;
-    WebviewWindowBuilder::new(&app, LABEL, WebviewUrl::CustomProtocol(url))
+    let agents = WebviewWindowBuilder::new(&app, LABEL, WebviewUrl::CustomProtocol(url))
         .title("Loom Agents")
-        .inner_size(680.0, 760.0)
+        .inner_size(
+            state.window_layout.agents_width,
+            state.window_layout.agents_height,
+        )
         .min_inner_size(500.0, 560.0)
         .resizable(true)
         .focused(true)
@@ -166,6 +274,7 @@ fn open_agents_window(app: tauri::AppHandle) -> Result<(), String> {
         .visible_on_all_workspaces(true)
         .build()
         .map_err(|error| error.to_string())?;
+    install_agents_coordination(&state.windows, &state.writer, &agents);
     Ok(())
 }
 
@@ -1068,6 +1177,8 @@ fn main() {
 
 fn run() -> Result<(), String> {
     let arguments = parse_arguments(env::args().skip(1))?;
+    let window_layout = WindowLayoutConfig::load(&arguments.project_root)?;
+    let windows = WindowCoordination::new(window_layout.clone());
     let mut stream = TcpStream::connect(&arguments.address)
         .map_err(|error| format!("could not connect to viewer: {error}"))?;
     stream
@@ -1088,15 +1199,17 @@ fn run() -> Result<(), String> {
         values: BTreeMap::new(),
     }));
     let reload = Arc::new((Mutex::new(ReloadStatus::default()), Condvar::new()));
-    read_snapshots(reader, snapshot.clone(), reload.clone());
+    read_snapshots(reader, snapshot.clone(), reload.clone(), windows.clone());
 
     let state = PanelState {
         writer: Arc::new(Mutex::new(stream)),
         snapshot,
         agent_api_key: Arc::new(Mutex::new(None)),
         project_root: arguments.project_root.clone(),
+        window_layout,
         reload,
         next_reload_generation: Arc::new(AtomicU64::new(0)),
+        windows: windows.clone(),
     };
     let asset_root = arguments.root.clone();
     let asset_entry = arguments.entry.clone();
@@ -1123,15 +1236,22 @@ fn run() -> Result<(), String> {
         .setup(move |app| {
             let url = tauri::Url::parse("loom-ui://localhost/")
                 .map_err(|error| format!("invalid panel URL: {error}"))?;
-            WebviewWindowBuilder::new(app, "loom-project-panel", WebviewUrl::CustomProtocol(url))
-                .title(&window_arguments.title)
-                .inner_size(window_arguments.width, window_arguments.height)
-                .min_inner_size(320.0, 520.0)
-                .resizable(true)
-                .focused(true)
-                .always_on_top(true)
-                .visible_on_all_workspaces(true)
-                .build()?;
+            let panel = WebviewWindowBuilder::new(
+                app,
+                "loom-project-panel",
+                WebviewUrl::CustomProtocol(url),
+            )
+            .title(&window_arguments.title)
+            .inner_size(window_arguments.width, window_arguments.height)
+            .min_inner_size(320.0, 520.0)
+            .resizable(true)
+            .focused(true)
+            .always_on_top(true)
+            .visible_on_all_workspaces(true)
+            .build()?;
+            windows.install_panel(panel.clone());
+            let writer = app.state::<PanelState>().writer.clone();
+            install_panel_coordination(writer, &panel);
             Ok(())
         })
         .run(tauri::generate_context!())
@@ -1196,7 +1316,7 @@ fn parse_dimension(value: &str, flag: &str) -> Result<f64, String> {
     let value = value
         .parse::<f64>()
         .map_err(|_| format!("`{flag}` must be a number"))?;
-    if !value.is_finite() || value < 200.0 || value > 4096.0 {
+    if !value.is_finite() || !(200.0..=4096.0).contains(&value) {
         return Err(format!("`{flag}` must be between 200 and 4096"));
     }
     Ok(value)
@@ -1264,10 +1384,103 @@ fn content_type(path: &Path) -> &'static str {
     }
 }
 
+fn window_frame(window: &tauri::WebviewWindow) -> Option<WindowFrame> {
+    let position = window.outer_position().ok()?;
+    let size = window.outer_size().ok()?;
+    Some(WindowFrame {
+        x: position.x,
+        y: position.y,
+        width: size.width,
+        height: size.height,
+        scale_factor: window.scale_factor().unwrap_or(1.0),
+    })
+}
+
+fn set_window_position(
+    window: &tauri::WebviewWindow,
+    position: WindowPosition,
+) -> tauri::Result<()> {
+    window.set_position(tauri::PhysicalPosition::new(position.x, position.y))
+}
+
+fn publish_panel_frame(
+    writer: &Mutex<TcpStream>,
+    panel: &tauri::WebviewWindow,
+) -> Result<(), String> {
+    let Some(frame) = window_frame(panel) else {
+        return Ok(());
+    };
+    send_message(writer, &PanelToViewer::WindowFrame { frame })
+}
+
+fn install_panel_coordination(writer: Arc<Mutex<TcpStream>>, panel: &tauri::WebviewWindow) {
+    let panel_for_event = panel.clone();
+    let writer_for_event = writer.clone();
+    panel.on_window_event(move |event| {
+        if matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
+            let _ = send_message(&writer_for_event, &PanelToViewer::Quit);
+            return;
+        }
+        if matches!(
+            event,
+            tauri::WindowEvent::Moved(_)
+                | tauri::WindowEvent::Resized(_)
+                | tauri::WindowEvent::ScaleFactorChanged { .. }
+        ) {
+            let _ = publish_panel_frame(&writer_for_event, &panel_for_event);
+        }
+    });
+    let _ = publish_panel_frame(&writer, panel);
+}
+
+fn install_agents_coordination(
+    windows: &WindowCoordination,
+    writer: &Arc<Mutex<TcpStream>>,
+    agents: &tauri::WebviewWindow,
+) {
+    windows.install_agents(agents.clone());
+    let _ = observe_agents_window(windows, agents);
+    let windows_for_event = windows.clone();
+    let writer_for_event = writer.clone();
+    let agents_for_event = agents.clone();
+    agents.on_window_event(move |event| {
+        if matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
+            let _ = send_message(&writer_for_event, &PanelToViewer::Quit);
+            return;
+        }
+        if matches!(
+            event,
+            tauri::WindowEvent::Moved(_)
+                | tauri::WindowEvent::Resized(_)
+                | tauri::WindowEvent::ScaleFactorChanged { .. }
+        ) {
+            let _ = observe_agents_window(&windows_for_event, &agents_for_event);
+        }
+    });
+}
+
+fn observe_agents_window(
+    windows: &WindowCoordination,
+    agents: &tauri::WebviewWindow,
+) -> Option<SnapUpdate> {
+    let anchor = windows.viewer_frame()?;
+    let moving = window_frame(agents)?;
+    let update = windows
+        .agents_snap
+        .lock()
+        .ok()
+        .map(|mut manager| manager.observe(anchor, moving));
+    if let Some(SnapUpdate::Move(position)) = update {
+        let _ = set_window_position(agents, position);
+    }
+    update
+}
+
 fn read_snapshots(
     stream: TcpStream,
     snapshot: Arc<Mutex<PanelSnapshot>>,
     reload: Arc<(Mutex<ReloadStatus>, Condvar)>,
+    windows: WindowCoordination,
 ) {
     thread::spawn(move || {
         let reader = BufReader::new(stream);
@@ -1300,6 +1513,10 @@ fn read_snapshots(
                         ready.notify_all();
                     }
                 }
+                ViewerToPanel::SetWindowPosition { position } => {
+                    windows.set_panel_position(position);
+                }
+                ViewerToPanel::ViewerFrame { frame } => windows.set_viewer_frame(frame),
             }
         }
         if let Ok(mut snapshot) = snapshot.lock() {

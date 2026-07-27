@@ -14,6 +14,7 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
+use loom_windowing::{WindowFrame, WindowLayoutConfig, WindowPosition};
 use serde::{Deserialize, Serialize};
 
 use crate::{RuntimeDiagnostic, RuntimeDiagnosticCode};
@@ -40,6 +41,8 @@ pub(crate) struct PanelControl {
 pub(crate) enum PanelCommand {
     Set(PanelControl),
     Reload { generation: u64 },
+    WindowFrame(WindowFrame),
+    Quit,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -48,6 +51,8 @@ enum PanelToViewer {
     Hello { token: String },
     Set { name: String, value: f32 },
     Reload { generation: u64 },
+    WindowFrame { frame: WindowFrame },
+    Quit,
 }
 
 #[derive(Debug, Serialize)]
@@ -61,6 +66,12 @@ enum ViewerToPanel<'a> {
         ok: bool,
         message: &'a str,
     },
+    SetWindowPosition {
+        position: WindowPosition,
+    },
+    ViewerFrame {
+        frame: WindowFrame,
+    },
 }
 
 pub(crate) struct PanelBridge {
@@ -68,6 +79,7 @@ pub(crate) struct PanelBridge {
     writer: Arc<Mutex<Option<TcpStream>>>,
     child: Child,
     last_publish: Instant,
+    window_layout: WindowLayoutConfig,
 }
 
 impl PanelBridge {
@@ -78,6 +90,7 @@ impl PanelBridge {
                 ui.asset_root.display()
             )));
         }
+        let window_layout = WindowLayoutConfig::load(&ui.project_root).map_err(panel_error)?;
         let listener = TcpListener::bind("127.0.0.1:0")
             .map_err(|error| panel_error(format!("could not bind panel bridge: {error}")))?;
         let address = listener
@@ -124,7 +137,12 @@ impl PanelBridge {
             writer,
             child,
             last_publish: Instant::now() - Duration::from_secs(1),
+            window_layout,
         })
+    }
+
+    pub(crate) fn window_layout(&self) -> &WindowLayoutConfig {
+        &self.window_layout
     }
 
     pub(crate) fn drain_commands(&self) -> impl Iterator<Item = PanelCommand> + '_ {
@@ -174,6 +192,38 @@ impl PanelBridge {
         .and_then(|_| stream.write_all(b"\n").map_err(serde_json::Error::io))
         .and_then(|_| stream.flush().map_err(serde_json::Error::io))
         .is_err()
+        {
+            *writer = None;
+        }
+    }
+
+    pub(crate) fn set_window_position(&mut self, position: WindowPosition) {
+        let Ok(mut writer) = self.writer.lock() else {
+            return;
+        };
+        let Some(stream) = writer.as_mut() else {
+            return;
+        };
+        if serde_json::to_writer(&mut *stream, &ViewerToPanel::SetWindowPosition { position })
+            .and_then(|_| stream.write_all(b"\n").map_err(serde_json::Error::io))
+            .and_then(|_| stream.flush().map_err(serde_json::Error::io))
+            .is_err()
+        {
+            *writer = None;
+        }
+    }
+
+    pub(crate) fn publish_viewer_frame(&mut self, frame: WindowFrame) {
+        let Ok(mut writer) = self.writer.lock() else {
+            return;
+        };
+        let Some(stream) = writer.as_mut() else {
+            return;
+        };
+        if serde_json::to_writer(&mut *stream, &ViewerToPanel::ViewerFrame { frame })
+            .and_then(|_| stream.write_all(b"\n").map_err(serde_json::Error::io))
+            .and_then(|_| stream.flush().map_err(serde_json::Error::io))
+            .is_err()
         {
             *writer = None;
         }
@@ -236,12 +286,18 @@ fn accept_panel(
                     PanelCommand::Set(PanelControl { name, value })
                 }
                 PanelToViewer::Reload { generation } => PanelCommand::Reload { generation },
+                PanelToViewer::WindowFrame { frame } => PanelCommand::WindowFrame(frame),
+                PanelToViewer::Quit => PanelCommand::Quit,
                 PanelToViewer::Hello { .. } | PanelToViewer::Set { .. } => continue,
             };
             if commands.send(command).is_err() {
                 break;
             }
         }
+        // macOS can terminate the Tauri process directly for Command-Q or
+        // the Dock's Quit command, without delivering a window-close event.
+        // A closed bridge is therefore an application-quit request.
+        let _ = commands.send(PanelCommand::Quit);
         if let Ok(mut destination) = writer.lock() {
             *destination = None;
         }

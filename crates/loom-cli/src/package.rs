@@ -7,6 +7,7 @@ use std::{
 };
 
 use loom_core::ModuleGraph;
+use loom_windowing::{PROJECT_CONFIG_PATH, WindowLayoutConfig};
 use serde::{Deserialize, Serialize};
 use tempfile::TempDir;
 use zip::{CompressionMethod, ZipArchive, ZipWriter, write::SimpleFileOptions};
@@ -177,6 +178,11 @@ pub(crate) fn build(path: &str, graph: &ModuleGraph) -> Result<String, String> {
     };
     if root.join("README.md").is_file() {
         source_files.insert("README.md".to_owned());
+    }
+    let window_config_path = root.join(PROJECT_CONFIG_PATH);
+    if window_config_path.is_file() {
+        WindowLayoutConfig::load(&root)?;
+        source_files.insert(PROJECT_CONFIG_PATH.to_owned());
     }
     let ui = build_ui(&root, &graph.name, &mut source_files)?;
 

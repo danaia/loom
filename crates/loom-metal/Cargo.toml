@@ -12,6 +12,7 @@ libloading = "0.8"
 loom-core = { path = "../loom-core" }
 loom-syntax = { path = "../loom-syntax" }
 loom-validator = { path = "../loom-validator" }
+loom-windowing = { path = "../loom-windowing" }
 metal = "0.29"
 objc = "0.2"
 serde.workspace = true

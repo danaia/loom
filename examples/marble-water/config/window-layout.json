@@ -1,0 +1,19 @@
+{
+  "enabled": true,
+  "snapDistance": 16,
+  "detachDistance": 32,
+  "gap": 0,
+  "linkMovement": true,
+  "viewerWidth": 740,
+  "agentsWidth": 620,
+  "viewerPanel": {
+    "enabled": true,
+    "snapOnOpen": true,
+    "preferredSide": "left"
+  },
+  "viewerAgents": {
+    "enabled": true,
+    "snapOnOpen": true,
+    "preferredSide": "right"
+  }
+}
