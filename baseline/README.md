@@ -9,6 +9,13 @@ in the control panel, then hold Command and click space to add it at the cursor.
 default to `General`. Each agent must have a unique name; the shared roster is
 also visible in the Loom Agents window.
 
+Clicking a particle publishes its GPU-selected ID to the control panel and opens
+that particle's metadata card. Names, types, attached project skill paths, and
+schema-defined custom fields are stored atomically in `agentDB/particles.json`.
+The schema can mark controls as global, particle-specific, or read-only, and
+new defaults are merged into older records. The Loom Agents window receives the
+selected record and can inspect any attached project skill before responding.
+
 The project keeps the full application path ready for extension:
 
 - a typed Loom graph running at 120 Hz

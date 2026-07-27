@@ -67,8 +67,14 @@ struct State {
     depth: f32,
     click_generation: f32,
     spawn_generation: f32,
+    spawn_slot: f32,
+    select_generation: f32,
+    select_id: f32,
+    remove_generation: f32,
+    remove_id: f32,
     agent_type: f32,
     agent_count: f32,
+    active_slots: [bool; 32],
     pointer_down: bool,
     space_drag: f32,
     reset: bool,
@@ -82,8 +88,18 @@ impl Default for State {
             depth: 0.0,
             click_generation: 0.0,
             spawn_generation: 0.0,
+            spawn_slot: 0.0,
+            select_generation: 0.0,
+            select_id: 0.0,
+            remove_generation: 0.0,
+            remove_id: 0.0,
             agent_type: 0.0,
             agent_count: 1.0,
+            active_slots: {
+                let mut slots = [false; 32];
+                slots[0] = true;
+                slots
+            },
             pointer_down: false,
             space_drag: 0.0,
             reset: false,
@@ -117,7 +133,9 @@ impl State {
             EVENT_LEFT_MOUSE if e.pressed != 0 && e._reserved & MODIFIER_COMMAND != 0 => {
                 self.cursor = [e.x, e.y];
                 self.update_target();
-                if self.agent_count < 32.0 {
+                if let Some(slot) = self.active_slots.iter().position(|active| !active) {
+                    self.active_slots[slot] = true;
+                    self.spawn_slot = slot as f32;
                     self.spawn_generation += 1.0;
                     self.agent_count += 1.0;
                 }
@@ -142,6 +160,19 @@ impl State {
         match name {
             "interaction.space_drag" => self.space_drag = value.clamp(0.0, 0.5),
             "interaction.agent_type" => self.agent_type = value.clamp(0.0, 2.0).round(),
+            "interaction.select_particle" => {
+                self.select_id = value.clamp(0.0, 31.0).round();
+                self.select_generation += 1.0;
+            }
+            "interaction.remove_particle" => {
+                let slot = value.clamp(0.0, 31.0).round() as usize;
+                self.remove_id = slot as f32;
+                self.remove_generation += 1.0;
+                if self.active_slots[slot] {
+                    self.active_slots[slot] = false;
+                    self.agent_count = (self.agent_count - 1.0).max(0.0);
+                }
+            }
             "interaction.reset" => {
                 self.depth = 0.0;
                 self.target = [0.0; 3];
@@ -149,6 +180,8 @@ impl State {
                 self.click_generation += 1.0;
                 self.spawn_generation += 1.0;
                 self.agent_count = 1.0;
+                self.active_slots = [false; 32];
+                self.active_slots[0] = true;
                 self.reset = true
             }
             _ => return false,
@@ -160,6 +193,18 @@ impl State {
             self.viewport = [c.viewport_width, c.viewport_height];
             self.update_target()
         }
+        let active_mask_low = self.active_slots[..16]
+            .iter()
+            .enumerate()
+            .fold(0_u32, |mask, (index, active)| {
+                mask | (u32::from(*active) << index)
+            });
+        let active_mask_high = self.active_slots[16..]
+            .iter()
+            .enumerate()
+            .fold(0_u32, |mask, (index, active)| {
+                mask | (u32::from(*active) << index)
+            });
         for (n, v) in [
             ("interaction.click_x", self.target[0]),
             ("interaction.click_y", self.target[1]),
@@ -169,8 +214,19 @@ impl State {
             ("interaction.spawn_y", self.target[1]),
             ("interaction.spawn_z", self.target[2]),
             ("interaction.spawn_generation", self.spawn_generation),
+            ("interaction.spawn_slot", self.spawn_slot),
             ("interaction.spawn_type", self.agent_type),
+            (
+                "interaction.select_command",
+                self.select_generation * 32.0 + self.select_id,
+            ),
+            (
+                "interaction.remove_command",
+                self.remove_generation * 32.0 + self.remove_id,
+            ),
             ("interaction.agent_count", self.agent_count),
+            ("interaction.active_mask_low", active_mask_low as f32),
+            ("interaction.active_mask_high", active_mask_high as f32),
             (
                 "interaction.pointer_down",
                 if self.pointer_down { 1.0 } else { 0.0 },
@@ -284,10 +340,34 @@ mod tests {
         });
 
         assert_eq!(state.spawn_generation, 1.0);
+        assert_eq!(state.spawn_slot, 1.0);
         assert_eq!(state.agent_count, 2.0);
         assert_eq!(state.agent_type, 2.0);
         assert!(state.target[0] > 0.0);
         assert!(state.target[1] > 0.0);
+    }
+
+    #[test]
+    fn removed_particle_slot_is_reused_and_selection_is_forwarded() {
+        let mut state = State::default();
+        state.active_slots[..5].fill(true);
+        state.agent_count = 5.0;
+
+        assert!(state.control("interaction.select_particle", 4.0));
+        assert_eq!(state.select_id, 4.0);
+        assert_eq!(state.select_generation, 1.0);
+        assert!(state.control("interaction.remove_particle", 4.0));
+        assert_eq!(state.remove_id, 4.0);
+        assert_eq!(state.agent_count, 4.0);
+
+        state.event(ProjectEventV1 {
+            kind: EVENT_LEFT_MOUSE,
+            pressed: 1,
+            _reserved: MODIFIER_COMMAND,
+            ..ProjectEventV1::default()
+        });
+        assert_eq!(state.spawn_slot, 4.0);
+        assert_eq!(state.agent_count, 5.0);
     }
 
     #[test]

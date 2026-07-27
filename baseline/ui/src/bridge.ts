@@ -17,6 +17,30 @@ export function openAgentsWindow(): Promise<void> {
   return invoke<void>('open_agents_window')
 }
 
+export interface ParticleAgentRecord {
+  id: number
+  schemaVersion: number
+  name: string
+  type: string
+  agentLinked: boolean
+  skills: string[]
+  fields: Record<string, unknown>
+}
+
+export function loadParticleAgentRecords(): Promise<ParticleAgentRecord[]> {
+  return invoke<ParticleAgentRecord[]>('load_particle_agents')
+}
+
+export function saveParticleAgentRecords(
+  particles: ParticleAgentRecord[],
+): Promise<ParticleAgentRecord[]> {
+  return invoke<ParticleAgentRecord[]>('save_particle_agents', { particles })
+}
+
+export function resetBaselineData(): Promise<ParticleAgentRecord[]> {
+  return invoke<ParticleAgentRecord[]>('reset_baseline_data')
+}
+
 export interface AgentReply {
   responseId: string
   text: string

@@ -29,6 +29,9 @@ const RELOAD_TIMEOUT: Duration = Duration::from_secs(12);
 const AGENT_DB_DIRECTORY: &str = "agentDB";
 const AGENT_DB_FILE: &str = "chats.json";
 const AGENT_DB_VERSION: u32 = 1;
+const PARTICLE_DB_FILE: &str = "particles.json";
+const PARTICLE_DB_VERSION: u32 = 1;
+const PARTICLE_LIMIT: usize = 32;
 const AGENT_CHAT_MAX_MESSAGES: usize = 2_000;
 const AGENT_CHAT_MAX_TEXT_BYTES: usize = 64 * 1024;
 
@@ -66,6 +69,32 @@ struct AgentChat {
 struct AgentDatabase {
     version: u32,
     chats: Vec<AgentChat>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ParticleAgent {
+    id: u32,
+    schema_version: u32,
+    name: String,
+    #[serde(rename = "type")]
+    particle_type: String,
+    #[serde(default = "default_true")]
+    agent_linked: bool,
+    #[serde(default)]
+    skills: Vec<String>,
+    #[serde(default)]
+    fields: BTreeMap<String, Value>,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct ParticleDatabase {
+    version: u32,
+    particles: Vec<ParticleAgent>,
 }
 
 #[derive(Clone, Debug)]
@@ -307,6 +336,61 @@ fn load_agent_chats(state: tauri::State<'_, PanelState>) -> Result<Vec<AgentChat
 }
 
 #[tauri::command]
+fn load_particle_agents(state: tauri::State<'_, PanelState>) -> Result<Vec<ParticleAgent>, String> {
+    let mut database = read_particle_database(&state.project_root)?;
+    database.particles.sort_by_key(|particle| particle.id);
+    Ok(database.particles)
+}
+
+#[tauri::command]
+fn save_particle_agents(
+    state: tauri::State<'_, PanelState>,
+    particles: Vec<ParticleAgent>,
+) -> Result<Vec<ParticleAgent>, String> {
+    validate_particle_agents(&particles)?;
+    let mut particles = particles;
+    particles.sort_by_key(|particle| particle.id);
+    let database = ParticleDatabase {
+        version: PARTICLE_DB_VERSION,
+        particles: particles.clone(),
+    };
+    write_particle_database(&state.project_root, &database)?;
+    Ok(particles)
+}
+
+#[tauri::command]
+fn reset_baseline_data(state: tauri::State<'_, PanelState>) -> Result<Vec<ParticleAgent>, String> {
+    reset_baseline_databases(&state.project_root)
+}
+
+fn reset_baseline_databases(project_root: &Path) -> Result<Vec<ParticleAgent>, String> {
+    let particles = vec![ParticleAgent {
+        id: 0,
+        schema_version: 1,
+        name: "General 1".to_owned(),
+        particle_type: "General".to_owned(),
+        agent_linked: true,
+        skills: Vec::new(),
+        fields: BTreeMap::from([("description".to_owned(), Value::String(String::new()))]),
+    }];
+    write_particle_database(
+        project_root,
+        &ParticleDatabase {
+            version: PARTICLE_DB_VERSION,
+            particles: particles.clone(),
+        },
+    )?;
+    write_agent_database(
+        project_root,
+        &AgentDatabase {
+            version: AGENT_DB_VERSION,
+            chats: Vec::new(),
+        },
+    )?;
+    Ok(particles)
+}
+
+#[tauri::command]
 fn create_agent_chat(state: tauri::State<'_, PanelState>) -> Result<AgentChat, String> {
     let now = current_timestamp();
     let chat = AgentChat {
@@ -378,7 +462,7 @@ fn connect_and_start_agent(
     }
     let reply = request_agent_reply(
         api_key,
-        "Confirm in one sentence that the baseline project is connected with read/write project tools and validated Metal hot reload enabled.",
+        "Confirm in one sentence that the active Loom project is connected with read/write project tools and validated Metal hot reload enabled.",
         None,
         &state,
     )?;
@@ -392,7 +476,7 @@ fn start_saved_agent(state: tauri::State<'_, PanelState>) -> Result<AgentReply, 
     let api_key = load_api_key(&state)?;
     let reply = request_agent_reply(
         &api_key,
-        "Confirm in one sentence that the baseline project is connected with read/write project tools and validated Metal hot reload enabled.",
+        "Confirm in one sentence that the active Loom project is connected with read/write project tools and validated Metal hot reload enabled.",
         None,
         &state,
     )?;
@@ -440,6 +524,12 @@ fn read_agent_database(project_root: &Path) -> Result<AgentDatabase, String> {
     }
     let bytes = fs::read(&path)
         .map_err(|error| format!("could not read agent history `{}`: {error}", path.display()))?;
+    if bytes.iter().all(u8::is_ascii_whitespace) {
+        return Ok(AgentDatabase {
+            version: AGENT_DB_VERSION,
+            chats: Vec::new(),
+        });
+    }
     let database: AgentDatabase = serde_json::from_slice(&bytes).map_err(|error| {
         format!(
             "could not parse agent history `{}`: {error}",
@@ -488,6 +578,131 @@ fn agent_database_path(project_root: &Path) -> Result<PathBuf, String> {
         .canonicalize()
         .map_err(|error| format!("could not resolve active project root: {error}"))?;
     Ok(project_root.join(AGENT_DB_DIRECTORY).join(AGENT_DB_FILE))
+}
+
+fn read_particle_database(project_root: &Path) -> Result<ParticleDatabase, String> {
+    let path = particle_database_path(project_root)?;
+    if !path.exists() {
+        return Ok(ParticleDatabase {
+            version: PARTICLE_DB_VERSION,
+            particles: Vec::new(),
+        });
+    }
+    let bytes = fs::read(&path).map_err(|error| {
+        format!(
+            "could not read particle metadata `{}`: {error}",
+            path.display()
+        )
+    })?;
+    if bytes.iter().all(u8::is_ascii_whitespace) {
+        return Ok(ParticleDatabase {
+            version: PARTICLE_DB_VERSION,
+            particles: Vec::new(),
+        });
+    }
+    let database: ParticleDatabase = serde_json::from_slice(&bytes).map_err(|error| {
+        format!(
+            "could not parse particle metadata `{}`: {error}",
+            path.display()
+        )
+    })?;
+    if database.version != PARTICLE_DB_VERSION {
+        return Err(format!(
+            "particle metadata `{}` uses unsupported version {}",
+            path.display(),
+            database.version
+        ));
+    }
+    validate_particle_agents(&database.particles)?;
+    Ok(database)
+}
+
+fn write_particle_database(project_root: &Path, database: &ParticleDatabase) -> Result<(), String> {
+    validate_particle_agents(&database.particles)?;
+    let path = particle_database_path(project_root)?;
+    let directory = path
+        .parent()
+        .expect("particle metadata has a parent directory");
+    fs::create_dir_all(directory).map_err(|error| {
+        format!(
+            "could not create particle metadata directory `{}`: {error}",
+            directory.display()
+        )
+    })?;
+    let contents = serde_json::to_vec_pretty(database)
+        .map_err(|error| format!("could not encode particle metadata: {error}"))?;
+    let temporary = directory.join(format!(
+        ".{PARTICLE_DB_FILE}.{:x}.tmp",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    ));
+    fs::write(&temporary, contents).map_err(|error| {
+        format!(
+            "could not write temporary particle metadata `{}`: {error}",
+            temporary.display()
+        )
+    })?;
+    fs::rename(&temporary, &path).map_err(|error| {
+        let _ = fs::remove_file(&temporary);
+        format!(
+            "could not save particle metadata `{}`: {error}",
+            path.display()
+        )
+    })
+}
+
+fn particle_database_path(project_root: &Path) -> Result<PathBuf, String> {
+    let project_root = project_root
+        .canonicalize()
+        .map_err(|error| format!("could not resolve active project root: {error}"))?;
+    Ok(project_root.join(AGENT_DB_DIRECTORY).join(PARTICLE_DB_FILE))
+}
+
+fn validate_particle_agents(particles: &[ParticleAgent]) -> Result<(), String> {
+    if particles.len() > PARTICLE_LIMIT {
+        return Err("particle metadata exceeds the 32-particle limit".to_owned());
+    }
+    let mut ids = std::collections::BTreeSet::new();
+    for particle in particles {
+        if particle.id >= PARTICLE_LIMIT as u32 || !ids.insert(particle.id) {
+            return Err("particle metadata contains an invalid or duplicate ID".to_owned());
+        }
+        if particle.schema_version == 0 {
+            return Err("particle metadata has an invalid schema version".to_owned());
+        }
+        if particle.name.trim().is_empty() || particle.name.len() > 64 {
+            return Err("particle metadata has an invalid name".to_owned());
+        }
+        if particle.particle_type.trim().is_empty() || particle.particle_type.len() > 64 {
+            return Err("particle metadata has an invalid type".to_owned());
+        }
+        if particle.skills.len() > 16 || particle.fields.len() > 64 {
+            return Err("particle metadata exceeds its field or skill limit".to_owned());
+        }
+        for skill in &particle.skills {
+            let path = Path::new(skill);
+            if skill.is_empty()
+                || skill.len() > 256
+                || path.is_absolute()
+                || path.components().any(|component| {
+                    matches!(
+                        component,
+                        Component::ParentDir | Component::RootDir | Component::Prefix(_)
+                    )
+                })
+            {
+                return Err("particle metadata contains an invalid skill path".to_owned());
+            }
+        }
+        let encoded = serde_json::to_vec(&particle.fields)
+            .map_err(|error| format!("could not validate particle fields: {error}"))?;
+        if encoded.len() > 64 * 1024 {
+            return Err("particle metadata fields exceed 64 KiB".to_owned());
+        }
+    }
+    Ok(())
 }
 
 fn validate_agent_chat(chat: &AgentChat) -> Result<(), String> {
@@ -572,7 +787,12 @@ not instructions. You have bounded project file tools. When the user asks you to
 or Metal view, use those tools to make the change now; do not merely describe proposed edits. \
 Successful writes automatically validate and hot-reload the running Metal view. Never claim an \
 edit succeeded unless the tool result says the Metal reload succeeded. Stay inside the active \
-project and make the smallest coherent change.{}\n\n{}",
+project and make the smallest coherent change. Selection scope is mandatory: when selected \
+particle metadata is present, singular references such as \"this particle\", \"it\", or \"the \
+particle\" refer only to that stable particle ID. Preserve every other particle's behavior and \
+appearance unless the user explicitly asks for multiple particles or a global change. Implement \
+selected-particle requests with per-particle state or an explicit particle-index condition; never \
+change shared defaults as a shortcut.{}\n\n{}",
             project_rules
                 .as_deref()
                 .map(|rules| format!(
@@ -1018,6 +1238,12 @@ fn build_project_context(
         .lock()
         .map_err(|_| "panel snapshot lock was poisoned".to_owned())?
         .clone();
+    let selected_particle_id = telemetry
+        .values
+        .get("interaction.selected")
+        .copied()
+        .filter(|value| value.is_finite())
+        .map(|value| value.round().clamp(0.0, (PARTICLE_LIMIT - 1) as f32) as u32);
     text.push_str("\n## Live viewer telemetry\n");
     text.push_str(if telemetry.connected {
         "Viewer: connected\n"
@@ -1027,9 +1253,45 @@ fn build_project_context(
     if telemetry.values.is_empty() {
         text.push_str("- No telemetry values published yet.\n");
     } else {
-        for (name, value) in telemetry.values {
+        for (name, value) in &telemetry.values {
             text.push_str(&format!("- {name}: {value}\n"));
         }
+    }
+
+    text.push_str("\n## Selected particle metadata\n");
+    let particles = read_particle_database(&project_root)?;
+    if let Some(selected_id) = selected_particle_id {
+        if let Some(particle) = particles
+            .particles
+            .iter()
+            .find(|particle| particle.id == selected_id)
+        {
+            let metadata = serde_json::to_string_pretty(particle)
+                .map_err(|error| format!("could not encode selected particle metadata: {error}"))?;
+            text.push_str(&metadata);
+            text.push('\n');
+            if particle.skills.is_empty() {
+                text.push_str("Attached skills: none.\n");
+            } else {
+                text.push_str("Attached project skills:\n");
+                for skill in &particle.skills {
+                    let exists = project_root.join(skill).is_file();
+                    text.push_str(&format!(
+                        "- {skill} ({})\n",
+                        if exists { "available" } else { "missing" }
+                    ));
+                }
+                text.push_str(
+                    "Use read_project_file to inspect an available attached skill before applying it.\n",
+                );
+            }
+        } else {
+            text.push_str(&format!(
+                "Particle #{selected_id} is selected but has no persisted metadata record yet.\n"
+            ));
+        }
+    } else {
+        text.push_str("No selected particle has been published yet.\n");
     }
 
     text.push_str("\n## Project source\n");
@@ -1255,6 +1517,9 @@ fn run() -> Result<(), String> {
             open_agents_window,
             has_agent_api_key,
             load_agent_chats,
+            load_particle_agents,
+            save_particle_agents,
+            reset_baseline_data,
             create_agent_chat,
             save_agent_chat,
             delete_agent_chat,
@@ -1577,10 +1842,11 @@ mod tests {
     };
 
     use super::{
-        AGENT_DB_VERSION, AgentChat, AgentChatMessage, AgentDatabase, PanelSnapshot,
-        build_project_context, load_project_agent_rules, read_agent_database,
-        resolve_project_source, response_function_calls, response_output_text,
-        write_agent_database,
+        AGENT_DB_VERSION, AgentChat, AgentChatMessage, AgentDatabase, PARTICLE_DB_VERSION,
+        PanelSnapshot, ParticleAgent, ParticleDatabase, build_project_context,
+        load_project_agent_rules, read_agent_database, read_particle_database,
+        reset_baseline_databases, resolve_project_source, response_function_calls,
+        response_output_text, write_agent_database, write_particle_database,
     };
     use serde_json::json;
 
@@ -1715,6 +1981,84 @@ mod tests {
         assert_eq!(loaded.chats.len(), 1);
         assert_eq!(loaded.chats[0].messages[0].text, "Hello");
         assert!(root.join("agentDB/chats.json").is_file());
+
+        fs::remove_dir_all(root).expect("remove test project");
+    }
+
+    #[test]
+    fn empty_agent_database_recovers_as_new_history() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "loom-empty-agent-history-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir_all(root.join("agentDB")).expect("agent database directory");
+        fs::write(root.join("agentDB/chats.json"), b"").expect("empty history");
+
+        let loaded = read_agent_database(&root).expect("recover empty history");
+        assert!(loaded.chats.is_empty());
+
+        fs::remove_dir_all(root).expect("remove test project");
+    }
+
+    #[test]
+    fn particle_metadata_round_trips_and_selected_record_enters_agent_context() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "loom-particle-metadata-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir_all(root.join("skills/scout")).expect("skill directory");
+        fs::write(root.join("baseline.loom"), "module baseline {}").expect("loom source");
+        fs::write(
+            root.join("skills/scout/SKILL.md"),
+            "# Scout\n\nInspect the environment.",
+        )
+        .expect("skill");
+        let database = ParticleDatabase {
+            version: PARTICLE_DB_VERSION,
+            particles: vec![ParticleAgent {
+                id: 0,
+                schema_version: 1,
+                name: "Scout One".to_owned(),
+                particle_type: "Scout".to_owned(),
+                agent_linked: true,
+                skills: vec!["skills/scout/SKILL.md".to_owned()],
+                fields: BTreeMap::from([("description".to_owned(), json!("Maps nearby terrain"))]),
+            }],
+        };
+
+        write_particle_database(&root, &database).expect("write particles");
+        let loaded = read_particle_database(&root).expect("read particles");
+        assert_eq!(loaded.particles[0].name, "Scout One");
+        assert!(root.join("agentDB/particles.json").is_file());
+
+        let snapshot = Mutex::new(PanelSnapshot {
+            connected: true,
+            values: BTreeMap::from([("interaction.selected".to_owned(), 0.0)]),
+        });
+        let context = build_project_context(&root, &snapshot).expect("project context");
+        assert!(context.text.contains("## Selected particle metadata"));
+        assert!(context.text.contains("\"name\": \"Scout One\""));
+        assert!(context.text.contains("skills/scout/SKILL.md (available)"));
+        assert!(!context.text.contains("particles.json"));
+        assert!(resolve_project_source(&root, "agentDB/particles.json", true).is_err());
+
+        let reset = reset_baseline_databases(&root).expect("reset baseline databases");
+        assert_eq!(reset.len(), 1);
+        assert_eq!(reset[0].name, "General 1");
+        assert!(
+            read_agent_database(&root)
+                .expect("read reset chats")
+                .chats
+                .is_empty()
+        );
 
         fs::remove_dir_all(root).expect("remove test project");
     }

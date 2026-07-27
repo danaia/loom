@@ -585,7 +585,9 @@ impl MetalRuntime {
                     };
                     state.append_runtime_telemetry(&mut project_values);
                     if let Some(panel) = project_panel.as_mut() {
-                        panel.publish(&project_values);
+                        let mut panel_values = project_values.clone();
+                        state.append_panel_telemetry(&mut panel_values);
+                        panel.publish(&panel_values);
                     }
                     if let Err(diagnostic) = state.draw_tick_with_project_values(&project_values) {
                         eprintln!(
@@ -815,6 +817,9 @@ struct RuntimeState {
     fps_sample_started: Instant,
     presented_frames: u32,
     gpu_timing: Arc<Mutex<GpuTiming>>,
+    selected_particle_stream: Option<StreamId>,
+    selected_particle_readback: Option<Buffer>,
+    selected_particle: Arc<Mutex<Option<f32>>>,
 }
 
 #[derive(Default)]
@@ -896,6 +901,23 @@ impl RuntimeState {
         let fingerprint =
             make_fingerprint(&validated, &device, shader_identities, pipeline_identities);
         let direct_metal = DirectMetalEncoding::resolve(validated.graph());
+        let selected_particle_stream = validated
+            .graph()
+            .resources
+            .streams
+            .iter()
+            .find(|stream| {
+                stream.name == "interaction.selected"
+                    && stream.element_type == DataType::Scalar(ScalarType::F32)
+                    && stream.capacity == 1
+            })
+            .map(|stream| stream.id);
+        let selected_particle_readback = selected_particle_stream.map(|_| {
+            device.new_buffer(
+                std::mem::size_of::<f32>() as u64,
+                MTLResourceOptions::StorageModeShared,
+            )
+        });
 
         Ok(Self {
             validated,
@@ -919,6 +941,9 @@ impl RuntimeState {
             fps_sample_started: Instant::now(),
             presented_frames: 0,
             gpu_timing: Arc::new(Mutex::new(GpuTiming::default())),
+            selected_particle_stream,
+            selected_particle_readback,
+            selected_particle: Arc::new(Mutex::new(None)),
         })
     }
 
@@ -966,6 +991,14 @@ impl RuntimeState {
             } else {
                 values.push((name.to_owned(), value));
             }
+        }
+    }
+
+    fn append_panel_telemetry(&self, values: &mut Vec<(String, f32)>) {
+        if let Ok(selected) = self.selected_particle.lock()
+            && let Some(selected) = *selected
+        {
+            values.push(("interaction.selected".to_owned(), selected));
         }
     }
 
@@ -1298,8 +1331,33 @@ impl RuntimeState {
             interaction_buffers.push(overrides);
         }
 
+        if let (Some(stream), Some(readback)) = (
+            self.selected_particle_stream,
+            self.selected_particle_readback.as_ref(),
+        ) {
+            let blit = command_buffer.new_blit_command_encoder();
+            blit.copy_from_buffer(
+                &self.stream_buffers[stream.0 as usize][0],
+                0,
+                readback,
+                0,
+                std::mem::size_of::<f32>() as u64,
+            );
+            blit.end_encoding();
+        }
+
         let gpu_timing = Arc::clone(&self.gpu_timing);
+        let selected_particle = Arc::clone(&self.selected_particle);
+        let selected_particle_readback = self.selected_particle_readback.clone();
         let handler = ConcreteBlock::new(move |completed: &metal::CommandBufferRef| {
+            if let Some(readback) = selected_particle_readback.as_ref() {
+                let value = unsafe { *(readback.contents().cast::<f32>()) };
+                if value.is_finite()
+                    && let Ok(mut selected) = selected_particle.lock()
+                {
+                    *selected = Some(value);
+                }
+            }
             let gpu_start: f64 = unsafe { msg_send![completed, GPUStartTime] };
             let gpu_end: f64 = unsafe { msg_send![completed, GPUEndTime] };
             let frame_time_ms = ((gpu_end - gpu_start) * 1_000.0) as f32;

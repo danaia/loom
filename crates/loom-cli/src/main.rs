@@ -440,7 +440,7 @@ fn copy_project_tree(source: &Path, destination: &Path) -> Result<(), String> {
         let entry = entry.map_err(|error| error.to_string())?;
         if matches!(
             entry.file_name().to_str(),
-            Some("node_modules" | "dist" | "target")
+            Some(".loom" | "agentDB" | "node_modules" | "dist" | "target")
         ) {
             continue;
         }
@@ -603,7 +603,8 @@ mod tests {
     use std::fs;
 
     use super::{
-        CliAction, Command, parse_arguments, personalize_controls_title, rename_baseline_source,
+        CliAction, Command, copy_project_tree, parse_arguments, personalize_controls_title,
+        rename_baseline_source,
     };
 
     fn args(values: &[&str]) -> Vec<String> {
@@ -690,5 +691,26 @@ mod tests {
             serde_json::from_slice(&fs::read(ui.join("loom-ui.json")).expect("UI config"))
                 .expect("valid UI config");
         assert_eq!(config["title"], "Loom network — Controls");
+    }
+
+    #[test]
+    fn new_does_not_copy_runtime_or_build_state() {
+        let source = tempfile::tempdir().expect("source directory");
+        let destination = tempfile::tempdir().expect("destination parent");
+        for excluded in [".loom", "agentDB", "dist", "node_modules", "target"] {
+            let directory = source.path().join(excluded);
+            fs::create_dir(&directory).expect("excluded directory");
+            fs::write(directory.join("state.json"), "{}").expect("excluded state");
+        }
+        fs::write(source.path().join("baseline.loom"), "module baseline")
+            .expect("baseline source");
+        let project = destination.path().join("clean-project");
+
+        copy_project_tree(source.path(), &project).expect("copy clean project");
+
+        assert!(project.join("baseline.loom").is_file());
+        for excluded in [".loom", "agentDB", "dist", "node_modules", "target"] {
+            assert!(!project.join(excluded).exists());
+        }
     }
 }

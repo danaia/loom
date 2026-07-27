@@ -1,4 +1,5 @@
 .loom/
+agentDB/
 ui/dist/
 ui/node_modules/
 

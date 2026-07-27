@@ -202,15 +202,31 @@ p {
 
 .particle-agent {
   display: flex;
+  width: 100%;
   min-width: 0;
   align-items: center;
-  gap: 8px;
-  padding: 5px 9px;
   border-radius: 7px;
   color: #d5d5d5;
 }
 
-.particle-agent > i {
+.particle-agent--active {
+  background: #252525;
+}
+
+.particle-agent-select {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 9px;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  text-align: left;
+}
+
+.particle-agent-select > i {
   width: 8px;
   height: 8px;
   flex: 0 0 auto;
@@ -219,11 +235,11 @@ p {
   box-shadow: 0 0 7px rgb(46 180 239 / 35%);
 }
 
-.particle-agent > i[data-type="Scout"] {
+.particle-agent-select > i[data-type="Scout"] {
   background: #7aeb7a;
 }
 
-.particle-agent > i[data-type="Builder"] {
+.particle-agent-select > i[data-type="Builder"] {
   background: #c77aff;
 }
 
@@ -232,6 +248,31 @@ p {
 .particle-agent small {
   display: block;
   min-width: 0;
+}
+
+.particle-agent-remove {
+  display: grid;
+  width: 25px;
+  height: 25px;
+  flex: 0 0 auto;
+  place-items: center;
+  margin-right: 4px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  color: #777;
+  background: transparent;
+  opacity: 0;
+}
+
+.particle-agent:hover .particle-agent-remove,
+.particle-agent-remove:focus-visible {
+  opacity: 1;
+}
+
+.particle-agent-remove:hover {
+  color: #ef8d84;
+  background: #372321;
 }
 
 .particle-agent strong {
@@ -827,6 +868,76 @@ p {
   color: #6e6e6e;
   font-size: 8px;
   text-align: center;
+}
+
+.removal-dialog .dialog-icon {
+  color: #ffd9d5;
+  background: #73332e;
+}
+
+.key-dialog .removal-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 14px 0 0;
+  padding: 12px;
+  border: 1px solid #3c3c3c;
+  border-radius: 9px;
+  background: #202020;
+  cursor: pointer;
+}
+
+.removal-option input {
+  margin-top: 2px;
+  accent-color: #32addd;
+}
+
+.removal-option span,
+.removal-option strong,
+.removal-option small {
+  display: block;
+}
+
+.removal-option strong {
+  color: #e4e4e4;
+  font-size: 10px;
+}
+
+.removal-option small {
+  margin-top: 3px;
+  color: #858585;
+  font-size: 9px;
+  font-weight: 400;
+  line-height: 1.4;
+}
+
+.removal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 18px;
+}
+
+.removal-actions button {
+  min-width: 78px;
+  height: 34px;
+  border: 1px solid #444;
+  border-radius: 8px;
+  color: #d8d8d8;
+  background: #2d2d2d;
+  font-size: 10px;
+}
+
+.removal-actions .remove-confirm {
+  border-color: #8f4039;
+  color: #fff;
+  background: #74342f;
+}
+
+.removal-actions .remove-confirm:disabled {
+  border-color: #3c3c3c;
+  color: #707070;
+  background: #292929;
 }
 
 .spinner {

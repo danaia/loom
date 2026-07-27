@@ -51,7 +51,11 @@ install -m 0755 \
   "${REPO_ROOT}/target/release/loom-ui-panel" \
   "${PACKAGE_ROOT}/bin/loom-ui-panel"
 install -m 0755 "${REPO_ROOT}/uninstall.sh" "${PACKAGE_ROOT}/uninstall"
-tar -C "${REPO_ROOT}" -cf - --exclude='baseline/ui/node_modules' baseline | \
+tar -C "${REPO_ROOT}" -cf - \
+  --exclude='baseline/.loom' \
+  --exclude='baseline/agentDB' \
+  --exclude='baseline/ui/node_modules' \
+  baseline | \
   tar -C "${PACKAGE_ROOT}" -xf -
 install -m 0644 \
   "${REPO_ROOT}/examples/hello-particle/hello-particle.loom" \

@@ -13,10 +13,15 @@ import {
 import { ReloadOutlined } from '@ant-design/icons-vue'
 import { getSnapshot, openAgentsWindow, setControl } from './bridge'
 import {
+  defaultParticleAgent,
   loadParticleAgents,
+  resetParticleAgents,
   saveParticleAgents,
+  subscribeParticleAgents,
   uniqueAgentName,
 } from './agentRoster'
+import type { ParticleAgent } from './agentRoster'
+import { particleFields } from './particlePanelSchema'
 
 const fps = ref(0)
 const gpuMemory = ref(0)
@@ -24,14 +29,14 @@ const gpuFrameTime = ref(0)
 const gpuBudget = ref(1000 / 120)
 const gpuPressure = ref(0)
 const spaceDrag = ref(0)
-const agentType = ref(0)
-const particleAgents = ref(loadParticleAgents())
+const particleAgents = ref<ParticleAgent[]>([defaultParticleAgent(0)])
 const agentCount = ref(particleAgents.value.length)
-const agentName = ref(
-  uniqueAgentName(`General ${agentCount.value + 1}`, particleAgents.value),
-)
+const selectedParticleId = ref(0)
 const connected = ref(false)
+const showResetConfirmation = ref(false)
+const resetInProgress = ref(false)
 let pollTimer: number | undefined
+let rosterUnlisten: (() => void) | undefined
 
 const { compactAlgorithm, darkAlgorithm } = theme
 const panelTheme = {
@@ -58,14 +63,10 @@ const pressureColor = computed(() => {
   if (gpuPressure.value >= 70) return '#cca700'
   return '#89d185'
 })
-const agentTypeNames = ['General', 'Scout', 'Builder']
-const agentTypeName = computed(() => agentTypeNames[agentType.value] ?? 'General')
-const agentNameValid = computed(() => {
-  const candidate = agentName.value.trim().toLocaleLowerCase()
-  return candidate.length > 0 &&
-    candidate.length <= 32 &&
-    !particleAgents.value.some((agent) => agent.name.toLocaleLowerCase() === candidate)
-})
+const agentTypeNames = ['General', 'Scout', 'Builder'] as const
+const selectedParticle = computed(
+  () => particleAgents.value.find((agent) => agent.id === selectedParticleId.value) ?? null,
+)
 
 function commitControl(name: string, value: number) {
   void setControl(name, value).catch(() => {
@@ -77,41 +78,115 @@ function commitDrag(value: number | number[]) {
   commitControl('interaction.space_drag', typeof value === 'number' ? value : value[0])
 }
 
-function commitAgentType(value: unknown) {
-  if (typeof value !== 'number') return
-  agentType.value = value
-  commitControl('interaction.agent_type', value)
+function syncSpawnType(type: string) {
+  const index = agentTypeNames.indexOf(type as typeof agentTypeNames[number])
+  commitControl('interaction.agent_type', Math.max(0, index))
 }
 
-function reconcileParticleAgents(nextCount: number) {
-  const count = Math.max(1, Math.min(32, Math.round(nextCount)))
-  const countChanged =
-    count !== agentCount.value || count !== particleAgents.value.length
-  if (!countChanged) return
+async function persistParticleAgents() {
+  try {
+    particleAgents.value = await saveParticleAgents(particleAgents.value)
+  } catch {
+    connected.value = false
+  }
+}
 
-  if (count < particleAgents.value.length) {
-    particleAgents.value = particleAgents.value.slice(0, count)
+function updateSelectedField(key: string, value: unknown) {
+  const particle = selectedParticle.value
+  if (!particle) return
+  if (key === 'name' && typeof value === 'string') particle.name = value.trim() || particle.name
+  else if (key === 'type' && typeof value === 'string') {
+    particle.type = value
+    syncSpawnType(value)
   }
-  while (particleAgents.value.length < count) {
-    const preferred = particleAgents.value.length === agentCount.value
-      ? agentName.value
-      : agentTypeName.value
-    particleAgents.value.push({
-      id: particleAgents.value.length,
-      name: uniqueAgentName(preferred, particleAgents.value),
-      type: agentTypeName.value,
-    })
+  else if (key === 'skills' && typeof value === 'string') {
+    particle.skills = value.split(',').map((skill) => skill.trim()).filter(Boolean)
+  } else if (!['id', 'name', 'type', 'skills'].includes(key)) {
+    particle.fields[key] = value
   }
+  void persistParticleAgents()
+}
+
+function selectedFieldValue(key: string): string | number {
+  const particle = selectedParticle.value
+  if (!particle) return ''
+  if (key === 'id') return particle.id
+  if (key === 'name') return particle.name
+  if (key === 'type') return particle.type
+  if (key === 'skills') return particle.skills.join(', ')
+  const value = particle.fields[key]
+  return typeof value === 'number' || typeof value === 'string' ? value : ''
+}
+
+function linkSelectedParticle() {
+  if (!selectedParticle.value) return
+  selectedParticle.value.agentLinked = true
+  void persistParticleAgents()
+}
+
+function reconcileParticleAgents(nextCount: number, lowMask: number, highMask: number) {
+  const count = Math.max(0, Math.min(32, Math.round(nextCount)))
+  let changed = false
+  for (let id = 0; id < 32; id += 1) {
+    const mask = id < 16 ? lowMask : highMask
+    const active = (Math.round(mask) & (1 << (id % 16))) !== 0
+    if (!active) continue
+    const existing = particleAgents.value.find((agent) => agent.id === id)
+    if (!existing) {
+      const type = selectedParticle.value?.type ?? 'General'
+      particleAgents.value.push(
+        defaultParticleAgent(
+          id,
+          uniqueAgentName(`${type} ${id + 1}`, particleAgents.value),
+          type,
+        ),
+      )
+      changed = true
+    } else if (existing.fields.metalActive === false) {
+      existing.fields.metalActive = true
+      existing.agentLinked = true
+      changed = true
+    }
+  }
+  particleAgents.value.sort((left, right) => left.id - right.id)
   agentCount.value = count
-  saveParticleAgents(particleAgents.value)
-  agentName.value = uniqueAgentName(
-    `${agentTypeName.value} ${count + 1}`,
-    particleAgents.value,
-  )
+  if (changed) void persistParticleAgents()
 }
 
-function resetParticle() {
-  commitControl('interaction.reset', 1)
+function wait(milliseconds: number) {
+  return new Promise<void>((resolve) => window.setTimeout(resolve, milliseconds))
+}
+
+async function waitForRuntimeReset() {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const snapshot = await getSnapshot()
+    const count = Math.round(snapshot.values['interaction.agent_count'] ?? -1)
+    const lowMask = Math.round(snapshot.values['interaction.active_mask_low'] ?? -1)
+    const highMask = Math.round(snapshot.values['interaction.active_mask_high'] ?? -1)
+    if (count === 1 && lowMask === 1 && highMask === 0) {
+      await wait(50)
+      return
+    }
+    await wait(50)
+  }
+  throw new Error('The Metal view did not confirm its reset.')
+}
+
+async function resetToGroundZero() {
+  if (resetInProgress.value) return
+  resetInProgress.value = true
+  try {
+    await setControl('interaction.reset', 1)
+    await waitForRuntimeReset()
+    particleAgents.value = await resetParticleAgents()
+    agentCount.value = 1
+    selectedParticleId.value = 0
+    showResetConfirmation.value = false
+  } catch {
+    connected.value = false
+  } finally {
+    resetInProgress.value = false
+  }
 }
 
 function openAgents() {
@@ -133,19 +208,45 @@ async function pollSnapshot() {
       snapshot.values['interaction.hud_gpu_budget_ms'] ?? gpuBudget.value
     gpuPressure.value =
       snapshot.values['interaction.hud_gpu_pressure'] ?? gpuPressure.value
-    reconcileParticleAgents(snapshot.values['interaction.agent_count'] ?? agentCount.value)
+    const nextSelectedParticleId = Math.max(
+      0,
+      Math.min(31, Math.round(snapshot.values['interaction.selected'] ?? selectedParticleId.value)),
+    )
+    if (nextSelectedParticleId !== selectedParticleId.value) {
+      selectedParticleId.value = nextSelectedParticleId
+      const type = particleAgents.value.find((agent) => agent.id === nextSelectedParticleId)?.type
+      if (type) syncSpawnType(type)
+    }
+    if (!resetInProgress.value) {
+      reconcileParticleAgents(
+        snapshot.values['interaction.agent_count'] ?? agentCount.value,
+        snapshot.values['interaction.active_mask_low'] ?? 1,
+        snapshot.values['interaction.active_mask_high'] ?? 0,
+      )
+    }
   } catch {
     connected.value = false
   }
 }
 
-onMounted(() => {
+onMounted(async () => {
+  try {
+    rosterUnlisten = await subscribeParticleAgents((roster) => {
+      particleAgents.value = roster
+    })
+    particleAgents.value = await loadParticleAgents()
+    agentCount.value = particleAgents.value.length
+    syncSpawnType(particleAgents.value[0]?.type ?? 'General')
+  } catch {
+    connected.value = false
+  }
   void pollSnapshot()
-  pollTimer = window.setInterval(pollSnapshot, 250)
+  pollTimer = window.setInterval(pollSnapshot, 100)
 })
 
 onBeforeUnmount(() => {
   if (pollTimer !== undefined) window.clearInterval(pollTimer)
+  rosterUnlisten?.()
 })
 </script>
 
@@ -189,6 +290,43 @@ onBeforeUnmount(() => {
         </div>
       </section>
 
+      <section class="card selected-particle">
+        <header>
+          <div>
+            <p>SELECTED PARTICLE</p>
+            <h2>{{ selectedParticle?.name ?? 'Waiting for selection' }}</h2>
+          </div>
+          <span v-if="selectedParticle">#{{ selectedParticle.id }}</span>
+        </header>
+        <div v-if="selectedParticle" class="control metadata-fields">
+          <label v-for="field in particleFields" :key="field.key">
+            <span>{{ field.label }}</span>
+            <output v-if="field.scope === 'readonly'">
+              {{ selectedFieldValue(field.key) }}
+            </output>
+            <a-select
+              v-else-if="field.kind === 'select'"
+              :value="selectedFieldValue(field.key)"
+              :options="field.options?.map((option) => ({ value: option, label: option }))"
+              @change="(value: unknown) => updateSelectedField(field.key, value)"
+            />
+            <a-input
+              v-else
+              :value="selectedFieldValue(field.key)"
+              :placeholder="field.kind === 'skills' ? 'skills/example/SKILL.md' : undefined"
+              @update:value="(value: string) => updateSelectedField(field.key, value)"
+            />
+          </label>
+          <a-button
+            v-if="!selectedParticle.agentLinked"
+            block
+            @click="linkSelectedParticle"
+          >
+            Link to Agents window
+          </a-button>
+        </div>
+      </section>
+
       <section class="card">
         <header>
           <div>
@@ -197,34 +335,6 @@ onBeforeUnmount(() => {
           </div>
           <span>gravity 0 m/s²</span>
         </header>
-        <div class="control">
-          <div>
-            <label for="agent-type">New agent type</label>
-            <output>{{ agentTypeName }}</output>
-          </div>
-          <a-select
-            id="agent-type"
-            :value="agentType"
-            style="width: 100%"
-            :options="[
-              { value: 0, label: 'General' },
-              { value: 1, label: 'Scout' },
-              { value: 2, label: 'Builder' },
-            ]"
-            @change="commitAgentType"
-          />
-          <a-input
-            v-model:value="agentName"
-            class="agent-name"
-            :maxlength="32"
-            placeholder="Unique agent name"
-            :status="agentNameValid ? undefined : 'error'"
-          />
-          <p>
-            <span>{{ agentNameValid ? 'Unique name' : 'Will add a unique suffix' }}</span>
-            <span>⌘ Click space to add</span>
-          </p>
-        </div>
         <div class="control">
           <div>
             <label for="space-drag">Space drag</label>
@@ -240,9 +350,9 @@ onBeforeUnmount(() => {
           />
           <p><span>vacuum</span><span>damped</span></p>
         </div>
-        <a-button block class="reset" @click="resetParticle">
+        <a-button block class="reset" @click="showResetConfirmation = true">
           <template #icon><reload-outlined /></template>
-          Reset particle
+          Reset to ground zero
         </a-button>
         <a-button block class="agents" @click="openAgents">
           Agents
@@ -251,5 +361,23 @@ onBeforeUnmount(() => {
       </section>
 
     </main>
+    <div
+      v-if="showResetConfirmation"
+      class="reset-backdrop"
+      @click.self="!resetInProgress && (showResetConfirmation = false)"
+    >
+      <section class="reset-dialog" role="dialog" aria-modal="true" aria-labelledby="reset-title">
+        <h3 id="reset-title">Reset to ground zero?</h3>
+        <p>This removes added particles, metadata, and agent chats.</p>
+        <div>
+          <a-button :disabled="resetInProgress" @click="showResetConfirmation = false">
+            Cancel
+          </a-button>
+          <a-button danger type="primary" :loading="resetInProgress" @click="resetToGroundZero">
+            Reset
+          </a-button>
+        </div>
+      </section>
+    </div>
   </a-config-provider>
 </template>

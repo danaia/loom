@@ -1,0 +1,12 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "particle-sync",
+  "description": "Allows Loom's control and Agents windows to synchronize particle state.",
+  "windows": [
+    "loom-project-panel",
+    "loom-project-agents"
+  ],
+  "permissions": [
+    "core:event:default"
+  ]
+}

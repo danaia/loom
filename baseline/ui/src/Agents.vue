@@ -13,14 +13,22 @@ import {
   createAgentChat,
   connectAndStartAgent,
   deleteAgentChat,
+  getSnapshot,
   hasAgentApiKey,
   loadAgentChats,
   saveAgentChat,
   sendAgentMessage,
+  setControl,
   startSavedAgent,
 } from './bridge'
 import type { AgentChat, AgentChatMessage } from './bridge'
-import { loadParticleAgents } from './agentRoster'
+import {
+  loadParticleAgents,
+  saveParticleAgents,
+  subscribeBaselineReset,
+  subscribeParticleAgents,
+} from './agentRoster'
+import type { ParticleAgent } from './agentRoster'
 
 type ChatMessage = AgentChatMessage
 
@@ -35,11 +43,17 @@ const chats = ref<AgentChat[]>([])
 const activeChatId = ref<string | null>(null)
 const prompt = ref('')
 const sending = ref(false)
-const particleAgents = ref(loadParticleAgents())
+const particleAgents = ref<ParticleAgent[]>([])
+const selectedParticleId = ref(0)
+const removalCandidate = ref<ParticleAgent | null>(null)
+const removeAgentLink = ref(true)
+const removeMetalParticle = ref(false)
 const agentActivity = ref('Thinking')
 const conversation = ref<HTMLElement | null>(null)
 let activityTimer: ReturnType<typeof setInterval> | null = null
 let rosterTimer: ReturnType<typeof setInterval> | null = null
+let rosterUnlisten: (() => void) | undefined
+let resetUnlisten: (() => void) | undefined
 
 const modelId = 'gpt-5.6-terra'
 const activeModel = ref(modelId)
@@ -48,6 +62,9 @@ const projectRoot = ref('')
 const projectFileCount = ref(0)
 const minimumActivityMs = 900
 const modelLabel = computed(() => activeModel.value)
+const linkedParticleAgents = computed(
+  () => particleAgents.value.filter((agent) => agent.agentLinked),
+)
 const canSaveKey = computed(() => apiKey.value.trim().length > 0)
 const connected = computed(() => connectionPhase.value === 'connected')
 const statusLabel = computed(() => {
@@ -282,16 +299,73 @@ function handleComposerKeydown(event: KeyboardEvent) {
   }
 }
 
+async function refreshSelection() {
+  const snapshot = await getSnapshot()
+  selectedParticleId.value = Math.max(
+    0,
+    Math.min(31, Math.round(snapshot.values['interaction.selected'] ?? selectedParticleId.value)),
+  )
+}
+
+async function selectParticle(agent: ParticleAgent) {
+  selectedParticleId.value = agent.id
+  await setControl('interaction.select_particle', agent.id)
+}
+
+function openParticleRemoval(event: MouseEvent, agent: ParticleAgent) {
+  event.stopPropagation()
+  removalCandidate.value = agent
+  removeAgentLink.value = true
+  removeMetalParticle.value = false
+}
+
+async function confirmParticleRemoval() {
+  const particle = removalCandidate.value
+  if (!particle || (!removeAgentLink.value && !removeMetalParticle.value)) return
+  try {
+    const nextRoster = particleAgents.value.map((agent) => {
+      if (agent.id !== particle.id) return agent
+      return {
+        ...agent,
+        agentLinked: removeAgentLink.value ? false : agent.agentLinked,
+        fields: {
+          ...agent.fields,
+          ...(removeMetalParticle.value ? { metalActive: false } : {}),
+        },
+      }
+    })
+    if (removeMetalParticle.value) {
+      await setControl('interaction.remove_particle', particle.id)
+    }
+    particleAgents.value = await saveParticleAgents(nextRoster)
+    removalCandidate.value = null
+  } catch (reason) {
+    error.value = describeError(reason, 'The particle could not be removed.')
+  }
+}
+
 onMounted(async () => {
   rosterTimer = window.setInterval(() => {
-    particleAgents.value = loadParticleAgents()
-  }, 500)
+    if (!removalCandidate.value) {
+      void refreshSelection().catch(() => undefined)
+    }
+  }, 100)
   try {
+    rosterUnlisten = await subscribeParticleAgents((roster) => {
+      particleAgents.value = roster
+    })
+    resetUnlisten = await subscribeBaselineReset(() => {
+      chats.value = []
+      activeChatId.value = null
+      messages.value = []
+      responseId.value = null
+      error.value = ''
+    })
+    particleAgents.value = await loadParticleAgents()
+    await refreshSelection()
     chats.value = await loadAgentChats()
     if (chats.value.length) {
       await selectChat(chats.value[0])
-    } else {
-      await createNewChat()
     }
     if (await hasAgentApiKey()) {
       if (!messages.value.length) await startSavedSession(false, false)
@@ -309,6 +383,8 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   stopAgentActivity()
   if (rosterTimer !== null) clearInterval(rosterTimer)
+  rosterUnlisten?.()
+  resetUnlisten?.()
 })
 </script>
 
@@ -336,12 +412,28 @@ onBeforeUnmount(() => {
       <aside class="sidebar">
         <div class="sidebar-section particle-roster">
           <p class="eyebrow">PARTICLES</p>
-          <div v-for="agent in particleAgents" :key="agent.id" class="particle-agent">
-            <i :data-type="agent.type"></i>
-            <span>
-              <strong>{{ agent.name }}</strong>
-              <small>{{ agent.type }}</small>
-            </span>
+          <div
+            v-for="agent in linkedParticleAgents"
+            :key="agent.id"
+            class="particle-agent"
+            :class="{ 'particle-agent--active': agent.id === selectedParticleId }"
+          >
+            <button class="particle-agent-select" type="button" @click="selectParticle(agent)">
+              <i :data-type="agent.type"></i>
+              <span>
+                <strong>{{ agent.name }}</strong>
+                <small>{{ agent.type }}{{ agent.fields.metalActive === false ? ' · removed from view' : '' }}</small>
+              </span>
+            </button>
+            <button
+              class="particle-agent-remove"
+              type="button"
+              :aria-label="`Remove ${agent.name}`"
+              :title="`Remove ${agent.name}`"
+              @click="openParticleRemoval($event, agent)"
+            >
+              <delete-outlined />
+            </button>
           </div>
         </div>
         <div class="sidebar-section">
@@ -452,6 +544,40 @@ onBeforeUnmount(() => {
           </div>
           <p>{{ activeModel }} · medium reasoning · read/write · Metal hot reload · {{ projectFileCount }} files</p>
         </footer>
+      </section>
+    </div>
+
+    <div v-if="removalCandidate" class="modal-backdrop" @click.self="removalCandidate = null">
+      <section class="key-dialog removal-dialog" role="dialog" aria-modal="true" aria-labelledby="particle-removal-title">
+        <button class="dialog-close" type="button" aria-label="Close" @click="removalCandidate = null">×</button>
+        <span class="dialog-icon"><delete-outlined /></span>
+        <h3 id="particle-removal-title">Remove {{ removalCandidate.name }}?</h3>
+        <p>Choose where this particle should be removed. These actions are independent.</p>
+        <label class="removal-option">
+          <input v-model="removeAgentLink" type="checkbox" />
+          <span>
+            <strong>Remove link to Agents</strong>
+            <small>Hide it here while preserving metadata for relinking.</small>
+          </span>
+        </label>
+        <label class="removal-option">
+          <input v-model="removeMetalParticle" type="checkbox" />
+          <span>
+            <strong>Remove from Metal view</strong>
+            <small>Deactivate the particle and make its slot reusable.</small>
+          </span>
+        </label>
+        <div class="removal-actions">
+          <button type="button" @click="removalCandidate = null">Cancel</button>
+          <button
+            class="remove-confirm"
+            type="button"
+            :disabled="!removeAgentLink && !removeMetalParticle"
+            @click="confirmParticleRemoval"
+          >
+            Remove
+          </button>
+        </div>
       </section>
     </div>
 

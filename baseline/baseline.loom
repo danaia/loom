@@ -12,9 +12,14 @@ const interaction.spawn_x: f32<m> = 0
 const interaction.spawn_y: f32<m> = 0
 const interaction.spawn_z: f32<m> = 0
 const interaction.spawn_generation: f32 = 0
+const interaction.spawn_slot: f32 = 0
 const interaction.spawn_type: f32 = 0
+const interaction.select_command: f32 = 0
+const interaction.remove_command: f32 = 0
 const interaction.pointer_down: f32 = 0
 const interaction.agent_count: f32 = 1
+const interaction.active_mask_low: f32 = 1
+const interaction.active_mask_high: f32 = 0
 const interaction.reset: f32 = 0
 const interaction.space_drag: f32<s^-1> = 0
 const interaction.camera_aspect: f32 = 1.333333
@@ -81,6 +86,16 @@ stream interaction.click_seen: f32 {
   init=[0]
 }
 
+stream interaction.select_seen: f32 {
+  cap=1 len=1 buffers=1 access=rw storage=device
+  init=[0]
+}
+
+stream interaction.remove_seen: f32 {
+  cap=1 len=1 buffers=1 access=rw storage=device
+  init=[0]
+}
+
 stream interaction.dragging: f32 {
   cap=1 len=1 buffers=1 access=rw storage=device
   init=[0]
@@ -120,7 +135,12 @@ kernel apply_interaction(
   spawn_y: in value<f32,m>,
   spawn_z: in value<f32,m>,
   spawn_generation: in value<f32>,
+  spawn_slot: in value<f32>,
   spawn_type: in value<f32>,
+  select_seen: rw all stream<f32>,
+  remove_seen: rw all stream<f32>,
+  select_command: in value<f32>,
+  remove_command: in value<f32>,
   selection_radius: in value<f32,m>,
   reset: in value<f32>,
   dragging: rw all stream<f32>,
@@ -190,7 +210,12 @@ pass interact = apply_interaction(
   spawn_y=interaction.spawn_y
   spawn_z=interaction.spawn_z
   spawn_generation=interaction.spawn_generation
+  spawn_slot=interaction.spawn_slot
   spawn_type=interaction.spawn_type
+  select_seen=interaction.select_seen
+  remove_seen=interaction.remove_seen
+  select_command=interaction.select_command
+  remove_command=interaction.remove_command
   selection_radius=particle.selection_radius
   reset=interaction.reset
   dragging=interaction.dragging

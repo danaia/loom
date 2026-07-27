@@ -1,1 +1,1 @@
-{}
+{"particle-sync":{"identifier":"particle-sync","description":"Allows Loom's control and Agents windows to synchronize particle state.","local":true,"windows":["loom-project-panel","loom-project-agents"],"permissions":["core:event:default"]}}

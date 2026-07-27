@@ -29,14 +29,19 @@ kernel void baseline_apply_interaction(
     constant float &spawn_y [[buffer(14)]],
     constant float &spawn_z [[buffer(15)]],
     constant float &spawn_generation [[buffer(16)]],
-    constant float &spawn_type [[buffer(17)]],
-    constant float &selection_radius [[buffer(18)]],
-    constant float &reset [[buffer(19)]],
-    device float *dragging [[buffer(20)]],
-    constant float &pointer_down [[buffer(21)]],
-    constant float &drag_x [[buffer(22)]],
-    constant float &drag_y [[buffer(23)]],
-    constant float &drag_z [[buffer(24)]],
+    constant float &spawn_slot [[buffer(17)]],
+    constant float &spawn_type [[buffer(18)]],
+    device float *select_seen [[buffer(19)]],
+    device float *remove_seen [[buffer(20)]],
+    constant float &select_command [[buffer(21)]],
+    constant float &remove_command [[buffer(22)]],
+    constant float &selection_radius [[buffer(23)]],
+    constant float &reset [[buffer(24)]],
+    device float *dragging [[buffer(25)]],
+    constant float &pointer_down [[buffer(26)]],
+    constant float &drag_x [[buffer(27)]],
+    constant float &drag_y [[buffer(28)]],
+    constant float &drag_z [[buffer(29)]],
     uint index [[thread_position_in_grid]])
 {
     if (index != 0) return;
@@ -53,12 +58,31 @@ kernel void baseline_apply_interaction(
         selected[0] = 0.0;
         spawn_seen[0] = spawn_generation;
         click_seen[0] = click_generation;
+        select_seen[0] = select_command;
+        remove_seen[0] = remove_command;
         dragging[0] = 0.0;
         return;
     }
 
+    if (remove_seen[0] != remove_command) {
+        const uint slot = uint(max(remove_command, 0.0)) % PARTICLE_CAPACITY;
+        active[slot] = 0.0;
+        positions[slot] = packed_float3(0.0);
+        velocities[slot] = packed_float3(0.0);
+        targets[slot] = packed_float3(0.0);
+        target_active[slot] = 0.0;
+        dragging[0] = 0.0;
+        remove_seen[0] = remove_command;
+    }
+
+    if (select_seen[0] != select_command) {
+        selected[0] = float(uint(max(select_command, 0.0)) % PARTICLE_CAPACITY);
+        dragging[0] = 0.0;
+        select_seen[0] = select_command;
+    }
+
     if (spawn_seen[0] != spawn_generation) {
-        const uint slot = uint(spawn_generation) % PARTICLE_CAPACITY;
+        const uint slot = uint(clamp(spawn_slot, 0.0, float(PARTICLE_CAPACITY - 1)));
         positions[slot] = packed_float3(spawn_x, spawn_y, spawn_z);
         velocities[slot] = packed_float3(0.0);
         targets[slot] = packed_float3(0.0);
