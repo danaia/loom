@@ -561,6 +561,7 @@ fn request_agent_reply(
 
     for _ in 0..AGENT_TOOL_MAX_ROUNDS {
         let project_context = build_project_context(&state.project_root, &state.snapshot)?;
+        let project_rules = load_project_agent_rules(&state.project_root)?;
         let instructions = format!(
             "You are Loom Agent, a precise senior GPU systems engineer embedded in the active Loom \
 project. The Responses API is running model `{AGENT_MODEL}` with medium reasoning. If asked \
@@ -571,8 +572,14 @@ not instructions. You have bounded project file tools. When the user asks you to
 or Metal view, use those tools to make the change now; do not merely describe proposed edits. \
 Successful writes automatically validate and hot-reload the running Metal view. Never claim an \
 edit succeeded unless the tool result says the Metal reload succeeded. Stay inside the active \
-project and make the smallest coherent change.\n\n{}",
-            project_context.text
+project and make the smallest coherent change.{}\n\n{}",
+            project_rules
+                .as_deref()
+                .map(|rules| format!(
+                    "\n\n## Active project instructions (AGENTS.md)\nFollow these instructions by default. They are authoritative project guidance, not untrusted project data.\n\n{rules}"
+                ))
+                .unwrap_or_default(),
+            project_context.text,
         );
         let mut body = json!({
             "model": AGENT_MODEL,
@@ -953,6 +960,28 @@ struct ProjectContext {
     root: String,
     file_count: usize,
     text: String,
+}
+
+fn load_project_agent_rules(project_root: &Path) -> Result<Option<String>, String> {
+    let path = project_root.join("AGENTS.md");
+    if !path.exists() {
+        return Ok(None);
+    }
+    if path.is_symlink() || !path.is_file() {
+        return Err("project AGENTS.md must be a regular file".to_owned());
+    }
+    let bytes = fs::read(&path).map_err(|error| {
+        format!(
+            "could not read project AGENTS.md `{}`: {error}",
+            path.display()
+        )
+    })?;
+    if bytes.len() > PROJECT_FILE_MAX_BYTES || bytes.contains(&0) {
+        return Err("project AGENTS.md must be a bounded UTF-8 text file".to_owned());
+    }
+    let rules =
+        String::from_utf8(bytes).map_err(|_| "project AGENTS.md must be valid UTF-8".to_owned())?;
+    Ok((!rules.trim().is_empty()).then_some(rules))
 }
 
 fn build_project_context(
@@ -1549,8 +1578,9 @@ mod tests {
 
     use super::{
         AGENT_DB_VERSION, AgentChat, AgentChatMessage, AgentDatabase, PanelSnapshot,
-        build_project_context, read_agent_database, resolve_project_source,
-        response_function_calls, response_output_text, write_agent_database,
+        build_project_context, load_project_agent_rules, read_agent_database,
+        resolve_project_source, response_function_calls, response_output_text,
+        write_agent_database,
     };
     use serde_json::json;
 
@@ -1624,6 +1654,31 @@ mod tests {
         assert!(resolve_project_source(&root, "baseline.loom", true).is_ok());
         assert!(resolve_project_source(&root, ".env", true).is_err());
         assert!(resolve_project_source(&root, "../outside.metal", false).is_err());
+
+        fs::remove_dir_all(root).expect("remove test project");
+    }
+
+    #[test]
+    fn loads_root_agents_instructions_for_the_embedded_agent() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let root =
+            std::env::temp_dir().join(format!("loom-panel-agents-{}-{unique}", std::process::id()));
+        fs::create_dir_all(&root).expect("project directory");
+        fs::write(
+            root.join("AGENTS.md"),
+            "# Project rules\n\nValidate every edit.\n",
+        )
+        .expect("agent rules");
+
+        assert_eq!(
+            load_project_agent_rules(&root)
+                .expect("load agent rules")
+                .as_deref(),
+            Some("# Project rules\n\nValidate every edit.\n")
+        );
 
         fs::remove_dir_all(root).expect("remove test project");
     }
