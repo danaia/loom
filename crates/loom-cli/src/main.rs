@@ -300,6 +300,8 @@ fn create_project(project_name: &str) -> Result<(), u8> {
     }
     rename_baseline_source(&staged_project, project_name)
         .map_err(|message| new_error("rename", &message))?;
+    personalize_controls_title(&staged_project, project_name)
+        .map_err(|message| new_error("panel_title", &message))?;
     install_project_dependencies(&staged_project)
         .map_err(|message| new_error("npm_install", &message))?;
     fs::rename(&staged_project, &destination).map_err(|error| {
@@ -335,6 +337,30 @@ fn rename_baseline_source(project_root: &Path, project_name: &str) -> Result<(),
         })?;
     }
     Ok(())
+}
+
+fn personalize_controls_title(project_root: &Path, project_name: &str) -> Result<(), String> {
+    let config_path = project_root.join("ui/loom-ui.json");
+    let mut config = serde_json::from_slice::<serde_json::Value>(
+        &fs::read(&config_path)
+            .map_err(|error| format!("could not read `{}`: {error}", config_path.display()))?,
+    )
+    .map_err(|error| format!("could not parse `{}`: {error}", config_path.display()))?;
+    let Some(config) = config.as_object_mut() else {
+        return Err(format!(
+            "`{}` must contain a JSON object",
+            config_path.display()
+        ));
+    };
+    config.insert(
+        "title".to_owned(),
+        serde_json::Value::String(format!("Loom {project_name} — Controls")),
+    );
+    let mut serialized = serde_json::to_vec_pretty(&config)
+        .map_err(|error| format!("could not serialize `{}`: {error}", config_path.display()))?;
+    serialized.push(b'\n');
+    fs::write(&config_path, serialized)
+        .map_err(|error| format!("could not write `{}`: {error}", config_path.display()))
 }
 
 fn install_project_dependencies(project_root: &Path) -> Result<(), String> {
@@ -576,7 +602,9 @@ fn print_json(value: &impl Serialize) {
 mod tests {
     use std::fs;
 
-    use super::{CliAction, Command, parse_arguments, rename_baseline_source};
+    use super::{
+        CliAction, Command, parse_arguments, personalize_controls_title, rename_baseline_source,
+    };
 
     fn args(values: &[&str]) -> Vec<String> {
         values.iter().map(|value| (*value).to_owned()).collect()
@@ -643,5 +671,24 @@ mod tests {
         assert!(project.path().join("network.loom").is_file());
         assert!(!project.path().join("baseline.loom").exists());
         assert!(!project.path().join("baseline.lmp").exists());
+    }
+
+    #[test]
+    fn new_personalizes_the_controls_window_title() {
+        let project = tempfile::tempdir().expect("project directory");
+        let ui = project.path().join("ui");
+        fs::create_dir(&ui).expect("UI directory");
+        fs::write(
+            ui.join("loom-ui.json"),
+            r#"{"title":"Loom Baseline — Controls","width":340}"#,
+        )
+        .expect("UI config");
+
+        personalize_controls_title(project.path(), "network").expect("personalize title");
+
+        let config: serde_json::Value =
+            serde_json::from_slice(&fs::read(ui.join("loom-ui.json")).expect("UI config"))
+                .expect("valid UI config");
+        assert_eq!(config["title"], "Loom network — Controls");
     }
 }

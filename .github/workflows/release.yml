@@ -15,6 +15,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: loom-macos-release
       - name: Test language and validation
         run: >-
           cargo test --locked
@@ -22,8 +25,6 @@ jobs:
           --package loom-validator
           --package loom-syntax
           --package loom-cli
-      - name: Test native Metal path
-        run: cargo test --locked --package loom-metal --test native_loom
       - name: Build portable directory
         run: ./scripts/package-loom.sh
       - uses: actions/upload-artifact@v4

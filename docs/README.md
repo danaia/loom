@@ -108,7 +108,7 @@ artifact hashes; `explain` includes the normalized graph, generated Metal, and
 resolved execution plan. On macOS, `run` opens a native Metal window driven
 directly by the parsed source graph.
 
-Loom 0.1.7 also supports self-contained `.lmp` projects:
+Loom 0.1.8 also supports self-contained `.lmp` projects:
 
 ```text
 loom build examples/marble-water/marble-water.loom

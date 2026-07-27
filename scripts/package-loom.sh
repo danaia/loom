@@ -39,13 +39,6 @@ trap cleanup EXIT
 
 cd "${REPO_ROOT}"
 cargo build --locked --release --package loom-cli --package loom-ui-panel
-command -v npm >/dev/null 2>&1 || {
-  echo "error: npm is required to package the Marble Water project UI" >&2
-  exit 1
-}
-npm install --prefix "${REPO_ROOT}/examples/marble-water/ui" --no-audit --no-fund
-"${REPO_ROOT}/target/release/loom" build \
-  "${REPO_ROOT}/examples/marble-water/marble-water.loom"
 
 mkdir -p \
   "${PACKAGE_ROOT}/bin" \
