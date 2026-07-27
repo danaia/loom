@@ -298,6 +298,8 @@ fn create_project(project_name: &str) -> Result<(), u8> {
         copy_project_tree(&unpacked.join("loom/baseline"), &staged_project)
             .map_err(|message| new_error("copy", &message))?;
     }
+    rename_baseline_source(&staged_project, project_name)
+        .map_err(|message| new_error("rename", &message))?;
     install_project_dependencies(&staged_project)
         .map_err(|message| new_error("npm_install", &message))?;
     fs::rename(&staged_project, &destination).map_err(|error| {
@@ -307,6 +309,31 @@ fn create_project(project_name: &str) -> Result<(), u8> {
         )
     })?;
     println!("Created Loom project at {}", destination.display());
+    Ok(())
+}
+
+fn rename_baseline_source(project_root: &Path, project_name: &str) -> Result<(), String> {
+    let baseline_source = project_root.join("baseline.loom");
+    if !baseline_source.is_file() {
+        return Err(format!(
+            "Baseline template is missing `{}`",
+            baseline_source.display()
+        ));
+    }
+    let project_source = project_root.join(format!("{project_name}.loom"));
+    fs::rename(&baseline_source, &project_source).map_err(|error| {
+        format!(
+            "could not rename `{}` to `{}`: {error}",
+            baseline_source.display(),
+            project_source.display()
+        )
+    })?;
+    let prebuilt_package = project_root.join("baseline.lmp");
+    if prebuilt_package.exists() {
+        fs::remove_file(&prebuilt_package).map_err(|error| {
+            format!("could not remove `{}`: {error}", prebuilt_package.display())
+        })?;
+    }
     Ok(())
 }
 
@@ -547,7 +574,9 @@ fn print_json(value: &impl Serialize) {
 
 #[cfg(test)]
 mod tests {
-    use super::{CliAction, Command, parse_arguments};
+    use std::fs;
+
+    use super::{CliAction, Command, parse_arguments, rename_baseline_source};
 
     fn args(values: &[&str]) -> Vec<String> {
         values.iter().map(|value| (*value).to_owned()).collect()
@@ -600,5 +629,19 @@ mod tests {
                 project_name: "my-project".to_owned()
             })
         );
+    }
+
+    #[test]
+    fn new_renames_the_baseline_source_and_removes_its_package() {
+        let project = tempfile::tempdir().expect("project directory");
+        fs::write(project.path().join("baseline.loom"), "module baseline")
+            .expect("baseline source");
+        fs::write(project.path().join("baseline.lmp"), "stale package").expect("baseline package");
+
+        rename_baseline_source(project.path(), "network").expect("rename starter source");
+
+        assert!(project.path().join("network.loom").is_file());
+        assert!(!project.path().join("baseline.loom").exists());
+        assert!(!project.path().join("baseline.lmp").exists());
     }
 }
