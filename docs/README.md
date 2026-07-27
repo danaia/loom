@@ -84,6 +84,9 @@ Update to the newest release from any directory:
 loom update
 ```
 
+Create a new project from the release's Baseline starter in the current directory:
+`loom new my-project`.
+
 Run a program directly:
 
 ```text
@@ -105,7 +108,7 @@ artifact hashes; `explain` includes the normalized graph, generated Metal, and
 resolved execution plan. On macOS, `run` opens a native Metal window driven
 directly by the parsed source graph.
 
-Loom 0.1.5 also supports self-contained `.lmp` projects:
+Loom 0.1.6 also supports self-contained `.lmp` projects:
 
 ```text
 loom build examples/marble-water/marble-water.loom

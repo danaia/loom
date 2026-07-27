@@ -1,5 +1,6 @@
 use std::{
-    env,
+    env, fs,
+    path::{Component, Path, PathBuf},
     process::{Command as ProcessCommand, ExitCode, Stdio},
 };
 
@@ -21,6 +22,7 @@ enum Command {
 enum CliAction {
     Execute { command: Command, path: String },
     Help,
+    New { project_name: String },
     Update,
     Version,
 }
@@ -71,6 +73,9 @@ fn run() -> Result<(), u8> {
         }
         CliAction::Update => {
             return update_installation();
+        }
+        CliAction::New { project_name } => {
+            return create_project(&project_name);
         }
         CliAction::Version => {
             println!("loom {}", env!("CARGO_PKG_VERSION"));
@@ -189,6 +194,9 @@ fn parse_arguments(arguments: &[String]) -> Result<CliAction, String> {
         [flag] if flag == "--help" || flag == "-h" => Ok(CliAction::Help),
         [flag] if flag == "--version" || flag == "-V" => Ok(CliAction::Version),
         [command] if command == "update" => Ok(CliAction::Update),
+        [command, project_name] if command == "new" => Ok(CliAction::New {
+            project_name: project_name.clone(),
+        }),
         [path] => Ok(CliAction::Execute {
             command: Command::Run,
             path: path.clone(),
@@ -226,10 +234,187 @@ Usage:
   loom run <source.loom>       Run a Loom program explicitly
   loom check <source.loom>     Parse, validate, and fingerprint
   loom explain <source.loom>   Print the graph, plan, and generated Metal
+  loom new <project-name>      Create a project from the Baseline starter
   loom update                  Install the latest Loom release
   loom --version               Print the installed version
   loom --help                  Print this help"
     );
+}
+
+fn create_project(project_name: &str) -> Result<(), u8> {
+    if !is_project_name(project_name) {
+        return Err(new_error(
+            "name",
+            "project name must be one non-empty directory name without path separators",
+        ));
+    }
+    let working_directory = env::current_dir().map_err(|error| {
+        print_json(&serde_json::json!({
+            "status": "new_error",
+            "stage": "working_directory",
+            "message": error.to_string(),
+        }));
+        2
+    })?;
+    let destination = working_directory.join(project_name);
+    if destination.exists() {
+        return Err(new_error(
+            "destination",
+            &format!("destination `{}` already exists", destination.display()),
+        ));
+    }
+
+    let staging = tempfile::Builder::new()
+        .prefix(".loom-new-")
+        .tempdir_in(&working_directory)
+        .map_err(|error| {
+            print_json(&serde_json::json!({
+                "status": "new_error",
+                "stage": "staging",
+                "message": error.to_string(),
+            }));
+            2
+        })?;
+    let staged_project = staging.path().join(project_name);
+
+    if let Some(template) = installed_baseline() {
+        copy_project_tree(&template, &staged_project)
+            .map_err(|message| new_error("copy", &message))?;
+    } else {
+        let archive = staging.path().join("loom-release.tar.gz");
+        download_release_baseline(&archive).map_err(|message| new_error("download", &message))?;
+        let unpacked = staging.path().join("release");
+        fs::create_dir(&unpacked).map_err(|error| new_error("unpack", &error.to_string()))?;
+        let status = ProcessCommand::new("tar")
+            .arg("-xzf")
+            .arg(&archive)
+            .arg("-C")
+            .arg(&unpacked)
+            .status()
+            .map_err(|error| new_error("unpack", &format!("could not run tar: {error}")))?;
+        if !status.success() {
+            return Err(new_error("unpack", &format!("tar exited with {status}")));
+        }
+        copy_project_tree(&unpacked.join("loom/baseline"), &staged_project)
+            .map_err(|message| new_error("copy", &message))?;
+    }
+    install_project_dependencies(&staged_project)
+        .map_err(|message| new_error("npm_install", &message))?;
+    fs::rename(&staged_project, &destination).map_err(|error| {
+        new_error(
+            "destination",
+            &format!("could not create `{}`: {error}", destination.display()),
+        )
+    })?;
+    println!("Created Loom project at {}", destination.display());
+    Ok(())
+}
+
+fn install_project_dependencies(project_root: &Path) -> Result<(), String> {
+    let ui_root = project_root.join("ui");
+    if !ui_root.join("package.json").is_file() {
+        return Ok(());
+    }
+    let npm = env::var_os("LOOM_NPM").unwrap_or_else(|| "npm".into());
+    println!("Installing UI dependencies...");
+    let status = ProcessCommand::new(npm)
+        .args(["install", "--no-audit", "--no-fund"])
+        .current_dir(&ui_root)
+        .status()
+        .map_err(|error| format!("could not run npm: {error}"))?;
+    if !status.success() {
+        return Err(format!("npm install exited with {status}"));
+    }
+    Ok(())
+}
+
+fn is_project_name(name: &str) -> bool {
+    let path = Path::new(name);
+    !name.is_empty()
+        && path.components().count() == 1
+        && matches!(path.components().next(), Some(Component::Normal(_)))
+}
+
+fn installed_baseline() -> Option<PathBuf> {
+    if let Some(path) = env::var_os("LOOM_NEW_TEMPLATE_DIR").map(PathBuf::from) {
+        return path.is_dir().then_some(path);
+    }
+    let executable = env::current_exe().ok()?.canonicalize().ok()?;
+    let candidate = executable.parent()?.parent()?.join("baseline");
+    candidate.is_dir().then_some(candidate)
+}
+
+fn download_release_baseline(archive: &Path) -> Result<(), String> {
+    let default_url = format!(
+        "https://github.com/danaia/loom/releases/download/v{}/loom-darwin-arm64.tar.gz",
+        env!("CARGO_PKG_VERSION")
+    );
+    let release_url = env::var("LOOM_NEW_RELEASE_URL").unwrap_or(default_url);
+    let status = ProcessCommand::new("curl")
+        .args([
+            "-fsSL",
+            "--retry",
+            "3",
+            "--proto",
+            "=https,file",
+            "--tlsv1.2",
+            &release_url,
+            "-o",
+        ])
+        .arg(archive)
+        .status()
+        .map_err(|error| format!("could not run curl: {error}"))?;
+    if !status.success() {
+        return Err(format!(
+            "could not download Loom release from {release_url}: {status}"
+        ));
+    }
+    Ok(())
+}
+
+fn copy_project_tree(source: &Path, destination: &Path) -> Result<(), String> {
+    if !source.is_dir() {
+        return Err(format!(
+            "Baseline template `{}` is missing",
+            source.display()
+        ));
+    }
+    fs::create_dir(destination)
+        .map_err(|error| format!("could not create `{}`: {error}", destination.display()))?;
+    for entry in fs::read_dir(source)
+        .map_err(|error| format!("could not read `{}`: {error}", source.display()))?
+    {
+        let entry = entry.map_err(|error| error.to_string())?;
+        if matches!(
+            entry.file_name().to_str(),
+            Some("node_modules" | "dist" | "target")
+        ) {
+            continue;
+        }
+        let file_type = entry.file_type().map_err(|error| error.to_string())?;
+        let destination_path = destination.join(entry.file_name());
+        if file_type.is_dir() {
+            copy_project_tree(&entry.path(), &destination_path)?;
+        } else if file_type.is_file() {
+            fs::copy(entry.path(), &destination_path)
+                .map_err(|error| format!("could not copy `{}`: {error}", entry.path().display()))?;
+        } else if !file_type.is_symlink() {
+            return Err(format!(
+                "Baseline template contains unsupported entry `{}`",
+                entry.path().display()
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn new_error(stage: &str, message: &str) -> u8 {
+    print_json(&serde_json::json!({
+        "status": "new_error",
+        "stage": stage,
+        "message": message,
+    }));
+    2
 }
 
 #[cfg(target_os = "macos")]
@@ -405,5 +590,15 @@ mod tests {
             Ok(CliAction::Version)
         );
         assert_eq!(parse_arguments(&args(&["update"])), Ok(CliAction::Update));
+    }
+
+    #[test]
+    fn new_accepts_a_single_project_name() {
+        assert_eq!(
+            parse_arguments(&args(&["new", "my-project"])),
+            Ok(CliAction::New {
+                project_name: "my-project".to_owned()
+            })
+        );
     }
 }

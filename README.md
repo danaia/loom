@@ -258,6 +258,7 @@ loom build program.loom    # Build program.lmp
 loom check program.loom    # Validate
 loom check project.lmp     # Validate a package
 loom explain program.loom  # Inspect the graph and generated Metal
+loom new my-project        # Start from the Baseline project
 loom update                # Install the latest release
 loom --version             # Print the version
 ```

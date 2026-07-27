@@ -39,11 +39,17 @@ trap cleanup EXIT
 
 cd "${REPO_ROOT}"
 cargo build --locked --release --package loom-cli --package loom-ui-panel
+command -v npm >/dev/null 2>&1 || {
+  echo "error: npm is required to package the Marble Water project UI" >&2
+  exit 1
+}
+npm install --prefix "${REPO_ROOT}/examples/marble-water/ui" --no-audit --no-fund
 "${REPO_ROOT}/target/release/loom" build \
   "${REPO_ROOT}/examples/marble-water/marble-water.loom"
 
 mkdir -p \
   "${PACKAGE_ROOT}/bin" \
+  "${PACKAGE_ROOT}/baseline" \
   "${PACKAGE_ROOT}/examples" \
   "${PACKAGE_ROOT}/share/loom/docs/releases"
 
@@ -52,6 +58,8 @@ install -m 0755 \
   "${REPO_ROOT}/target/release/loom-ui-panel" \
   "${PACKAGE_ROOT}/bin/loom-ui-panel"
 install -m 0755 "${REPO_ROOT}/uninstall.sh" "${PACKAGE_ROOT}/uninstall"
+tar -C "${REPO_ROOT}" -cf - --exclude='baseline/ui/node_modules' baseline | \
+  tar -C "${PACKAGE_ROOT}" -xf -
 install -m 0644 \
   "${REPO_ROOT}/examples/hello-particle/hello-particle.loom" \
   "${PACKAGE_ROOT}/examples/hello-particle.loom"
