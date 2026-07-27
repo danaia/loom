@@ -1,0 +1,119 @@
+todo
+
+refactor the codebase:
+
+Here's what I found after a thorough scan of the codebase:
+
+
+
+    Refactoring Opportunities
+
+    1. Giant spec files in loom-core/src/ (highest impact)
+
+    Problem: Four files are all enormous and follow an identical pattern:
+
+    | File        | Lines | Issue                                                                                            |
+    |-------------|-------|--------------------------------------------------------------------------------------------------|
+    | organism.rs | 3484  | hello_organism_builder is a single function with hundreds of repetitive stream/value definitions |
+    | emergent.rs | 931   | Same pattern                                                                                     |
+    | crystal.rs  | 853   | Same pattern                                                                                     |
+    | worm.rs     | 428   | Same pattern (smaller but still repetitive)                                                      |
+
+    Each has:
+    - Nearly identical helper functions (ss, sr, srw, kernel, etc.) — copy-pasted across files
+    - include_str!("../../../kernels/...") for Metal kernels
+    - Config struct + builder function pattern
+    - Repetitive .stream(dynamic_stream(...)) chains with hardcoded arrays like for name in committed { ... }
+
+    Opportunity: Extract a shared spec_builder crate or module with:
+    - Common helpers (ss, sr, srw, kernel, dynamic_stream, scalar_stream, etc.)
+    - A SpecSpec trait or builder pattern to eliminate the repetition
+    - Move packaged_metal_implementation to a shared location
+
+    2. loom-core/src/builder.rs (1705 lines)
+
+    Problem: ModuleBuilder is huge but mostly a fluent builder with 10+ collection fields. The ModuleGraph has 10+ graph types
+    (KernelGraph, PassGraph, ScheduleGraph, etc.) that all have identical Deref<[T]> + IntoIterator boilerplate (see model.rs:64-123).
+
+    Opportunity:
+    - Extract a Graph<T> generic wrapper that handles Deref + IntoIterator once instead of repeating it 3+ times
+    - Consider whether the fluent builder needs 10 separate Vec fields — could be Vec<GraphItem> with an enum, or a more generic collection
+
+    3. loom-core/src/model.rs (732 lines)
+
+    Problem: One file with 20+ types — ModuleGraph, ResourceGraph, KernelGraph, PassGraph, ScheduleGraph, DataType, ScalarType,
+    Unit, Literal, ValueNode, StreamNode, KernelNode, SlotNode, KernelAbi, PassNode, Binding, ViewNode, ScheduleNode,
+    BackendImplementation, etc.
+
+    Opportunity: Split by domain:
+    - model/types.rs — DataType, ScalarType, Unit, Literal
+    - model/graph.rs — ModuleGraph, ResourceGraph, KernelGraph, PassGraph, ScheduleGraph
+    - model/nodes.rs — ValueNode, StreamNode, KernelNode, SlotNode, PassNode, ViewNode, ScheduleNode
+    - model/abi.rs — KernelAbi, DispatchIndex, ThreadgroupBehavior, AliasingRule, BackendImplementation, Backend
+
+    4. loom-validator/src/lib.rs (2674 lines)
+
+    Problem: 12 validation passes all in one file. Each pass is a distinct concern (structural refs, types, resource access, capacity,
+    bindings, hazards, schedule DAG, buffer versions, backend ABI, observation points, determinism, fingerprint).
+
+    Opportunity: Split into modules:
+
+    loom-validator/
+      src/
+        lib.rs          — entry, Validator struct, orchestration
+        structural.rs   — pass 1
+        types.rs        — pass 2
+        access.rs       — pass 3
+        capacity.rs     — pass 4
+        bindings.rs     — pass 5
+        hazards.rs      — pass 6
+        schedule.rs     — pass 7
+        buffers.rs      — pass 8
+        abi.rs          — pass 9
+        observations.rs — pass 10
+        determinism.rs  — pass 11
+        fingerprint.rs  — pass 12
+
+
+    5. loom-syntax/src/lib.rs (1852 lines)
+
+    Problem: Lexer, parser, and lowerer all in one file. The lex function alone is hundreds of lines with manual byte-level parsing.
+
+    Opportunity: Split into:
+    - lexer.rs — tokenization
+    - parser.rs — AST construction
+    - lower.rs — lowering to ModuleGraph
+
+    6. loom-ui-panel/src/main.rs (1666 lines)
+
+    Problem: Tauri app with chat DB management, OpenAI agent integration, keychain access, hot-reload, GPU telemetry, window management, and
+    IPC all in one file.
+
+    Opportunity: Split by concern:
+    - agent.rs — OpenAI agent calls, chat management
+    - db.rs — chat JSON persistence
+    - keychain.rs — keyring operations
+    - reload.rs — hot-reload logic
+    - gpu_telemetry.rs — GPU metrics
+    - windows.rs — windowing integration
+
+    7. Repetitive constant definitions
+
+    Problem: Across organism.rs, crystal.rs, emergent.rs, worm.rs — each defines its own CONFIG struct with a reference()
+    constructor that does the same thing. Each defines its own ss/sr/srw/kernel helpers.
+
+    Opportunity: A shared SpecConfig trait and SpecBuilder to eliminate ~400+ lines of duplicated helper functions.
+
+
+
+    Priority ranking
+
+    1. loom-validator split — biggest file, cleanest boundaries (12 distinct passes)
+    2. loom-core model.rs split — 732 lines of mixed concerns, clean domain boundaries
+    3. loom-core spec file dedup — organism/emergent/crystal/worm share ~400 lines of duplicated helpers
+    4. loom-syntax split — lexer/parser/lowerer are naturally separate
+    5. loom-ui-panel split — large but more risky (Tauri interop)
+    6. loom-core builder.rs — big but the current structure works; lower urgency
+    7. Graph<T> generic — nice-to-have, eliminates boilerplate but lower impact
+
+    Want me to write a detailed plan for any of these?
