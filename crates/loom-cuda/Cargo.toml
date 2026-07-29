@@ -1,0 +1,15 @@
+[package]
+name = "loom-cuda"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+libloading = "0.8"
+loom-core = { path = "../loom-core" }
+loom-validator = { path = "../loom-validator" }
+loom-windowing = { path = "../loom-windowing" }
+minifb = "0.27"
+serde.workspace = true
+serde_json.workspace = true
+tempfile = "3"

@@ -83,19 +83,18 @@ Loom supports backend-specific release packages:
 - `loom-metal-darwin-arm64` for Apple Silicon Macs with Metal.
 - `loom-cuda-linux-x86_64` for CUDA/RTX Linux workstations. CUDA support
   currently covers installation, validation, package handling, `target cuda`,
-  `extern cuda`, and `extern optix`; full CUDA execution lands with the
-  `loom-cuda` runtime backend.
+  `extern cuda`, `extern optix`, and the first CUDA Baseline app runtime.
 
 Install Metal on Apple Silicon:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/danaia/loom/v0.1.14/install.sh | LOOM_BACKEND=metal sh
+curl -fsSL https://raw.githubusercontent.com/danaia/loom/v0.1.15/install.sh | LOOM_BACKEND=metal sh
 ```
 
 Install CUDA on a Linux RTX workstation:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/danaia/loom/v0.1.14/install.sh | LOOM_BACKEND=cuda sh
+curl -fsSL https://raw.githubusercontent.com/danaia/loom/v0.1.15/install.sh | LOOM_BACKEND=cuda sh
 ```
 
 The installer creates a backend-specific command, `loom-metal` or `loom-cuda`,
@@ -107,6 +106,12 @@ Run a Metal particle:
 
 ```sh
 loom-metal ~/.loom-metal/examples/hello-particle.loom
+```
+
+Run the CUDA baseline app:
+
+```sh
+loom-cuda ~/.loom-cuda/baseline/baseline.cuda.loom
 ```
 
 Run the interactive self-healing crystal:
@@ -336,9 +341,9 @@ loom-cuda update   # CUDA install
 ```
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/danaia/loom/v0.1.14/uninstall.sh | sh
-curl -fsSL https://raw.githubusercontent.com/danaia/loom/v0.1.14/uninstall.sh | LOOM_BACKEND=metal sh
-curl -fsSL https://raw.githubusercontent.com/danaia/loom/v0.1.14/uninstall.sh | LOOM_BACKEND=cuda sh
+curl -fsSL https://raw.githubusercontent.com/danaia/loom/v0.1.15/uninstall.sh | sh
+curl -fsSL https://raw.githubusercontent.com/danaia/loom/v0.1.15/uninstall.sh | LOOM_BACKEND=metal sh
+curl -fsSL https://raw.githubusercontent.com/danaia/loom/v0.1.15/uninstall.sh | LOOM_BACKEND=cuda sh
 ```
 
 ## More

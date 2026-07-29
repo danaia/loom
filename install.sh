@@ -187,7 +187,8 @@ if [ "${LOOM_SET_DEFAULT}" != "0" ]; then
   echo "  default command: ${LOOM_DEFAULT_LINK}"
 fi
 if [ "${LOOM_BACKEND}" = "cuda" ]; then
-  echo "  cuda baseline: loom-cuda check ${LOOM_HOME}/baseline/baseline.cuda.loom"
+  echo "  cuda baseline: loom-cuda ${LOOM_HOME}/baseline/baseline.cuda.loom"
+  echo "  cuda check: loom-cuda check ${LOOM_HOME}/baseline/baseline.cuda.loom"
   echo "  cuda explain: loom-cuda explain ${LOOM_HOME}/baseline/baseline.cuda.loom"
 else
   echo "  metal baseline: loom-metal ${LOOM_HOME}/baseline/baseline.loom"

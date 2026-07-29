@@ -17,6 +17,9 @@ zip = { version = "2.2", default-features = false, features = ["deflate"] }
 [target.'cfg(target_os = "macos")'.dependencies]
 loom-metal = { path = "../loom-metal" }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+loom-cuda = { path = "../loom-cuda" }
+
 [[bin]]
 name = "loom"
 path = "src/main.rs"

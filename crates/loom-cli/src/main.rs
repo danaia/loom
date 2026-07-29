@@ -634,7 +634,23 @@ fn run_window(
         })
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "linux")]
+fn run_window(
+    validated: loom_validator::ValidatedModuleGraph,
+    project_root: Option<std::path::PathBuf>,
+    _extension_path: Option<std::path::PathBuf>,
+    _ui: Option<package::LoadedUi>,
+) -> Result<(), u8> {
+    loom_cuda::CudaRuntime::run_project(validated, project_root).map_err(|diagnostic| {
+        print_json(&serde_json::json!({
+            "status": "runtime_error",
+            "diagnostic": diagnostic,
+        }));
+        1
+    })
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 fn run_window(
     _validated: loom_validator::ValidatedModuleGraph,
     _project_root: Option<std::path::PathBuf>,
@@ -643,7 +659,7 @@ fn run_window(
 ) -> Result<(), u8> {
     print_json(&serde_json::json!({
         "status": "unsupported",
-        "message": "CUDA execution is not available in this CLI yet; use `loom-cuda check` or `loom-cuda explain` for CUDA-target validation until the loom-cuda runtime backend lands",
+        "message": "Loom execution is not available on this platform yet",
     }));
     Err(2)
 }
