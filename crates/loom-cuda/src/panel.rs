@@ -249,7 +249,6 @@ fn accept_panel(
                 break;
             }
         }
-        let _ = commands.send(PanelCommand::Quit);
         if let Ok(mut destination) = writer.lock() {
             *destination = None;
         }
