@@ -65,7 +65,10 @@ target metal
 Rules:
 
 - The only accepted language version is `0.1`.
-- The only accepted target is `metal`.
+- Accepted targets are `metal` and `cuda`.
+- Native Loom kernel bodies currently generate Metal only. CUDA targets must use
+  explicit `extern cuda` kernels and `extern cuda` or `extern optix` views until
+  CUDA code generation lands.
 - Use a simple `snake_case` module name.
 - `//` starts a line comment.
 - Semicolons are optional after top-level constants, streams, passes, flows,

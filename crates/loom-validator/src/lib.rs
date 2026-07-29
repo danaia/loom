@@ -2115,17 +2115,15 @@ fn validate_backend_abi(graph: CheckedGraph<'_>, diagnostics: &mut Vec<Diagnosti
                 path("kernels", &kernel.name).child("abi.threadgroup"),
             ));
         }
-        let has_backend = match graph.target {
-            loom_core::Target::Metal => kernel.implementations.iter().any(|implementation| {
-                implementation.backend == Backend::Metal
-                    && !implementation.source.is_empty()
-                    && !implementation.entry.is_empty()
-                    && implementation
-                        .source_text
-                        .as_ref()
-                        .is_none_or(|source| !source.trim().is_empty())
-            }),
-        };
+        let has_backend = kernel.implementations.iter().any(|implementation| {
+            backend_matches_kernel_target(implementation.backend, graph.target)
+                && !implementation.source.is_empty()
+                && !implementation.entry.is_empty()
+                && implementation
+                    .source_text
+                    .as_ref()
+                    .is_none_or(|source| !source.trim().is_empty())
+        });
         if !has_backend {
             diagnostics.push(Diagnostic::error(
                 DiagnosticCode::MissingBackendImplementation,
@@ -2136,17 +2134,13 @@ fn validate_backend_abi(graph: CheckedGraph<'_>, diagnostics: &mut Vec<Diagnosti
     }
     for view in &graph.views {
         let implementation = &view.implementation;
-        let complete = match graph.target {
-            loom_core::Target::Metal => {
-                implementation.backend == Backend::Metal
-                    && !implementation.source.trim().is_empty()
-                    && !implementation.entry.trim().is_empty()
-                    && implementation
-                        .source_text
-                        .as_ref()
-                        .is_none_or(|source| !source.trim().is_empty())
-            }
-        };
+        let complete = backend_matches_view_target(implementation.backend, graph.target)
+            && !implementation.source.trim().is_empty()
+            && !implementation.entry.trim().is_empty()
+            && implementation
+                .source_text
+                .as_ref()
+                .is_none_or(|source| !source.trim().is_empty());
         if !complete {
             diagnostics.push(Diagnostic::error(
                 DiagnosticCode::MissingBackendImplementation,
@@ -2154,6 +2148,20 @@ fn validate_backend_abi(graph: CheckedGraph<'_>, diagnostics: &mut Vec<Diagnosti
                 path("views", &view.name).child("implementation"),
             ));
         }
+    }
+}
+
+fn backend_matches_kernel_target(backend: Backend, target: loom_core::Target) -> bool {
+    match target {
+        loom_core::Target::Metal => backend == Backend::Metal,
+        loom_core::Target::Cuda => backend == Backend::Cuda,
+    }
+}
+
+fn backend_matches_view_target(backend: Backend, target: loom_core::Target) -> bool {
+    match target {
+        loom_core::Target::Metal => backend == Backend::Metal,
+        loom_core::Target::Cuda => matches!(backend, Backend::Cuda | Backend::Optix),
     }
 }
 
@@ -2344,7 +2352,7 @@ fn build_execution_plan(
                         view: view.id,
                         reads,
                         state: view.state.clone(),
-                        implementation: view.implementation.clone(),
+                        implementation: select_view_implementation(graph, view),
                     }
                 })
                 .collect::<Vec<_>>();
@@ -2508,9 +2516,11 @@ fn plan_pass(graph: CheckedGraph<'_>, pass_id: loom_core::PassId) -> PlannedPass
     let implementation = kernel
         .implementations
         .iter()
-        .filter(|implementation| implementation.backend == Backend::Metal)
+        .filter(|implementation| {
+            backend_matches_kernel_target(implementation.backend, graph.target)
+        })
         .min_by(|left, right| (&left.source, &left.entry).cmp(&(&right.source, &right.entry)))
-        .expect("validated Metal kernel implementation")
+        .expect("validated kernel implementation")
         .clone();
     let mut bindings = pass.bindings.clone();
     bindings.sort_by_key(|binding| binding.slot);
@@ -2523,6 +2533,17 @@ fn plan_pass(graph: CheckedGraph<'_>, pass_id: loom_core::PassId) -> PlannedPass
         abi: kernel.abi.clone(),
         implementation,
     }
+}
+
+fn select_view_implementation(
+    graph: CheckedGraph<'_>,
+    view: &loom_core::ViewNode,
+) -> loom_core::BackendImplementation {
+    debug_assert!(backend_matches_view_target(
+        view.implementation.backend,
+        graph.target
+    ));
+    view.implementation.clone()
 }
 
 fn artifact_fingerprint(graph: &ModuleGraph, plan: &ExecutionPlan) -> String {

@@ -96,8 +96,9 @@
             <h2>Install Loom. Run a living GPU program in under a minute.</h2>
           </div>
           <p>
-            The complete compiler, Metal runtime, examples, and handbook install beneath
-            <code>~/.loom</code>. No Rust toolchain or Cargo command is required.
+            The complete compiler, backend runtime where available, examples, and handbook
+            install beneath <code>~/.loom-metal</code> or <code>~/.loom-cuda</code>.
+            No Rust toolchain or Cargo command is required.
           </p>
         </div>
 
@@ -106,11 +107,11 @@
             <span class="mini-label">APPLE SILICON MAC</span>
             <h3>One directory. One command.</h3>
             <p>
-              The installer verifies the release, adds the <code>loom</code> command, and
-              includes Particle and Crystal programs ready to run.
+              The installer verifies the release, adds <code>loom-metal</code> or
+              <code>loom-cuda</code>, and includes Particle and Crystal programs ready to run.
             </p>
             <div class="install-layout" aria-label="Installed Loom directory layout">
-              <span>~/.loom/</span>
+              <span>~/.loom-metal/</span>
               <i>bin/loom</i>
               <i>examples/</i>
               <i>share/loom/docs/</i>
@@ -133,10 +134,10 @@
               </button>
             </div>
             <pre><code id="install-command">curl -fsSL \
-  https://raw.githubusercontent.com/danaia/loom/main/install.sh | sh</code></pre>
+  https://raw.githubusercontent.com/danaia/loom/main/install.sh | LOOM_BACKEND=metal sh</code></pre>
             <div class="remove-command">
               <span>THEN RUN</span>
-              <code>loom ~/.loom/examples/crystal.loom</code>
+              <code>loom-metal ~/.loom-metal/examples/crystal.loom</code>
             </div>
           </div>
         </div>
@@ -145,17 +146,17 @@
           <article>
             <span>01 / PARTICLE</span>
             <h3>Drop one bright agent into gravity.</h3>
-            <code>loom ~/.loom/examples/hello-particle.loom</code>
+            <code>loom-metal ~/.loom-metal/examples/hello-particle.loom</code>
           </article>
           <article>
             <span>02 / CRYSTAL</span>
             <h3>Slice, spin, zoom, and watch a GPU crystal heal itself.</h3>
-            <code>loom ~/.loom/examples/crystal.loom</code>
+            <code>loom-metal ~/.loom-metal/examples/crystal.loom</code>
           </article>
           <article>
             <span>03 / STAY CURRENT</span>
             <h3>Upgrade the compiler and runtime in place.</h3>
-            <code>loom update</code>
+            <code>loom-metal update</code>
           </article>
         </div>
 

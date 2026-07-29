@@ -2,9 +2,10 @@
 set -eu
 
 LOOM_REPOSITORY="${LOOM_REPOSITORY:-danaia/loom}"
-LOOM_HOME="${LOOM_HOME:-${HOME}/.loom}"
 LOOM_BIN_DIR="${LOOM_BIN_DIR:-${HOME}/.local/bin}"
 LOOM_VERSION="${LOOM_VERSION:-}"
+LOOM_BACKEND="${LOOM_BACKEND:-auto}"
+LOOM_SET_DEFAULT="${LOOM_SET_DEFAULT:-1}"
 
 fail() {
   echo "loom installer: $*" >&2
@@ -18,19 +19,54 @@ safe_loom_home() {
   esac
 }
 
+HOST_OS="$(uname -s)"
+HOST_ARCH="$(uname -m)"
+
+case "${HOST_OS}" in
+  Darwin) LOOM_PLATFORM="darwin" ;;
+  Linux) LOOM_PLATFORM="linux" ;;
+  *) fail "unsupported OS ${HOST_OS}; expected Darwin or Linux" ;;
+esac
+
+case "${HOST_ARCH}" in
+  arm64|aarch64) LOOM_ARCH="arm64" ;;
+  x86_64|amd64) LOOM_ARCH="x86_64" ;;
+  *) fail "unsupported architecture ${HOST_ARCH}" ;;
+esac
+
+case "${LOOM_BACKEND}" in
+  auto)
+    if [ "${LOOM_PLATFORM}" = "darwin" ] && [ "${LOOM_ARCH}" = "arm64" ]; then
+      LOOM_BACKEND="metal"
+    elif [ "${LOOM_PLATFORM}" = "linux" ] && [ "${LOOM_ARCH}" = "x86_64" ]; then
+      LOOM_BACKEND="cuda"
+    else
+      fail "could not infer Loom backend for ${LOOM_PLATFORM}-${LOOM_ARCH}; set LOOM_BACKEND=metal or LOOM_BACKEND=cuda"
+    fi
+    ;;
+  metal|cuda) ;;
+  *) fail "unsupported LOOM_BACKEND=${LOOM_BACKEND}; expected metal, cuda, or auto" ;;
+esac
+
+if [ "${LOOM_BACKEND}" = "metal" ]; then
+  [ "${LOOM_PLATFORM}" = "darwin" ] ||
+    fail "Loom Metal releases currently install on macOS only"
+  [ "${LOOM_ARCH}" = "arm64" ] ||
+    fail "Loom Metal releases currently require Apple Silicon (arm64)"
+elif [ "${LOOM_BACKEND}" = "cuda" ]; then
+  [ "${LOOM_PLATFORM}" = "linux" ] ||
+    fail "Loom CUDA releases currently install on Linux only"
+  [ "${LOOM_ARCH}" = "x86_64" ] ||
+    fail "Loom CUDA releases currently require x86_64"
+fi
+
+LOOM_HOME="${LOOM_HOME:-${HOME}/.loom-${LOOM_BACKEND}}"
 safe_loom_home "${LOOM_HOME}" || fail "refusing unsafe LOOM_HOME: ${LOOM_HOME}"
-
-[ "$(uname -s)" = "Darwin" ] ||
-  fail "Loom execution currently requires macOS and Metal"
-
-[ "$(uname -m)" = "arm64" ] ||
-  fail "Loom currently requires an Apple Silicon Mac (arm64)"
-LOOM_ARCH="arm64"
 
 command -v curl >/dev/null 2>&1 || fail "curl is required"
 command -v tar >/dev/null 2>&1 || fail "tar is required"
 
-ASSET_NAME="loom-darwin-${LOOM_ARCH}"
+ASSET_NAME="loom-${LOOM_BACKEND}-${LOOM_PLATFORM}-${LOOM_ARCH}"
 if [ -n "${LOOM_ARCHIVE_URL:-}" ]; then
   ARCHIVE_URL="${LOOM_ARCHIVE_URL}"
   CHECKSUM_URL="${LOOM_CHECKSUM_URL:-${LOOM_ARCHIVE_URL}.sha256}"
@@ -54,7 +90,7 @@ cleanup() {
 }
 trap cleanup EXIT HUP INT TERM
 
-echo "Downloading Loom for macOS ${LOOM_ARCH}..."
+echo "Downloading Loom ${LOOM_BACKEND} for ${LOOM_PLATFORM} ${LOOM_ARCH}..."
 curl -fL --retry 3 --proto '=https,file' --tlsv1.2 \
   "${ARCHIVE_URL}" -o "${ARCHIVE_FILE}"
 curl -fL --retry 3 --proto '=https,file' --tlsv1.2 \
@@ -78,12 +114,36 @@ NEW_HOME="${TEMP_ROOT}/loom"
 [ -f "${NEW_HOME}/install-manifest" ] || fail "release manifest is missing"
 grep -q '^loom-install-layout=1$' "${NEW_HOME}/install-manifest" ||
   fail "release layout is not recognized"
+grep -q "^backend=${LOOM_BACKEND}$" "${NEW_HOME}/install-manifest" ||
+  fail "release backend does not match requested ${LOOM_BACKEND}"
 
-LOOM_LINK="${LOOM_BIN_DIR}/loom"
+LOOM_ALIAS_LINK="${LOOM_BIN_DIR}/loom-${LOOM_BACKEND}"
+LOOM_DEFAULT_LINK="${LOOM_BIN_DIR}/loom"
+LOOM_LINK="${LOOM_DEFAULT_LINK}"
+if [ "${LOOM_SET_DEFAULT}" = "0" ]; then
+  LOOM_LINK="${LOOM_ALIAS_LINK}"
+fi
+
+if [ -e "${LOOM_ALIAS_LINK}" ] || [ -L "${LOOM_ALIAS_LINK}" ]; then
+  if [ ! -L "${LOOM_ALIAS_LINK}" ] ||
+    [ "$(readlink "${LOOM_ALIAS_LINK}")" != "${LOOM_HOME}/bin/loom" ]; then
+    fail "${LOOM_ALIAS_LINK} already exists and is not managed by Loom ${LOOM_BACKEND}"
+  fi
+fi
+
 if [ -e "${LOOM_LINK}" ] || [ -L "${LOOM_LINK}" ]; then
   if [ ! -L "${LOOM_LINK}" ] ||
     [ "$(readlink "${LOOM_LINK}")" != "${LOOM_HOME}/bin/loom" ]; then
-    fail "${LOOM_LINK} already exists and is not managed by Loom"
+    if [ "${LOOM_LINK}" = "${LOOM_DEFAULT_LINK}" ] && [ -L "${LOOM_LINK}" ]; then
+      CURRENT_TARGET="$(readlink "${LOOM_LINK}")"
+      CURRENT_HOME="$(dirname "$(dirname "${CURRENT_TARGET}")")"
+      if [ ! -f "${CURRENT_HOME}/install-manifest" ] ||
+        ! grep -q '^loom-install-layout=1$' "${CURRENT_HOME}/install-manifest"; then
+        fail "${LOOM_LINK} already exists and is not managed by Loom"
+      fi
+    else
+      fail "${LOOM_LINK} already exists and is not managed by Loom"
+    fi
   fi
 fi
 
@@ -111,20 +171,27 @@ if ! mv "${NEXT_HOME}" "${LOOM_HOME}"; then
 fi
 
 printf '%s\n' "bin_dir=${LOOM_BIN_DIR}" >> "${LOOM_HOME}/install-manifest"
-rm -f "${LOOM_LINK}"
-ln -s "${LOOM_HOME}/bin/loom" "${LOOM_LINK}"
+rm -f "${LOOM_ALIAS_LINK}"
+ln -s "${LOOM_HOME}/bin/loom" "${LOOM_ALIAS_LINK}"
+if [ "${LOOM_SET_DEFAULT}" != "0" ]; then
+  rm -f "${LOOM_DEFAULT_LINK}"
+  ln -s "${LOOM_HOME}/bin/loom" "${LOOM_DEFAULT_LINK}"
+fi
 rm -rf "${PREVIOUS_HOME}"
 
 echo
-echo "Loom $("${LOOM_HOME}/bin/loom" --version | awk '{ print $2 }') installed."
+echo "Loom ${LOOM_BACKEND} $("${LOOM_HOME}/bin/loom" --version | awk '{ print $2 }') installed."
 echo "  home: ${LOOM_HOME}"
-echo "  command: ${LOOM_LINK}"
-echo "  particle: loom ${LOOM_HOME}/examples/hello-particle.loom"
-echo "  neon flock: loom ${LOOM_HOME}/examples/neon-flock.loom"
-echo "  crystal: loom ${LOOM_HOME}/examples/crystal.loom"
-echo "  marble water package: loom ${LOOM_HOME}/examples/marble-water.lmp"
-echo "  update: loom update"
-if ! command -v loom >/dev/null 2>&1; then
+echo "  backend command: ${LOOM_ALIAS_LINK}"
+if [ "${LOOM_SET_DEFAULT}" != "0" ]; then
+  echo "  default command: ${LOOM_DEFAULT_LINK}"
+fi
+echo "  particle: loom-${LOOM_BACKEND} ${LOOM_HOME}/examples/hello-particle.loom"
+echo "  neon flock: loom-${LOOM_BACKEND} ${LOOM_HOME}/examples/neon-flock.loom"
+echo "  crystal: loom-${LOOM_BACKEND} ${LOOM_HOME}/examples/crystal.loom"
+echo "  marble water package: loom-${LOOM_BACKEND} ${LOOM_HOME}/examples/marble-water.lmp"
+echo "  update: loom-${LOOM_BACKEND} update"
+if ! command -v "loom-${LOOM_BACKEND}" >/dev/null 2>&1; then
   echo
   echo "Add ${LOOM_BIN_DIR} to PATH, then open a new terminal:"
   echo "  export PATH=\"${LOOM_BIN_DIR}:\$PATH\""

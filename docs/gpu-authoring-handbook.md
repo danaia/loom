@@ -65,6 +65,12 @@ Loom declarations plus native kernel bodies
 The optimization rules in this handbook apply to both native and external
 paths. Only the place where kernel arithmetic is written changes.
 
+For NVIDIA systems, read this handbook together with
+[`cuda-rtx-architecture.md`](cuda-rtx-architecture.md). The CUDA document keeps
+the same Loom semantics but maps them to VRAM residency, warps, CUDA graphs,
+OptiX/RTX views, sparse volumes, dense particles, lighting, shadows, and
+RTX 5090-class benchmark evidence.
+
 Use these labels when documenting examples:
 
 - **Executable v0** — represented by native Loom and/or explicit Metal lowered

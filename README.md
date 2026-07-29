@@ -1,8 +1,11 @@
 # Loom
 
-Loom is an agent-native, low-level GPU language for Apple Silicon. It lets AI
-agents author, validate, inspect, repair, and run Metal applications from one
-`.loom` source.
+Loom is an agent-native, low-level GPU language and execution model. Its current
+runtime is optimized for Apple Silicon through Metal, and its backend model is
+now being prepared for CUDA/RTX systems.
+
+It lets AI agents author, validate, inspect, repair, and run GPU applications
+from one `.loom` source.
 
 Programs run as compiled GPU kernels instead of interpreted agent logic.
 An agent can inspect diagnostics and generated Metal, correct failed source, and
@@ -13,8 +16,8 @@ systems—including swarms, simulations, and procedural organisms that can detec
 change, adapt, and repair their own state directly on the GPU.
 
 Typed streams, bounded memory, explicit effects, kernel passes, validated
-execution graphs, Metal generation, and native rendering remain visible to the
-agent. It's way powerful and open source. Enjoy!
+execution graphs, backend-specific kernels, and native rendering remain visible
+to the agent. It's way powerful and open source. Enjoy!
 
 ## What that power can be used for
 
@@ -73,24 +76,40 @@ native window.
 
 ## Get started
 
-Loom currently requires an Apple Silicon Mac.
+Loom publishes backend-specific release packages:
 
-Install:
+- `loom-metal-darwin-arm64` for Apple Silicon Macs with Metal.
+- `loom-cuda-linux-x86_64` for CUDA/RTX Linux workstations. This is currently a
+  CLI distribution for validation, package handling, and CUDA-target graph work;
+  the executable CUDA runtime lands with the future `loom-cuda` backend.
+
+Install Metal on Apple Silicon:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/danaia/loom/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/danaia/loom/main/install.sh | LOOM_BACKEND=metal sh
 ```
 
-Run a particle:
+Install CUDA on a Linux RTX workstation:
 
 ```sh
-loom ~/.loom/examples/hello-particle.loom
+curl -fsSL https://raw.githubusercontent.com/danaia/loom/main/install.sh | LOOM_BACKEND=cuda sh
+```
+
+The installer creates a backend-specific command, `loom-metal` or `loom-cuda`,
+and points `loom` at the backend you just installed. Set `LOOM_SET_DEFAULT=0` to
+install only the backend-specific command and leave the existing `loom` default
+alone.
+
+Run a Metal particle:
+
+```sh
+loom-metal ~/.loom-metal/examples/hello-particle.loom
 ```
 
 Run the interactive self-healing crystal:
 
 ```sh
-loom ~/.loom/examples/crystal.loom
+loom-metal ~/.loom-metal/examples/crystal.loom
 ```
 
 You do not need Rust or Cargo to use the installed release.
@@ -152,8 +171,9 @@ GPU program.
 - `loom check` rejects invalid programs before they run.
 - `loom explain` shows the graph, execution plan, and generated Metal.
 
-The goal is a CUDA-like authoring language for Metal, designed for agents and
-GPU systems with many independent elements.
+The goal is an agent-native authoring language for high-performance GPU systems:
+Metal today, CUDA/RTX next, with many independent elements kept explicit and
+measurable.
 
 ## Why it is useful for organisms
 
@@ -251,6 +271,9 @@ It is currently a compiler-development example:
 
 ## Commands
 
+Use `loom` for the selected default backend, or call `loom-metal` and `loom-cuda`
+explicitly when both are installed.
+
 ```sh
 loom program.loom          # Run
 loom project.lmp           # Run a self-contained package
@@ -302,11 +325,15 @@ See the [native compiler roadmap](docs/native-compiler-gates.md).
 ## Update or remove
 
 ```sh
-loom update
+loom update        # selected default backend
+loom-metal update  # Metal install
+loom-cuda update   # CUDA install
 ```
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/danaia/loom/main/uninstall.sh | sh
+curl -fsSL https://raw.githubusercontent.com/danaia/loom/main/uninstall.sh | LOOM_BACKEND=metal sh
+curl -fsSL https://raw.githubusercontent.com/danaia/loom/main/uninstall.sh | LOOM_BACKEND=cuda sh
 ```
 
 ## More

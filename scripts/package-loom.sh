@@ -4,19 +4,57 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 DIST_DIR="${LOOM_DIST_DIR:-${REPO_ROOT}/target/dist}"
+LOOM_BACKEND="${LOOM_BACKEND:-auto}"
 HOST_OS="$(uname -s)"
 HOST_ARCH="$(uname -m)"
 
-if [[ "${HOST_OS}" != "Darwin" ]]; then
-  echo "error: Loom runtime packages currently require macOS and Metal" >&2
+case "${HOST_OS}" in
+  Darwin) PACKAGE_PLATFORM="darwin" ;;
+  Linux) PACKAGE_PLATFORM="linux" ;;
+  *)
+    echo "error: unsupported package OS ${HOST_OS}" >&2
+    exit 1
+    ;;
+esac
+
+case "${HOST_ARCH}" in
+  arm64|aarch64) PACKAGE_ARCH="arm64" ;;
+  x86_64|amd64) PACKAGE_ARCH="x86_64" ;;
+  *)
+    echo "error: unsupported package architecture ${HOST_ARCH}" >&2
+    exit 1
+    ;;
+esac
+
+case "${LOOM_BACKEND}" in
+  auto)
+    if [[ "${PACKAGE_PLATFORM}" == "darwin" && "${PACKAGE_ARCH}" == "arm64" ]]; then
+      LOOM_BACKEND="metal"
+    elif [[ "${PACKAGE_PLATFORM}" == "linux" && "${PACKAGE_ARCH}" == "x86_64" ]]; then
+      LOOM_BACKEND="cuda"
+    else
+      echo "error: cannot infer backend for ${PACKAGE_PLATFORM}-${PACKAGE_ARCH}; set LOOM_BACKEND" >&2
+      exit 1
+    fi
+    ;;
+  metal|cuda) ;;
+  *)
+    echo "error: unsupported LOOM_BACKEND=${LOOM_BACKEND}" >&2
+    exit 1
+    ;;
+esac
+
+if [[ "${LOOM_BACKEND}" == "metal" &&
+  ( "${PACKAGE_PLATFORM}" != "darwin" || "${PACKAGE_ARCH}" != "arm64" ) ]]; then
+  echo "error: Metal packages currently require darwin-arm64" >&2
   exit 1
 fi
 
-if [[ "${HOST_ARCH}" != "arm64" ]]; then
-  echo "error: Loom release packages require Apple Silicon (arm64)" >&2
+if [[ "${LOOM_BACKEND}" == "cuda" &&
+  ( "${PACKAGE_PLATFORM}" != "linux" || "${PACKAGE_ARCH}" != "x86_64" ) ]]; then
+  echo "error: CUDA CLI packages currently require linux-x86_64" >&2
   exit 1
 fi
-PACKAGE_ARCH="arm64"
 
 VERSION="$(
   sed -n '/^\[workspace\.package\]/,/^\[/s/^version = "\([^"]*\)"/\1/p' \
@@ -27,7 +65,7 @@ if [[ -z "${VERSION}" ]]; then
   exit 1
 fi
 
-ASSET_NAME="loom-darwin-${PACKAGE_ARCH}"
+ASSET_NAME="loom-${LOOM_BACKEND}-${PACKAGE_PLATFORM}-${PACKAGE_ARCH}"
 ARCHIVE_PATH="${DIST_DIR}/${ASSET_NAME}.tar.gz"
 STAGING_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/loom-package.XXXXXX")"
 PACKAGE_ROOT="${STAGING_ROOT}/loom"
@@ -38,7 +76,11 @@ cleanup() {
 trap cleanup EXIT
 
 cd "${REPO_ROOT}"
-cargo build --locked --release --package loom-cli --package loom-ui-panel
+if [[ "${LOOM_BACKEND}" == "metal" ]]; then
+  cargo build --locked --release --package loom-cli --package loom-ui-panel
+else
+  cargo build --locked --release --package loom-cli
+fi
 
 mkdir -p \
   "${PACKAGE_ROOT}/bin" \
@@ -47,9 +89,11 @@ mkdir -p \
   "${PACKAGE_ROOT}/share/loom/docs/releases"
 
 install -m 0755 "${REPO_ROOT}/target/release/loom" "${PACKAGE_ROOT}/bin/loom"
-install -m 0755 \
-  "${REPO_ROOT}/target/release/loom-ui-panel" \
-  "${PACKAGE_ROOT}/bin/loom-ui-panel"
+if [[ "${LOOM_BACKEND}" == "metal" ]]; then
+  install -m 0755 \
+    "${REPO_ROOT}/target/release/loom-ui-panel" \
+    "${PACKAGE_ROOT}/bin/loom-ui-panel"
+fi
 install -m 0755 "${REPO_ROOT}/uninstall.sh" "${PACKAGE_ROOT}/uninstall"
 tar -C "${REPO_ROOT}" -cf - \
   --exclude='baseline/.loom' \
@@ -93,6 +137,9 @@ install -m 0644 \
   "${REPO_ROOT}/docs/native-compiler-gates.md" \
   "${PACKAGE_ROOT}/share/loom/docs/native-compiler-gates.md"
 install -m 0644 \
+  "${REPO_ROOT}/docs/cuda-rtx-architecture.md" \
+  "${PACKAGE_ROOT}/share/loom/docs/cuda-rtx-architecture.md"
+install -m 0644 \
   "${REPO_ROOT}/docs/package-format.md" \
   "${PACKAGE_ROOT}/share/loom/docs/package-format.md"
 install -m 0644 \
@@ -103,7 +150,8 @@ printf '%s\n' "${VERSION}" > "${PACKAGE_ROOT}/VERSION"
 {
   printf '%s\n' "loom-install-layout=1"
   printf '%s\n' "version=${VERSION}"
-  printf '%s\n' "platform=darwin"
+  printf '%s\n' "backend=${LOOM_BACKEND}"
+  printf '%s\n' "platform=${PACKAGE_PLATFORM}"
   printf '%s\n' "architecture=${PACKAGE_ARCH}"
 } > "${PACKAGE_ROOT}/install-manifest"
 

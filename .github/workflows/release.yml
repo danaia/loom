@@ -9,15 +9,15 @@ permissions:
   contents: write
 
 jobs:
-  package:
-    name: Package Apple Silicon
+  package-metal:
+    name: Package Metal Apple Silicon
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: loom-macos-release
+          shared-key: loom-metal-macos-release
       - name: Test language and validation
         run: >-
           cargo test --locked
@@ -26,18 +26,46 @@ jobs:
           --package loom-syntax
           --package loom-cli
       - name: Build portable directory
-        run: ./scripts/package-loom.sh
+        run: LOOM_BACKEND=metal ./scripts/package-loom.sh
       - uses: actions/upload-artifact@v4
         with:
-          name: loom-darwin-arm64
+          name: loom-metal-darwin-arm64
           path: |
-            target/dist/loom-darwin-arm64.tar.gz
-            target/dist/loom-darwin-arm64.sha256
+            target/dist/loom-metal-darwin-arm64.tar.gz
+            target/dist/loom-metal-darwin-arm64.sha256
+          if-no-files-found: error
+
+  package-cuda:
+    name: Package CUDA Linux CLI
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: loom-cuda-linux-release
+      - name: Test language and validation
+        run: >-
+          cargo test --locked
+          --package loom-core
+          --package loom-validator
+          --package loom-syntax
+          --package loom-cli
+      - name: Build portable directory
+        run: LOOM_BACKEND=cuda ./scripts/package-loom.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: loom-cuda-linux-x86_64
+          path: |
+            target/dist/loom-cuda-linux-x86_64.tar.gz
+            target/dist/loom-cuda-linux-x86_64.sha256
           if-no-files-found: error
 
   publish:
     name: Publish release
-    needs: package
+    needs:
+      - package-metal
+      - package-cuda
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4

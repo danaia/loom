@@ -21,18 +21,19 @@ The language documents are read in this order:
 10. [`native-compiler-gates.md`](native-compiler-gates.md) — measured roadmap from element-wise conditionals through native render stages.
 11. [`04-execution-scheduling.md`](04-execution-scheduling.md) — completion, overlap, observation, view, inspection, ABI, determinism, and overload rules.
 12. [`gpu-authoring-handbook.md`](gpu-authoring-handbook.md) — human- and agent-facing guidance for GPU-resident state, scalable passes, Metal ABI alignment, and performance proof.
-13. [`06-canonical-representation.md`](06-canonical-representation.md) — untrusted graphs, validation, atomic repairs, execution plans, and artifact identity.
-14. [`decisions/0003-emergent-systems-substrate.md`](decisions/0003-emergent-systems-substrate.md) — emergent-computation positioning and authority rules.
-15. [`07-emergent-systems.md`](07-emergent-systems.md) — implemented dynamic populations, fields, and Hello Organism boundary.
-16. [`benchmarks/hello-organism-population-gate-m4-pro.md`](benchmarks/hello-organism-population-gate-m4-pro.md) — scalable population correctness load and declared-capacity timing boundary.
-17. [`benchmarks/hello-organism-neighborhood-gate-m4-pro.md`](benchmarks/hello-organism-neighborhood-gate-m4-pro.md) — developmental neighborhoods, morphology reductions, and their timing boundary.
-18. [`benchmarks/hello-organism-development-gate-m4-pro.md`](benchmarks/hello-organism-development-gate-m4-pro.md) — one-seed procedural development, causal ablations, exact replay, and populated reference timing.
-19. [`benchmarks/hello-organism-homeostasis-gate-m4-pro.md`](benchmarks/hello-organism-homeostasis-gate-m4-pro.md) — sustained equilibrium, energy accounting, nutrient perturbation, and the clean Gate 4 timing.
-20. [`benchmarks/hello-organism-regeneration-gate-m4-pro.md`](benchmarks/hello-organism-regeneration-gate-m4-pro.md) — committed-checkpoint lesion, local repair, sustained recovery, and causal ablations.
-21. [`visuals/hello-organism-gate-5.svg`](visuals/hello-organism-gate-5.svg) — visual evidence summary of development, lesion, local regeneration, and causal ablations.
-22. [`milestones/hello-organism-v0.1.md`](milestones/hello-organism-v0.1.md) — frozen Gate 1–5 proof manifest, hashes, event record, timing, and limitations.
-23. [`../examples/hello-crystal/README.md`](../examples/hello-crystal/README.md) — runnable 3D mesoscopic crystal growth, cleavage, component, fragment, metric, and surface specimen.
-24. [`benchmarks/hello-crystal-1m-m4-pro.md`](benchmarks/hello-crystal-1m-m4-pro.md) — one-million-cell M4 Pro execution smoke proof and its explicit evidence boundary.
+13. [`cuda-rtx-architecture.md`](cuda-rtx-architecture.md) — CUDA/RTX target architecture for dense particles, sparse volumes, geometry, lighting, shadows, and RTX 5090-class benchmarks.
+14. [`06-canonical-representation.md`](06-canonical-representation.md) — untrusted graphs, validation, atomic repairs, execution plans, and artifact identity.
+15. [`decisions/0003-emergent-systems-substrate.md`](decisions/0003-emergent-systems-substrate.md) — emergent-computation positioning and authority rules.
+16. [`07-emergent-systems.md`](07-emergent-systems.md) — implemented dynamic populations, fields, and Hello Organism boundary.
+17. [`benchmarks/hello-organism-population-gate-m4-pro.md`](benchmarks/hello-organism-population-gate-m4-pro.md) — scalable population correctness load and declared-capacity timing boundary.
+18. [`benchmarks/hello-organism-neighborhood-gate-m4-pro.md`](benchmarks/hello-organism-neighborhood-gate-m4-pro.md) — developmental neighborhoods, morphology reductions, and their timing boundary.
+19. [`benchmarks/hello-organism-development-gate-m4-pro.md`](benchmarks/hello-organism-development-gate-m4-pro.md) — one-seed procedural development, causal ablations, exact replay, and populated reference timing.
+20. [`benchmarks/hello-organism-homeostasis-gate-m4-pro.md`](benchmarks/hello-organism-homeostasis-gate-m4-pro.md) — sustained equilibrium, energy accounting, nutrient perturbation, and the clean Gate 4 timing.
+21. [`benchmarks/hello-organism-regeneration-gate-m4-pro.md`](benchmarks/hello-organism-regeneration-gate-m4-pro.md) — committed-checkpoint lesion, local repair, sustained recovery, and causal ablations.
+22. [`visuals/hello-organism-gate-5.svg`](visuals/hello-organism-gate-5.svg) — visual evidence summary of development, lesion, local regeneration, and causal ablations.
+23. [`milestones/hello-organism-v0.1.md`](milestones/hello-organism-v0.1.md) — frozen Gate 1–5 proof manifest, hashes, event record, timing, and limitations.
+24. [`../examples/hello-crystal/README.md`](../examples/hello-crystal/README.md) — runnable 3D mesoscopic crystal growth, cleavage, component, fragment, metric, and surface specimen.
+25. [`benchmarks/hello-crystal-1m-m4-pro.md`](benchmarks/hello-crystal-1m-m4-pro.md) — one-million-cell M4 Pro execution smoke proof and its explicit evidence boundary.
 
 Planned specifications:
 
@@ -67,21 +68,35 @@ The first executable `.loom` compiler parses native kernel arithmetic, checks
 its types, units, and effects, generates packaged Metal, and lowers canonical
 agent source into the same typed graph used by the Rust builders.
 
-Install the complete Apple Silicon macOS distribution:
+Install the complete Apple Silicon macOS Metal distribution:
 
 ```text
-curl -fsSL https://raw.githubusercontent.com/danaia/loom/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/danaia/loom/main/install.sh | LOOM_BACKEND=metal sh
 ```
 
-Everything required to use Loom lives below `~/.loom`: the compiler and Metal
-runtime, examples, handbook, version, and installation manifest. The installer
-adds only a `~/.local/bin/loom` symlink outside that directory. Rust and Cargo are
-not required on the host.
+Install the CUDA CLI distribution on a Linux RTX workstation:
+
+```text
+curl -fsSL https://raw.githubusercontent.com/danaia/loom/main/install.sh | LOOM_BACKEND=cuda sh
+```
+
+Release assets are backend-specific:
+
+- `loom-metal-darwin-arm64`
+- `loom-cuda-linux-x86_64`
+
+Everything required to use an installed Loom distribution lives below
+`~/.loom-metal` or `~/.loom-cuda`: the compiler CLI, backend runtime where
+available, examples, handbook, version, and installation manifest. The installer
+adds a backend-specific command, `loom-metal` or `loom-cuda`, in
+`~/.local/bin`. It also points `loom` at the backend just installed unless
+`LOOM_SET_DEFAULT=0` is set. Rust and Cargo are not required on the host.
 
 Update to the newest release from any directory:
 
 ```text
-loom update
+loom-metal update
+loom-cuda update
 ```
 
 Create a new project from the release's Baseline starter in the current directory:
@@ -90,8 +105,8 @@ Create a new project from the release's Baseline starter in the current director
 Run a program directly:
 
 ```text
-loom ~/.loom/examples/hello-particle.loom
-loom ~/.loom/examples/crystal.loom
+loom-metal ~/.loom-metal/examples/hello-particle.loom
+loom-metal ~/.loom-metal/examples/crystal.loom
 ```
 
 A source path means run. The explicit development and inspection commands remain
@@ -123,10 +138,12 @@ Remove the command, runtime, examples, documentation, and manifest together:
 
 ```text
 curl -fsSL https://raw.githubusercontent.com/danaia/loom/main/uninstall.sh | sh
+curl -fsSL https://raw.githubusercontent.com/danaia/loom/main/uninstall.sh | LOOM_BACKEND=metal sh
+curl -fsSL https://raw.githubusercontent.com/danaia/loom/main/uninstall.sh | LOOM_BACKEND=cuda sh
 ```
 
 The remover only deletes a directory carrying Loom’s recognized installation
-manifest and only removes a command symlink that points into that directory.
+manifest and only removes command symlinks that point into that directory.
 
 ## Native Metal Hello Particle
 

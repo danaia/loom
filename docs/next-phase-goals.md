@@ -173,6 +173,23 @@ performance work; global metrics never feed back into cell decisions.
 - Begin with frozen resident fine state and exact re-expansion.
 - Add eviction and procedural reconstruction only after error contracts pass.
 
+## 6. CUDA/RTX Backend
+
+- Add `loom-cuda` as a separate backend crate that accepts only validated CUDA
+  graphs.
+- Start headless: Hello Batch on device-private CUDA buffers, CUDA events, async
+  upload, and no presentation.
+- Add CUDA graph replay for steady fixed schedules.
+- Port binning, radix sort, compaction, and overflow diagnostics before promising
+  large swarm or volume workloads.
+- Add CUDA or OptiX views for dense splats, geometry, shadows, and raymarched
+  sparse volumes.
+- Publish Loom-vs-direct-CUDA evidence on the named RTX 5090-class workstation.
+
+See [`cuda-rtx-architecture.md`](cuda-rtx-architecture.md) for the backend
+contract, memory model, dense-particle tiers, sparse cloud/fire representation,
+lighting path, and benchmark standard.
+
 ## Direct-Metal Comparison
 
 Loom and the baseline must use identical:

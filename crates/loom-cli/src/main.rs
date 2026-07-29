@@ -147,7 +147,7 @@ fn run() -> Result<(), u8> {
         print_json(&CheckSuccess {
             status: "valid",
             module: &graph.name,
-            target: "metal",
+            target: target_name(&graph.target),
             source_graph_hash: &report.source_graph.fingerprint,
             artifact_fingerprint: validated.artifact_fingerprint(),
             summary: GraphSummary {
@@ -399,8 +399,9 @@ fn installed_baseline() -> Option<PathBuf> {
 
 fn download_release_baseline(archive: &Path) -> Result<(), String> {
     let default_url = format!(
-        "https://github.com/danaia/loom/releases/download/v{}/loom-darwin-arm64.tar.gz",
-        env!("CARGO_PKG_VERSION")
+        "https://github.com/danaia/loom/releases/download/v{}/{}.tar.gz",
+        env!("CARGO_PKG_VERSION"),
+        release_asset_name()
     );
     let release_url = env::var("LOOM_NEW_RELEASE_URL").unwrap_or(default_url);
     let status = ProcessCommand::new("curl")
@@ -470,13 +471,14 @@ fn new_error(stage: &str, message: &str) -> u8 {
     2
 }
 
-#[cfg(target_os = "macos")]
 fn update_installation() -> Result<(), u8> {
     const INSTALLER_URL: &str = "https://raw.githubusercontent.com/danaia/loom/main/install.sh";
     let installer_url =
         env::var("LOOM_UPDATE_INSTALLER_URL").unwrap_or_else(|_| INSTALLER_URL.to_owned());
+    let loom_home = current_install_home();
+    let backend = installed_manifest_value("backend").unwrap_or_else(current_backend_name);
 
-    println!("Updating Loom from {installer_url}...");
+    println!("Updating Loom {backend} from {installer_url}...");
     let mut download = ProcessCommand::new("curl")
         .args([
             "-fsSL",
@@ -501,9 +503,14 @@ fn update_installation() -> Result<(), u8> {
         .stdout
         .take()
         .expect("piped curl output must be available");
-    let install_status = ProcessCommand::new("sh")
+    let mut install = ProcessCommand::new("sh");
+    install
         .stdin(Stdio::from(installer))
-        .status();
+        .env("LOOM_BACKEND", backend);
+    if let Some(home) = loom_home {
+        install.env("LOOM_HOME", home);
+    }
+    let install_status = install.status();
     let download_status = download.wait();
 
     let download_status = download_status.map_err(|error| {
@@ -542,13 +549,59 @@ fn update_installation() -> Result<(), u8> {
     Ok(())
 }
 
-#[cfg(not(target_os = "macos"))]
-fn update_installation() -> Result<(), u8> {
-    print_json(&serde_json::json!({
-        "status": "unsupported",
-        "message": "Loom updates currently require an Apple Silicon Mac",
-    }));
-    Err(2)
+fn current_install_home() -> Option<PathBuf> {
+    env::current_exe()
+        .ok()?
+        .parent()?
+        .parent()
+        .map(Path::to_path_buf)
+}
+
+fn installed_manifest_value(key: &str) -> Option<String> {
+    let manifest = current_install_home()?.join("install-manifest");
+    let contents = fs::read_to_string(manifest).ok()?;
+    contents.lines().find_map(|line| {
+        let (name, value) = line.split_once('=')?;
+        (name == key).then(|| value.to_owned())
+    })
+}
+
+fn current_backend_name() -> String {
+    env::var("LOOM_BACKEND").unwrap_or_else(|_| {
+        if cfg!(target_os = "linux") {
+            "cuda".to_owned()
+        } else {
+            "metal".to_owned()
+        }
+    })
+}
+
+fn release_asset_name() -> String {
+    let backend = installed_manifest_value("backend").unwrap_or_else(current_backend_name);
+    let platform = installed_manifest_value("platform").unwrap_or_else(|| {
+        if cfg!(target_os = "macos") {
+            "darwin".to_owned()
+        } else if cfg!(target_os = "linux") {
+            "linux".to_owned()
+        } else {
+            env::consts::OS.to_owned()
+        }
+    });
+    let architecture = installed_manifest_value("architecture").unwrap_or_else(|| {
+        if cfg!(target_arch = "aarch64") {
+            "arm64".to_owned()
+        } else {
+            env::consts::ARCH.to_owned()
+        }
+    });
+    format!("loom-{backend}-{platform}-{architecture}")
+}
+
+fn target_name(target: &loom_core::Target) -> &'static str {
+    match target {
+        loom_core::Target::Metal => "metal",
+        loom_core::Target::Cuda => "cuda",
+    }
 }
 
 #[cfg(target_os = "macos")]

@@ -985,6 +985,56 @@ pub fn packaged_metal_implementation(
     }
 }
 
+pub fn cuda_implementation(
+    source: impl Into<String>,
+    entry: impl Into<String>,
+) -> BackendImplementation {
+    BackendImplementation {
+        backend: Backend::Cuda,
+        source: source.into(),
+        entry: entry.into(),
+        source_text: None,
+    }
+}
+
+pub fn packaged_cuda_implementation(
+    source: impl Into<String>,
+    entry: impl Into<String>,
+    source_text: impl Into<String>,
+) -> BackendImplementation {
+    BackendImplementation {
+        backend: Backend::Cuda,
+        source: source.into(),
+        entry: entry.into(),
+        source_text: Some(source_text.into()),
+    }
+}
+
+pub fn optix_implementation(
+    source: impl Into<String>,
+    entry: impl Into<String>,
+) -> BackendImplementation {
+    BackendImplementation {
+        backend: Backend::Optix,
+        source: source.into(),
+        entry: entry.into(),
+        source_text: None,
+    }
+}
+
+pub fn packaged_optix_implementation(
+    source: impl Into<String>,
+    entry: impl Into<String>,
+    source_text: impl Into<String>,
+) -> BackendImplementation {
+    BackendImplementation {
+        backend: Backend::Optix,
+        source: source.into(),
+        entry: entry.into(),
+        source_text: Some(source_text.into()),
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct PassDraft {
     pub name: String,

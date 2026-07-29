@@ -1,8 +1,8 @@
 use loom_core::{
-    CapabilityKind, ContractClause, DataType, DependencySemantics, DiagnosticCode, GraphEdit,
-    KernelId, Literal, ModuleBuilder, PresentationLifetimePolicy, QueueModel, ResourceId,
-    SnapshotSemantics, StreamDraft, StreamInitializer, TickOverlapPolicy, Unit, ValueDraft,
-    ValueKind, ViewState, canonicalize,
+    Backend, CapabilityKind, ContractClause, DataType, DependencySemantics, DiagnosticCode,
+    GraphEdit, KernelId, Literal, ModuleBuilder, PresentationLifetimePolicy, QueueModel,
+    ResourceId, SnapshotSemantics, StreamDraft, StreamInitializer, Target, TickOverlapPolicy, Unit,
+    ValueDraft, ValueKind, ViewState, canonicalize,
     conformance::{HelloParticleConfig, hello_batch_builder, hello_particle_builder},
 };
 use loom_validator::{
@@ -611,6 +611,33 @@ fn zero_rate_incomplete_view_and_bad_metric_units_are_rejected() {
             "missing diagnostic {code:?}"
         );
     }
+}
+
+#[test]
+fn cuda_target_accepts_cuda_kernels_and_optix_views() {
+    let mut graph = hello_particle_builder(HelloParticleConfig::default())
+        .build()
+        .unwrap();
+    graph.target = Target::Cuda;
+    for kernel in &mut graph.kernels.nodes {
+        for implementation in &mut kernel.implementations {
+            implementation.backend = Backend::Cuda;
+            implementation.source = implementation.source.replace(".metal", ".cu");
+        }
+    }
+    graph.views[0].implementation.backend = Backend::Optix;
+    graph.views[0].implementation.source = "shaders/particle.optix.cu".to_owned();
+
+    let report = Validator::validate(&graph);
+    let validated = report.validated.expect("CUDA graph should validate");
+    let schedule = &validated.execution_plan().schedules[0];
+    assert!(
+        schedule
+            .passes
+            .iter()
+            .all(|pass| pass.implementation.backend == Backend::Cuda)
+    );
+    assert_eq!(schedule.views[0].implementation.backend, Backend::Optix);
 }
 
 #[test]

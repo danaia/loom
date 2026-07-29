@@ -45,9 +45,10 @@ impl ModuleGraph {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Target {
     Metal,
+    Cuda,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -396,9 +397,11 @@ pub struct BackendImplementation {
     pub source_text: Option<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Backend {
     Metal,
+    Cuda,
+    Optix,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

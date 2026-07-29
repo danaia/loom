@@ -7,7 +7,8 @@
 use loom_core::{
     DataType, KernelAbiDraft, KernelDraft, Literal, ModuleBuilder, ModuleGraph, PassDraft,
     ResourceAccess, ScalarType, ScheduleDraft, SlotAccess, SlotDraft, StorageClass, StreamDraft,
-    Target, Unit, ValueDraft, ViewDraft, metal_implementation, packaged_metal_implementation,
+    Target, Unit, ValueDraft, ViewDraft, cuda_implementation, metal_implementation,
+    optix_implementation, packaged_metal_implementation,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -322,7 +323,8 @@ struct ParameterAst {
 
 #[derive(Clone, Debug)]
 enum KernelImplementationAst {
-    ExternalMetal {
+    External {
+        backend: ExternalBackendAst,
         source: String,
         entry: String,
     },
@@ -330,6 +332,13 @@ enum KernelImplementationAst {
         index: String,
         statements: Vec<StatementAst>,
     },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ExternalBackendAst {
+    Metal,
+    Cuda,
+    Optix,
 }
 
 #[derive(Clone, Debug)]
@@ -405,6 +414,7 @@ struct PassAst {
 struct ViewAst {
     name: String,
     reads: Vec<(String, String)>,
+    backend: ExternalBackendAst,
     source: String,
     entry: String,
 }
@@ -636,7 +646,7 @@ impl Parser {
 
         let implementation = if self.peek_word() == Some("extern") {
             self.expect_word("extern")?;
-            self.expect_word("metal")?;
+            let backend = self.parse_external_backend(false)?;
             self.expect_symbol('{')?;
             let mut source = None;
             let mut entry = None;
@@ -650,18 +660,21 @@ impl Parser {
                     other => {
                         return Err(self.error(
                             "P0024",
-                            format!("unknown Metal implementation property `{other}`"),
+                            format!("unknown external implementation property `{other}`"),
                         ));
                     }
                 }
                 self.eat_symbol(',');
                 self.eat_symbol(';');
             }
-            KernelImplementationAst::ExternalMetal {
-                source: source
-                    .ok_or_else(|| self.error("P0025", "Metal implementation requires `source`"))?,
-                entry: entry
-                    .ok_or_else(|| self.error("P0026", "Metal implementation requires `entry`"))?,
+            KernelImplementationAst::External {
+                backend,
+                source: source.ok_or_else(|| {
+                    self.error("P0025", "external implementation requires `source`")
+                })?,
+                entry: entry.ok_or_else(|| {
+                    self.error("P0026", "external implementation requires `entry`")
+                })?,
             }
         } else {
             self.expect_word("each")?;
@@ -885,7 +898,7 @@ impl Parser {
             self.eat_symbol(',');
         }
         self.expect_word("extern")?;
-        self.expect_word("metal")?;
+        let backend = self.parse_external_backend(true)?;
         self.expect_symbol('{')?;
         let mut source = None;
         let mut entry = None;
@@ -898,7 +911,7 @@ impl Parser {
                 "entry" => entry = Some(value),
                 other => {
                     return Err(
-                        self.error("P0060", format!("unknown Metal view property `{other}`"))
+                        self.error("P0060", format!("unknown external view property `{other}`"))
                     );
                 }
             }
@@ -908,9 +921,24 @@ impl Parser {
         Ok(ViewAst {
             name,
             reads,
+            backend,
             source: source.ok_or_else(|| self.error("P0061", "view requires `source`"))?,
             entry: entry.ok_or_else(|| self.error("P0062", "view requires `entry`"))?,
         })
+    }
+
+    fn parse_external_backend(
+        &mut self,
+        allow_optix: bool,
+    ) -> Result<ExternalBackendAst, SourceDiagnostic> {
+        let backend = self.expect_any_word()?;
+        match backend.as_str() {
+            "metal" => Ok(ExternalBackendAst::Metal),
+            "cuda" => Ok(ExternalBackendAst::Cuda),
+            "optix" if allow_optix => Ok(ExternalBackendAst::Optix),
+            "optix" => Err(self.error("P0063", "`extern optix` is supported only for views")),
+            other => Err(self.error("P0064", format!("unsupported external backend `{other}`"))),
+        }
     }
 
     fn parse_typed(&mut self) -> Result<TypedAst, SourceDiagnostic> {
@@ -1159,16 +1187,20 @@ fn parse_unit(text: &str) -> Result<Unit, String> {
 }
 
 fn lower(module: ModuleAst) -> Result<ModuleGraph, SourceDiagnostic> {
-    if module.target != "metal" {
-        return Err(SourceDiagnostic::new(
-            "S0001",
-            format!("unsupported target `{}`; expected `metal`", module.target),
-            module.span,
-        ));
-    }
+    let target = match module.target.as_str() {
+        "metal" => Target::Metal,
+        "cuda" => Target::Cuda,
+        other => {
+            return Err(SourceDiagnostic::new(
+                "S0001",
+                format!("unsupported target `{other}`; expected `metal` or `cuda`"),
+                module.span,
+            ));
+        }
+    };
 
     let module_name = module.name.clone();
-    let mut builder = ModuleBuilder::new(module.name).target(Target::Metal);
+    let mut builder = ModuleBuilder::new(module.name).target(target);
     for constant in module.constants {
         let value = lower_value(&constant.value, &constant.typed.data_type)
             .map_err(|message| SourceDiagnostic::new("S0010", message, constant.span))?;
@@ -1198,7 +1230,7 @@ fn lower(module: ModuleAst) -> Result<ModuleGraph, SourceDiagnostic> {
         builder = builder.stream(draft);
     }
     for kernel in module.kernels {
-        let implementation = lower_kernel_implementation(&module_name, &kernel)?;
+        let implementation = lower_kernel_implementation(target, &module_name, &kernel)?;
         let binding_order = kernel
             .parameters
             .iter()
@@ -1237,7 +1269,8 @@ fn lower(module: ModuleAst) -> Result<ModuleGraph, SourceDiagnostic> {
         builder = builder.pass(draft);
     }
     for view in module.views {
-        let mut draft = ViewDraft::render(view.name, metal_implementation(view.source, view.entry));
+        let implementation = lower_external_implementation(view.backend, view.source, view.entry);
+        let mut draft = ViewDraft::render(view.name, implementation);
         for (binding, stream) in view.reads {
             draft = draft.read(binding, stream);
         }
@@ -1278,16 +1311,38 @@ fn lower(module: ModuleAst) -> Result<ModuleGraph, SourceDiagnostic> {
 }
 
 fn lower_kernel_implementation(
+    target: Target,
     module_name: &str,
     kernel: &KernelAst,
 ) -> Result<loom_core::BackendImplementation, SourceDiagnostic> {
     match &kernel.implementation {
-        KernelImplementationAst::ExternalMetal { source, entry } => {
-            Ok(metal_implementation(source, entry))
-        }
+        KernelImplementationAst::External {
+            backend,
+            source,
+            entry,
+        } => Ok(lower_external_implementation(*backend, source, entry)),
         KernelImplementationAst::Native { index, statements } => {
+            if target != Target::Metal {
+                return Err(SourceDiagnostic::new(
+                    "S0030",
+                    "native Loom kernel bodies currently generate Metal only; use `extern cuda` for CUDA targets",
+                    kernel.span,
+                ));
+            }
             generate_metal(module_name, kernel, index, statements)
         }
+    }
+}
+
+fn lower_external_implementation(
+    backend: ExternalBackendAst,
+    source: impl Into<String>,
+    entry: impl Into<String>,
+) -> loom_core::BackendImplementation {
+    match backend {
+        ExternalBackendAst::Metal => metal_implementation(source, entry),
+        ExternalBackendAst::Cuda => cuda_implementation(source, entry),
+        ExternalBackendAst::Optix => optix_implementation(source, entry),
     }
 }
 
@@ -1782,6 +1837,53 @@ mod tests {
     fn subtraction_is_distinct_from_a_negative_literal() {
         let source = SOURCE.replace("gravity * dt", "velocity[i] - gravity * dt");
         parse(&source).expect("binary subtraction should remain valid");
+    }
+
+    #[test]
+    fn cuda_target_accepts_external_cuda_and_optix() {
+        let source = r#"loom 0.1
+module cuda_particle
+target cuda
+
+stream position: f32x3<m> {
+  cap=1 len=1 buffers=1 access=rw storage=device
+  init=[[0, 0, 0]]
+}
+
+kernel integrate(
+  position: rw stream<f32x3,m>
+) extern cuda {
+  source="kernels/integrate.cu"
+  entry="integrate_main"
+}
+
+pass step = integrate(position=position) over position
+
+view viewport(position=position) extern optix {
+  source="shaders/particle.optix.cu"
+  entry="particle_pipeline"
+}
+
+flow simulation rate=120hz {
+  step
+  draw viewport after step
+}
+"#;
+        let graph = parse(source).expect("CUDA source should parse");
+        assert_eq!(graph.target, loom_core::Target::Cuda);
+        let report = Validator::validate(&graph);
+        assert!(
+            report.is_valid(),
+            "unexpected diagnostics: {:#?}",
+            report.diagnostics
+        );
+    }
+
+    #[test]
+    fn cuda_target_rejects_native_metal_generation() {
+        let source = SOURCE.replace("target metal", "target cuda");
+        let diagnostics = parse(&source).expect_err("native CUDA codegen is not implemented");
+        assert_eq!(diagnostics[0].code, "S0030");
     }
 
     #[test]
