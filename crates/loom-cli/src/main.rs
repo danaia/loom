@@ -84,7 +84,7 @@ fn run() -> Result<(), u8> {
         CliAction::Execute { command, path } => (command, path),
     };
 
-    let loaded = match package::load(&path, command == Command::Run) {
+    let loaded = match package::load(&path, command == Command::Run && can_prepare_source_run()) {
         Ok(loaded) => loaded,
         Err(error) => {
             print_json(&serde_json::json!({
@@ -604,6 +604,10 @@ fn target_name(target: &loom_core::Target) -> &'static str {
     }
 }
 
+fn can_prepare_source_run() -> bool {
+    cfg!(target_os = "macos")
+}
+
 #[cfg(target_os = "macos")]
 fn run_window(
     validated: loom_validator::ValidatedModuleGraph,
@@ -639,7 +643,7 @@ fn run_window(
 ) -> Result<(), u8> {
     print_json(&serde_json::json!({
         "status": "unsupported",
-        "message": "running Loom programs currently requires macOS and Metal",
+        "message": "CUDA execution is not available in this CLI yet; use `loom-cuda check` or `loom-cuda explain` for CUDA-target validation until the loom-cuda runtime backend lands",
     }));
     Err(2)
 }
