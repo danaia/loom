@@ -224,5 +224,7 @@ kernel void baseline_project_particles(
             : float4(0.18, 0.72, 1.0, 1.0));
     render_colors[index] = is_target
         ? float4(1.0, 0.72, 0.18, 1.0)
-        : (is_selected ? mix(type_color, float4(1.0), 0.35) : type_color);
+        : (is_selected
+            ? float4(1.0, 0.12, 0.12, 1.0)
+            : type_color);
 }
