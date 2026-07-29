@@ -1,15 +1,16 @@
 # Loom
 
-Loom is an agent-native, low-level GPU language and execution model. Its current
-runtime is optimized for Apple Silicon through Metal, and its backend model is
-now being prepared for CUDA/RTX systems.
+Loom is an agent-native, low-level GPU language and execution model with support
+for both Metal and CUDA-target systems. The Metal runtime is optimized for Apple
+Silicon today, and CUDA/RTX support is now available for Linux workstation
+installs, CUDA-target graph validation, and the emerging `loom-cuda` backend path.
 
 It lets AI agents author, validate, inspect, repair, and run GPU applications
 from one `.loom` source.
 
 Programs run as compiled GPU kernels instead of interpreted agent logic.
-An agent can inspect diagnostics and generated Metal, correct failed source, and
-continue refining the same program.
+An agent can inspect diagnostics and generated backend code, correct failed
+source, and continue refining the same program.
 
 This creates a tight self-reflective development loop for fast autonomous
 systems—including swarms, simulations, and procedural organisms that can detect
@@ -62,26 +63,27 @@ Most tools handle one part of the problem:
 Loom is designed to combine these parts in one language and runtime.
 
 An AI agent can author a low-level GPU program, validate its memory and resource
-access, inspect the generated Metal, run millions of parallel elements, render
+access, inspect generated backend code, run millions of parallel elements, render
 the result, and continue refining the same `.loom` source.
 
 This combination is unusual. Loom is not a prompt wrapper, a shader toy, or a
 finished simulation engine. It is an attempt to make agent-authored autonomous
 systems a first-class GPU programming model.
 
-You write a `.loom` program. Loom validates it, generates Metal for supported
-kernels, connects declared Metal kernels, schedules the GPU work, and opens a
-native window.
+You write a `.loom` program. Loom validates it, lowers to the selected backend,
+connects declared Metal or CUDA kernels, schedules the GPU work, and uses the
+available native runtime for execution.
 
 
 ## Get started
 
-Loom publishes backend-specific release packages:
+Loom supports backend-specific release packages:
 
 - `loom-metal-darwin-arm64` for Apple Silicon Macs with Metal.
-- `loom-cuda-linux-x86_64` for CUDA/RTX Linux workstations. This is currently a
-  CLI distribution for validation, package handling, and CUDA-target graph work;
-  the executable CUDA runtime lands with the future `loom-cuda` backend.
+- `loom-cuda-linux-x86_64` for CUDA/RTX Linux workstations. CUDA support
+  currently covers installation, validation, package handling, `target cuda`,
+  `extern cuda`, and `extern optix`; full CUDA execution lands with the
+  `loom-cuda` runtime backend.
 
 Install Metal on Apple Silicon:
 
@@ -116,7 +118,7 @@ You do not need Rust or Cargo to use the installed release.
 
 ## Portable `.lmp` projects
 
-A Loom project keeps its primary `.loom` file, referenced Metal sources, and
+A Loom project keeps its primary `.loom` file, referenced backend sources, and
 optional `src/runtime.rs` extension in one directory. Build that directory into
 a single distributable package:
 
@@ -125,7 +127,7 @@ loom build examples/marble-water/marble-water.loom
 loom examples/marble-water/marble-water.lmp
 ```
 
-The `.lmp` contains the graph, every referenced Metal file, the Rust extension
+The `.lmp` contains the graph, every referenced backend file, the Rust extension
 source, and its compiled target library. Running the package requires only the
 global `loom` runtime. Building a project with `src/runtime.rs` requires `rustc`.
 
@@ -154,8 +156,8 @@ Loom then:
 parses the .loom source
 → checks types, units, memory, and access
 → builds a validated execution graph
-→ generates or loads Metal kernels
-→ runs the program on the Apple GPU
+→ generates or loads backend kernels
+→ runs the program on the selected GPU runtime
 ```
 
 ## How Loom is different technically
@@ -166,13 +168,14 @@ GPU program.
 - It exposes low-level GPU concepts such as streams, capacities, access modes,
   kernels, passes, and flows.
 - Its compact syntax is designed for AI coding agents.
-- Supported Loom kernels compile into inspectable Metal source.
-- Unsupported work stays visible as `extern metal`.
+- Supported Loom kernels compile into inspectable backend source.
+- Backend-specific work stays visible as `extern metal`, `extern cuda`, or
+  `extern optix`.
 - `loom check` rejects invalid programs before they run.
-- `loom explain` shows the graph, execution plan, and generated Metal.
+- `loom explain` shows the graph, execution plan, and generated backend code.
 
 The goal is an agent-native authoring language for high-performance GPU systems:
-Metal today, CUDA/RTX next, with many independent elements kept explicit and
+Metal and CUDA/RTX, with many independent elements kept explicit and
 measurable.
 
 ## Why it is useful for organisms
@@ -211,7 +214,8 @@ kernel integrate(
 }
 ```
 
-Loom checks the types and units, then generates the Metal implementation.
+Loom checks the types and units, then generates the backend implementation for
+the selected target.
 
 The program schedules it at 120 Hz:
 
@@ -280,7 +284,7 @@ loom project.lmp           # Run a self-contained package
 loom build program.loom    # Build program.lmp
 loom check program.loom    # Validate
 loom check project.lmp     # Validate a package
-loom explain program.loom  # Inspect the graph and generated Metal
+loom explain program.loom  # Inspect the graph, plan, and backend code
 loom new my-project        # Start from the Baseline project
 loom update                # Install the latest release
 loom --version             # Print the version
@@ -295,8 +299,8 @@ Read docs/agent-coding-reference.md completely, then read the closest runnable
 example.
 
 Build a runnable .loom particle system with visible GPU motion.
-Use native Loom for supported kernels and explicit extern metal for unsupported
-work. Do not invent syntax.
+Use native Loom for supported kernels and explicit `extern metal`, `extern cuda`,
+or `extern optix` for backend-specific work. Do not invent syntax.
 
 Finish only when these commands succeed:
 loom check PATH_TO_PROGRAM
