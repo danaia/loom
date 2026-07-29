@@ -1,9 +1,10 @@
 # Loom
 
 Loom is an agent-native, low-level GPU language and execution model with support
-for both Metal and CUDA-target systems. The Metal runtime is optimized for Apple
-Silicon today, and CUDA/RTX support is now available for Linux workstation
-installs, CUDA-target graph validation, and the emerging `loom-cuda` backend path.
+for both Metal and CUDA systems. The Metal runtime is optimized for Apple Silicon,
+and CUDA/RTX support is live for Linux workstation installs, CUDA-target graph
+validation, explicit CUDA/OptiX backend declarations, and the `loom-cuda` runtime
+path.
 
 It lets AI agents author, validate, inspect, repair, and run GPU applications
 from one `.loom` source.
