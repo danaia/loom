@@ -605,7 +605,7 @@ fn target_name(target: &loom_core::Target) -> &'static str {
 }
 
 fn can_prepare_source_run() -> bool {
-    cfg!(target_os = "macos")
+    cfg!(any(target_os = "macos", target_os = "linux"))
 }
 
 #[cfg(target_os = "macos")]
@@ -639,9 +639,18 @@ fn run_window(
     validated: loom_validator::ValidatedModuleGraph,
     project_root: Option<std::path::PathBuf>,
     _extension_path: Option<std::path::PathBuf>,
-    _ui: Option<package::LoadedUi>,
+    ui: Option<package::LoadedUi>,
 ) -> Result<(), u8> {
-    loom_cuda::CudaRuntime::run_project(validated, project_root).map_err(|diagnostic| {
+    let ui_project_root = project_root.clone();
+    let ui = ui.map(|ui| loom_cuda::ProjectUi {
+        project_root: ui_project_root.unwrap_or_else(|| ui.asset_root.clone()),
+        asset_root: ui.asset_root,
+        entry: ui.entry,
+        title: ui.title,
+        width: ui.width,
+        height: ui.height,
+    });
+    loom_cuda::CudaRuntime::run_project(validated, project_root, ui).map_err(|diagnostic| {
         print_json(&serde_json::json!({
             "status": "runtime_error",
             "diagnostic": diagnostic,
@@ -775,8 +784,7 @@ mod tests {
             fs::create_dir(&directory).expect("excluded directory");
             fs::write(directory.join("state.json"), "{}").expect("excluded state");
         }
-        fs::write(source.path().join("baseline.loom"), "module baseline")
-            .expect("baseline source");
+        fs::write(source.path().join("baseline.loom"), "module baseline").expect("baseline source");
         let project = destination.path().join("clean-project");
 
         copy_project_tree(source.path(), &project).expect("copy clean project");

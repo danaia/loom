@@ -3,8 +3,7 @@ use std::{
     fs,
     path::{Path, PathBuf},
     process::Command,
-    ptr,
-    thread,
+    ptr, thread,
     time::{Duration, Instant},
 };
 
@@ -15,6 +14,10 @@ use loom_windowing::WindowLayoutConfig;
 use minifb::{Key, Window, WindowOptions};
 use serde::Serialize;
 use tempfile::TempDir;
+
+mod panel;
+
+pub use panel::ProjectUi;
 
 type CUdevice = c_int;
 type CUcontext = *mut c_void;
@@ -65,6 +68,7 @@ impl CudaRuntime {
     pub fn run_project(
         validated: ValidatedModuleGraph,
         project_root: Option<PathBuf>,
+        project_ui: Option<ProjectUi>,
     ) -> Result<(), CudaDiagnostic> {
         if validated.graph().target != Target::Cuda {
             return Err(CudaDiagnostic::new(
@@ -94,12 +98,14 @@ impl CudaRuntime {
         if !kernel_source.is_file() {
             return Err(CudaDiagnostic::new(
                 "source_missing",
-                format!("CUDA baseline kernel source is missing: `{}`", kernel_source.display()),
+                format!(
+                    "CUDA baseline kernel source is missing: `{}`",
+                    kernel_source.display()
+                ),
             ));
         }
-        let layout = WindowLayoutConfig::load(&project_root).map_err(|message| {
-            CudaDiagnostic::new("window_config_invalid", message)
-        })?;
+        let layout = WindowLayoutConfig::load(&project_root)
+            .map_err(|message| CudaDiagnostic::new("window_config_invalid", message))?;
         let rate_hz = match validated.graph().schedules[0].timing {
             loom_core::ScheduleTiming::Fixed { rate_hz, .. } => rate_hz,
         };
@@ -111,6 +117,7 @@ impl CudaRuntime {
         let height = layout.viewer_height.clamp(240.0, 4096.0).round() as usize;
         let mut window = Window::new(title, width, height, WindowOptions::default())
             .map_err(|error| CudaDiagnostic::new("window_creation_failed", error.to_string()))?;
+        let mut panel = project_ui.map(panel::PanelBridge::launch).transpose()?;
         window.set_target_fps(rate_hz.min(240) as usize);
         let mut pixels = vec![0_u32; width * height];
         let dt = 1.0_f32 / rate_hz as f32;
@@ -130,9 +137,30 @@ impl CudaRuntime {
         );
 
         while window.is_open() && !window.is_key_down(Key::Escape) {
+            if let Some(panel) = panel.as_mut() {
+                for command in panel.drain_commands().collect::<Vec<_>>() {
+                    match command {
+                        panel::PanelCommand::Set(control) => {
+                            state.set_control(&mut driver, &control.name, control.value)?;
+                        }
+                        panel::PanelCommand::Quit => {
+                            return Ok(());
+                        }
+                        panel::PanelCommand::Reload { generation } => {
+                            panel.publish_reload_status(generation, &Ok(()));
+                        }
+                        panel::PanelCommand::WindowFrame { frame } => {
+                            let _ = frame;
+                        }
+                    }
+                }
+            }
             state.step(&mut driver, dt)?;
             let frame = state.read_frame(&mut driver)?;
             draw_frame(&frame, &mut pixels, width, height);
+            if let Some(panel) = panel.as_mut() {
+                panel.publish(&state.panel_values());
+            }
             window
                 .update_with_buffer(&pixels, width, height)
                 .map_err(|error| CudaDiagnostic::new("window_update_failed", error.to_string()))?;
@@ -165,7 +193,9 @@ fn compile_ptx(source: &Path) -> Result<TempPtx, CudaDiagnostic> {
         .arg("-o")
         .arg(&ptx_path)
         .output()
-        .map_err(|error| CudaDiagnostic::new("nvcc_failed", format!("could not run nvcc: {error}")))?;
+        .map_err(|error| {
+            CudaDiagnostic::new("nvcc_failed", format!("could not run nvcc: {error}"))
+        })?;
     if !output.status.success() {
         return Err(CudaDiagnostic::new(
             "nvcc_failed",
@@ -343,6 +373,45 @@ impl BaselineCudaState {
             colors: self.render_color.copy_to_vec(driver, RENDER_CAPACITY)?,
         })
     }
+
+    fn set_control(
+        &mut self,
+        driver: &mut CudaDriver,
+        name: &str,
+        value: f32,
+    ) -> Result<(), CudaDiagnostic> {
+        match name {
+            "interaction.space_drag" => self
+                .values
+                .space_drag
+                .copy_from(driver, &[value.clamp(0.0, 0.5)]),
+            "interaction.agent_type" => self
+                .values
+                .spawn_type
+                .copy_from(driver, &[value.clamp(0.0, 2.0).round()]),
+            "interaction.reset" if value > 0.5 => self.values.reset.copy_from(driver, &[1.0]),
+            "interaction.reset" => self.values.reset.copy_from(driver, &[0.0]),
+            "interaction.select_particle" => self
+                .values
+                .select_command
+                .copy_from(driver, &[value.clamp(0.0, 31.0).round()]),
+            "interaction.remove_particle" => self
+                .values
+                .remove_command
+                .copy_from(driver, &[value.clamp(0.0, 31.0).round()]),
+            _ => Ok(()),
+        }
+    }
+
+    fn panel_values(&self) -> Vec<(String, f32)> {
+        vec![
+            ("interaction.hud_fps".to_owned(), 120.0),
+            ("interaction.hud_gpu_mb".to_owned(), 0.0),
+            ("interaction.hud_gpu_frame_ms".to_owned(), 0.0),
+            ("interaction.hud_gpu_budget_ms".to_owned(), 8.333333),
+            ("interaction.hud_gpu_pressure".to_owned(), 0.0),
+        ]
+    }
 }
 
 impl Drop for BaselineCudaState {
@@ -399,7 +468,14 @@ impl BaselineValues {
             selection_radius: scalar(driver, 0.11)?,
             reset: scalar(driver, 0.0)?,
             pointer_down: scalar(driver, 0.0)?,
-            gravity: DeviceBuffer::new(driver, &[Vec3 { x: 0.0, y: 0.0, z: 0.0 }])?,
+            gravity: DeviceBuffer::new(
+                driver,
+                &[Vec3 {
+                    x: 0.0,
+                    y: 0.0,
+                    z: 0.0,
+                }],
+            )?,
             space_drag: scalar(driver, 0.0)?,
             target_spring: scalar(driver, 42.0)?,
             target_damping: scalar(driver, 11.0)?,
@@ -539,8 +615,9 @@ impl CudaDriver {
             .map_err(|error| CudaDiagnostic::new("cuda_driver_missing", error.to_string()))?;
         macro_rules! load_symbol {
             ($name:literal, $ty:ty) => {
-                *unsafe { library.get::<$ty>($name) }
-                    .map_err(|error| CudaDiagnostic::new("cuda_symbol_missing", error.to_string()))?
+                *unsafe { library.get::<$ty>($name) }.map_err(|error| {
+                    CudaDiagnostic::new("cuda_symbol_missing", error.to_string())
+                })?
             };
         }
         let cu_init = load_symbol!(b"cuInit\0", unsafe extern "C" fn(c_uint) -> CUresult);
@@ -592,10 +669,8 @@ impl CudaDriver {
                 *mut *mut c_void,
             ) -> CUresult
         );
-        let cu_ctx_synchronize = load_symbol!(
-            b"cuCtxSynchronize\0",
-            unsafe extern "C" fn() -> CUresult
-        );
+        let cu_ctx_synchronize =
+            load_symbol!(b"cuCtxSynchronize\0", unsafe extern "C" fn() -> CUresult);
         let cu_get_error_string = load_symbol!(
             b"cuGetErrorString\0",
             unsafe extern "C" fn(CUresult, *mut *const c_char) -> CUresult
@@ -618,7 +693,10 @@ impl CudaDriver {
         };
         driver.check(unsafe { (driver.cu_init)(0) }, "cuInit")?;
         let mut device = 0;
-        driver.check(unsafe { (driver.cu_device_get)(&mut device, 0) }, "cuDeviceGet")?;
+        driver.check(
+            unsafe { (driver.cu_device_get)(&mut device, 0) },
+            "cuDeviceGet",
+        )?;
         let mut context = ptr::null_mut();
         driver.check(
             unsafe { (driver.cu_ctx_create)(&mut context, 0, device) },
@@ -651,7 +729,10 @@ impl CudaDriver {
 
     fn mem_alloc(&mut self, bytes: usize) -> Result<CUdeviceptr, CudaDiagnostic> {
         let mut ptr = 0;
-        self.check(unsafe { (self.cu_mem_alloc)(&mut ptr, bytes) }, "cuMemAlloc")?;
+        self.check(
+            unsafe { (self.cu_mem_alloc)(&mut ptr, bytes) },
+            "cuMemAlloc",
+        )?;
         Ok(ptr)
     }
 
@@ -668,7 +749,11 @@ impl CudaDriver {
         )
     }
 
-    fn copy_dtoh<T>(&mut self, values: &mut [T], device: CUdeviceptr) -> Result<(), CudaDiagnostic> {
+    fn copy_dtoh<T>(
+        &mut self,
+        values: &mut [T],
+        device: CUdeviceptr,
+    ) -> Result<(), CudaDiagnostic> {
         self.check(
             unsafe {
                 (self.cu_memcpy_dtoh)(
@@ -726,7 +811,10 @@ impl CudaDriver {
         } else {
             format!("CUDA error {result}")
         };
-        Err(CudaDiagnostic::new("cuda_driver_error", format!("{operation}: {text}")))
+        Err(CudaDiagnostic::new(
+            "cuda_driver_error",
+            format!("{operation}: {text}"),
+        ))
     }
 }
 

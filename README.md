@@ -88,13 +88,13 @@ Loom supports backend-specific release packages:
 Install Metal on Apple Silicon:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/danaia/loom/v0.1.15/install.sh | LOOM_BACKEND=metal sh
+curl -fsSL https://raw.githubusercontent.com/danaia/loom/v0.1.16/install.sh | LOOM_BACKEND=metal sh
 ```
 
 Install CUDA on a Linux RTX workstation:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/danaia/loom/v0.1.15/install.sh | LOOM_BACKEND=cuda sh
+curl -fsSL https://raw.githubusercontent.com/danaia/loom/v0.1.16/install.sh | LOOM_BACKEND=cuda sh
 ```
 
 The installer creates a backend-specific command, `loom-metal` or `loom-cuda`,
@@ -341,9 +341,9 @@ loom-cuda update   # CUDA install
 ```
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/danaia/loom/v0.1.15/uninstall.sh | sh
-curl -fsSL https://raw.githubusercontent.com/danaia/loom/v0.1.15/uninstall.sh | LOOM_BACKEND=metal sh
-curl -fsSL https://raw.githubusercontent.com/danaia/loom/v0.1.15/uninstall.sh | LOOM_BACKEND=cuda sh
+curl -fsSL https://raw.githubusercontent.com/danaia/loom/v0.1.16/uninstall.sh | sh
+curl -fsSL https://raw.githubusercontent.com/danaia/loom/v0.1.16/uninstall.sh | LOOM_BACKEND=metal sh
+curl -fsSL https://raw.githubusercontent.com/danaia/loom/v0.1.16/uninstall.sh | LOOM_BACKEND=cuda sh
 ```
 
 ## More

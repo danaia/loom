@@ -111,7 +111,11 @@ pub(crate) fn load(path: &str, prepare_source_project: bool) -> Result<LoadedPro
                 .and_then(|value| value.to_str())
                 .unwrap_or("project");
             (
-                compile_project_extension(&project_root)?,
+                if cfg!(target_os = "macos") {
+                    compile_project_extension(&project_root)?
+                } else {
+                    None
+                },
                 load_source_ui(&project_root, module)?,
             )
         } else {
@@ -430,6 +434,9 @@ fn read_ui_config(ui_root: &Path) -> Result<Option<UiSourceConfig>, String> {
 fn build_ui_assets(ui_root: &Path) -> Result<(), String> {
     let package_json = ui_root.join("package.json");
     if !package_json.is_file() {
+        return Ok(());
+    }
+    if !ui_root.join("node_modules").is_dir() && ui_root.join("dist/index.html").is_file() {
         return Ok(());
     }
     let npm = std::env::var_os("LOOM_NPM").unwrap_or_else(|| "npm".into());

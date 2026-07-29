@@ -76,7 +76,7 @@ cleanup() {
 trap cleanup EXIT
 
 cd "${REPO_ROOT}"
-if [[ "${LOOM_BACKEND}" == "metal" ]]; then
+if [[ "${LOOM_BACKEND}" == "metal" || "${LOOM_BACKEND}" == "cuda" ]]; then
   cargo build --locked --release --package loom-cli --package loom-ui-panel
 else
   cargo build --locked --release --package loom-cli
@@ -89,12 +89,18 @@ mkdir -p \
   "${PACKAGE_ROOT}/share/loom/docs/releases"
 
 install -m 0755 "${REPO_ROOT}/target/release/loom" "${PACKAGE_ROOT}/bin/loom"
-if [[ "${LOOM_BACKEND}" == "metal" ]]; then
+if [[ "${LOOM_BACKEND}" == "metal" || "${LOOM_BACKEND}" == "cuda" ]]; then
   install -m 0755 \
     "${REPO_ROOT}/target/release/loom-ui-panel" \
     "${PACKAGE_ROOT}/bin/loom-ui-panel"
 fi
 install -m 0755 "${REPO_ROOT}/uninstall.sh" "${PACKAGE_ROOT}/uninstall"
+if [[ -f "${REPO_ROOT}/baseline/ui/package.json" ]]; then
+  if [[ ! -d "${REPO_ROOT}/baseline/ui/node_modules" ]]; then
+    npm ci --prefix "${REPO_ROOT}/baseline/ui"
+  fi
+  npm run build --prefix "${REPO_ROOT}/baseline/ui"
+fi
 tar -C "${REPO_ROOT}" -cf - \
   --exclude='baseline/.loom' \
   --exclude='baseline/agentDB' \
