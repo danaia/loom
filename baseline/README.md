@@ -21,6 +21,7 @@ The project keeps the full application path ready for extension:
 - a typed Loom graph running at 120 Hz
 - a Metal physics/projection kernel
 - a Metal particle shader
+- a CUDA baseline graph with CUDA kernels and an OptiX view declaration
 - a native Rust input extension
 - a Vue control panel
 - FPS, GPU memory, GPU frame-time, budget, and pressure telemetry
@@ -33,6 +34,17 @@ loom check baseline/baseline.loom
 loom build baseline/baseline.loom
 loom baseline/baseline.lmp
 ```
+
+On a Linux RTX workstation, validate the CUDA baseline:
+
+```sh
+loom-cuda check baseline/baseline.cuda.loom
+loom-cuda explain baseline/baseline.cuda.loom
+```
+
+`baseline.cuda.loom` is the CUDA-native version of the baseline graph. Full
+interactive CUDA execution will use that entry once the `loom-cuda` runtime
+backend lands.
 
 `Space drag` defaults to zero. The viewer wraps particle positions at the
 edges to represent unbounded space without introducing collision forces.

@@ -154,7 +154,7 @@ pub(crate) fn build(path: &str, graph: &ModuleGraph) -> Result<String, String> {
             let source = root.join(&implementation.source);
             if !source.is_file() {
                 return Err(format!(
-                    "project Metal source `{}` must live beside the primary .loom file",
+                    "project backend source `{}` must live beside the primary .loom file",
                     implementation.source
                 ));
             }

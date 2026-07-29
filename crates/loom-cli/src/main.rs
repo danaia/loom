@@ -225,7 +225,7 @@ fn parse_arguments(arguments: &[String]) -> Result<CliAction, String> {
 
 fn print_help() {
     println!(
-        "Loom — agent-native GPU programs for Metal
+        "Loom — agent-native GPU programs for Metal and CUDA
 
 Usage:
   loom <source.loom>           Run a Loom program
@@ -233,7 +233,7 @@ Usage:
   loom build <source.loom>     Build a portable .lmp package
   loom run <source.loom>       Run a Loom program explicitly
   loom check <source.loom>     Parse, validate, and fingerprint
-  loom explain <source.loom>   Print the graph, plan, and generated Metal
+  loom explain <source.loom>   Print the graph, plan, and backend sources
   loom new <project-name>      Create a project from the Baseline starter
   loom update                  Install the latest Loom release
   loom --version               Print the installed version

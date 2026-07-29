@@ -186,10 +186,16 @@ echo "  backend command: ${LOOM_ALIAS_LINK}"
 if [ "${LOOM_SET_DEFAULT}" != "0" ]; then
   echo "  default command: ${LOOM_DEFAULT_LINK}"
 fi
-echo "  particle: loom-${LOOM_BACKEND} ${LOOM_HOME}/examples/hello-particle.loom"
-echo "  neon flock: loom-${LOOM_BACKEND} ${LOOM_HOME}/examples/neon-flock.loom"
-echo "  crystal: loom-${LOOM_BACKEND} ${LOOM_HOME}/examples/crystal.loom"
-echo "  marble water package: loom-${LOOM_BACKEND} ${LOOM_HOME}/examples/marble-water.lmp"
+if [ "${LOOM_BACKEND}" = "cuda" ]; then
+  echo "  cuda baseline: loom-cuda check ${LOOM_HOME}/baseline/baseline.cuda.loom"
+  echo "  cuda explain: loom-cuda explain ${LOOM_HOME}/baseline/baseline.cuda.loom"
+else
+  echo "  metal baseline: loom-metal ${LOOM_HOME}/baseline/baseline.loom"
+  echo "  particle: loom-metal ${LOOM_HOME}/examples/hello-particle.loom"
+  echo "  neon flock: loom-metal ${LOOM_HOME}/examples/neon-flock.loom"
+  echo "  crystal: loom-metal ${LOOM_HOME}/examples/crystal.loom"
+  echo "  marble water package: loom-metal ${LOOM_HOME}/examples/marble-water.lmp"
+fi
 echo "  update: loom-${LOOM_BACKEND} update"
 if ! command -v "loom-${LOOM_BACKEND}" >/dev/null 2>&1; then
   echo
