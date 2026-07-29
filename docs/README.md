@@ -71,13 +71,13 @@ agent source into the same typed graph used by the Rust builders.
 Install the complete Apple Silicon macOS Metal distribution:
 
 ```text
-curl -fsSL https://raw.githubusercontent.com/danaia/loom/main/install.sh | LOOM_BACKEND=metal sh
+curl -fsSL https://raw.githubusercontent.com/danaia/loom/v0.1.12/install.sh | LOOM_BACKEND=metal sh
 ```
 
 Install the CUDA CLI distribution on a Linux RTX workstation:
 
 ```text
-curl -fsSL https://raw.githubusercontent.com/danaia/loom/main/install.sh | LOOM_BACKEND=cuda sh
+curl -fsSL https://raw.githubusercontent.com/danaia/loom/v0.1.12/install.sh | LOOM_BACKEND=cuda sh
 ```
 
 Release assets are backend-specific:
@@ -137,9 +137,9 @@ and can be extracted with `unzip` for editing and rebuilding.
 Remove the command, runtime, examples, documentation, and manifest together:
 
 ```text
-curl -fsSL https://raw.githubusercontent.com/danaia/loom/main/uninstall.sh | sh
-curl -fsSL https://raw.githubusercontent.com/danaia/loom/main/uninstall.sh | LOOM_BACKEND=metal sh
-curl -fsSL https://raw.githubusercontent.com/danaia/loom/main/uninstall.sh | LOOM_BACKEND=cuda sh
+curl -fsSL https://raw.githubusercontent.com/danaia/loom/v0.1.12/uninstall.sh | sh
+curl -fsSL https://raw.githubusercontent.com/danaia/loom/v0.1.12/uninstall.sh | LOOM_BACKEND=metal sh
+curl -fsSL https://raw.githubusercontent.com/danaia/loom/v0.1.12/uninstall.sh | LOOM_BACKEND=cuda sh
 ```
 
 The remover only deletes a directory carrying Loom’s recognized installation
