@@ -11,7 +11,7 @@ use libloading::Library;
 use loom_core::{Target, ViewId};
 use loom_validator::ValidatedModuleGraph;
 use loom_windowing::WindowLayoutConfig;
-use minifb::{Key, Window, WindowOptions};
+use minifb::{Key, MouseButton, MouseMode, Window, WindowOptions};
 use serde::Serialize;
 use tempfile::TempDir;
 
@@ -29,6 +29,10 @@ type CUresult = c_int;
 const CUDA_SUCCESS: CUresult = 0;
 const PARTICLE_CAPACITY: usize = 32;
 const RENDER_CAPACITY: usize = 64;
+const CAMERA_Z: f32 = 3.0;
+const CAMERA_FOCAL: f32 = 1.85;
+const MIN_DEPTH: f32 = -1.15;
+const MAX_DEPTH: f32 = 1.15;
 
 #[derive(Debug, Serialize)]
 pub struct CudaDiagnostic {
@@ -123,6 +127,8 @@ impl CudaRuntime {
         let dt = 1.0_f32 / rate_hz as f32;
         let frame_interval = Duration::from_secs_f64(1.0 / rate_hz as f64);
         let mut next_frame = Instant::now();
+        let mut interaction = CudaInteraction::new(width as f32, height as f32);
+        let mut frame_stats = FrameStats::new(rate_hz as f32);
 
         println!(
             "runtime_fingerprint:\n{}",
@@ -137,14 +143,16 @@ impl CudaRuntime {
         );
 
         while window.is_open() && !window.is_key_down(Key::Escape) {
+            let mut detach_panel = false;
             if let Some(panel) = panel.as_mut() {
                 for command in panel.drain_commands().collect::<Vec<_>>() {
                     match command {
                         panel::PanelCommand::Set(control) => {
+                            interaction.set_control(&control.name, control.value);
                             state.set_control(&mut driver, &control.name, control.value)?;
                         }
                         panel::PanelCommand::Quit => {
-                            return Ok(());
+                            detach_panel = true;
                         }
                         panel::PanelCommand::Reload { generation } => {
                             panel.publish_reload_status(generation, &Ok(()));
@@ -155,11 +163,19 @@ impl CudaRuntime {
                     }
                 }
             }
+            if detach_panel {
+                panel = None;
+            }
+            interaction.poll_window(&window, width as f32, height as f32);
+            interaction.copy_to_gpu(&mut driver, &state.values)?;
+            let gpu_frame_start = Instant::now();
             state.step(&mut driver, dt)?;
             let frame = state.read_frame(&mut driver)?;
+            frame_stats.record(gpu_frame_start.elapsed(), driver.memory_used_mb().ok());
+            interaction.selected = state.selected_particle(&mut driver)?;
             draw_frame(&frame, &mut pixels, width, height);
             if let Some(panel) = panel.as_mut() {
-                panel.publish(&state.panel_values());
+                panel.publish(&interaction.panel_values(&frame_stats));
             }
             window
                 .update_with_buffer(&pixels, width, height)
@@ -173,6 +189,312 @@ impl CudaRuntime {
 
         Ok(())
     }
+}
+
+struct CudaInteraction {
+    cursor: [f32; 2],
+    viewport: [f32; 2],
+    target: [f32; 3],
+    depth: f32,
+    click_generation: f32,
+    spawn_generation: f32,
+    spawn_slot: f32,
+    select_generation: f32,
+    select_id: f32,
+    remove_generation: f32,
+    remove_id: f32,
+    agent_type: f32,
+    agent_count: f32,
+    active_slots: [bool; PARTICLE_CAPACITY],
+    pointer_down: bool,
+    previous_pointer_down: bool,
+    space_drag: f32,
+    reset: bool,
+    selected: f32,
+}
+
+impl CudaInteraction {
+    fn new(width: f32, height: f32) -> Self {
+        let mut active_slots = [false; PARTICLE_CAPACITY];
+        active_slots[0] = true;
+        let mut interaction = Self {
+            cursor: [width * 0.5, height * 0.5],
+            viewport: [width, height],
+            target: [0.0; 3],
+            depth: 0.0,
+            click_generation: 0.0,
+            spawn_generation: 0.0,
+            spawn_slot: 0.0,
+            select_generation: 0.0,
+            select_id: 0.0,
+            remove_generation: 0.0,
+            remove_id: 0.0,
+            agent_type: 0.0,
+            agent_count: 1.0,
+            active_slots,
+            pointer_down: false,
+            previous_pointer_down: false,
+            space_drag: 0.0,
+            reset: false,
+            selected: 0.0,
+        };
+        interaction.update_target();
+        interaction
+    }
+
+    fn poll_window(&mut self, window: &Window, width: f32, height: f32) {
+        self.viewport = [width, height];
+        if let Some((x, y)) = window.get_mouse_pos(MouseMode::Clamp) {
+            self.cursor = [x, y];
+            if self.pointer_down {
+                self.update_target();
+            }
+        }
+        if let Some((_x, scroll_y)) = window.get_scroll_wheel() {
+            if scroll_y != 0.0 {
+                self.depth = (self.depth + scroll_y * 0.12).clamp(MIN_DEPTH, MAX_DEPTH);
+                self.update_target();
+            }
+        }
+        self.pointer_down = window.get_mouse_down(MouseButton::Left);
+        if self.pointer_down && !self.previous_pointer_down {
+            self.update_target();
+            if command_modifier_down(window) {
+                self.spawn_agent();
+            } else {
+                self.click_generation += 1.0;
+            }
+        }
+        if self.pointer_down {
+            self.update_target();
+        }
+        self.previous_pointer_down = self.pointer_down;
+    }
+
+    fn set_control(&mut self, name: &str, value: f32) {
+        match name {
+            "interaction.space_drag" => self.space_drag = value.clamp(0.0, 0.5),
+            "interaction.agent_type" => self.agent_type = value.clamp(0.0, 2.0).round(),
+            "interaction.select_particle" => {
+                self.select_id = value.clamp(0.0, 31.0).round();
+                self.select_generation += 1.0;
+            }
+            "interaction.remove_particle" => {
+                let slot = value.clamp(0.0, 31.0).round() as usize;
+                self.remove_id = slot as f32;
+                self.remove_generation += 1.0;
+                if self.active_slots[slot] {
+                    self.active_slots[slot] = false;
+                    self.agent_count = (self.agent_count - 1.0).max(0.0);
+                }
+            }
+            "interaction.reset" if value > 0.5 => self.reset(),
+            _ => {}
+        }
+    }
+
+    fn copy_to_gpu(
+        &mut self,
+        driver: &mut CudaDriver,
+        values: &BaselineValues,
+    ) -> Result<(), CudaDiagnostic> {
+        values.click_x.copy_from(driver, &[self.target[0]])?;
+        values.click_y.copy_from(driver, &[self.target[1]])?;
+        values.click_z.copy_from(driver, &[self.target[2]])?;
+        values
+            .click_generation
+            .copy_from(driver, &[self.click_generation])?;
+        values.spawn_x.copy_from(driver, &[self.target[0]])?;
+        values.spawn_y.copy_from(driver, &[self.target[1]])?;
+        values.spawn_z.copy_from(driver, &[self.target[2]])?;
+        values
+            .spawn_generation
+            .copy_from(driver, &[self.spawn_generation])?;
+        values.spawn_slot.copy_from(driver, &[self.spawn_slot])?;
+        values.spawn_type.copy_from(driver, &[self.agent_type])?;
+        values.select_command.copy_from(
+            driver,
+            &[self.select_generation * PARTICLE_CAPACITY as f32 + self.select_id],
+        )?;
+        values.remove_command.copy_from(
+            driver,
+            &[self.remove_generation * PARTICLE_CAPACITY as f32 + self.remove_id],
+        )?;
+        values
+            .pointer_down
+            .copy_from(driver, &[if self.pointer_down { 1.0 } else { 0.0 }])?;
+        values.space_drag.copy_from(driver, &[self.space_drag])?;
+        values
+            .reset
+            .copy_from(driver, &[if self.reset { 1.0 } else { 0.0 }])?;
+        values
+            .aspect
+            .copy_from(driver, &[self.viewport[0] / self.viewport[1].max(1.0)])?;
+        self.reset = false;
+        Ok(())
+    }
+
+    fn panel_values(&self, stats: &FrameStats) -> Vec<(String, f32)> {
+        let active_mask_low = active_mask(&self.active_slots[..16]);
+        let active_mask_high = active_mask(&self.active_slots[16..]);
+        vec![
+            ("interaction.click_x".to_owned(), self.target[0]),
+            ("interaction.click_y".to_owned(), self.target[1]),
+            ("interaction.click_z".to_owned(), self.target[2]),
+            (
+                "interaction.click_generation".to_owned(),
+                self.click_generation,
+            ),
+            ("interaction.spawn_x".to_owned(), self.target[0]),
+            ("interaction.spawn_y".to_owned(), self.target[1]),
+            ("interaction.spawn_z".to_owned(), self.target[2]),
+            (
+                "interaction.spawn_generation".to_owned(),
+                self.spawn_generation,
+            ),
+            ("interaction.spawn_slot".to_owned(), self.spawn_slot),
+            ("interaction.spawn_type".to_owned(), self.agent_type),
+            (
+                "interaction.select_command".to_owned(),
+                self.select_generation * PARTICLE_CAPACITY as f32 + self.select_id,
+            ),
+            (
+                "interaction.remove_command".to_owned(),
+                self.remove_generation * PARTICLE_CAPACITY as f32 + self.remove_id,
+            ),
+            ("interaction.selected".to_owned(), self.selected),
+            ("interaction.agent_count".to_owned(), self.agent_count),
+            (
+                "interaction.active_mask_low".to_owned(),
+                active_mask_low as f32,
+            ),
+            (
+                "interaction.active_mask_high".to_owned(),
+                active_mask_high as f32,
+            ),
+            (
+                "interaction.pointer_down".to_owned(),
+                if self.pointer_down { 1.0 } else { 0.0 },
+            ),
+            ("interaction.space_drag".to_owned(), self.space_drag),
+            (
+                "interaction.reset".to_owned(),
+                if self.reset { 1.0 } else { 0.0 },
+            ),
+            (
+                "interaction.camera_aspect".to_owned(),
+                self.viewport[0] / self.viewport[1].max(1.0),
+            ),
+            ("interaction.hud_fps".to_owned(), stats.frames_per_second),
+            ("interaction.hud_gpu_mb".to_owned(), stats.gpu_memory_mb),
+            (
+                "interaction.hud_gpu_frame_ms".to_owned(),
+                stats.gpu_frame_ms,
+            ),
+            (
+                "interaction.hud_gpu_budget_ms".to_owned(),
+                stats.gpu_budget_ms,
+            ),
+            (
+                "interaction.hud_gpu_pressure".to_owned(),
+                stats.gpu_pressure,
+            ),
+        ]
+    }
+
+    fn update_target(&mut self) {
+        let [w, h] = self.viewport;
+        if w <= 0.0 || h <= 0.0 {
+            return;
+        }
+        let depth = CAMERA_Z - self.depth;
+        self.target = [
+            ((self.cursor[0] / w * 2.0 - 1.0) * (w / h) * depth / CAMERA_FOCAL).clamp(-1.5, 1.5),
+            ((1.0 - self.cursor[1] / h * 2.0) * depth / CAMERA_FOCAL).clamp(-0.95, 0.95),
+            self.depth,
+        ];
+    }
+
+    fn spawn_agent(&mut self) {
+        if let Some(slot) = self.active_slots.iter().position(|active| !active) {
+            self.active_slots[slot] = true;
+            self.spawn_slot = slot as f32;
+            self.spawn_generation += 1.0;
+            self.agent_count += 1.0;
+        }
+    }
+
+    fn reset(&mut self) {
+        self.depth = 0.0;
+        self.target = [0.0; 3];
+        self.pointer_down = false;
+        self.previous_pointer_down = false;
+        self.click_generation += 1.0;
+        self.spawn_generation += 1.0;
+        self.spawn_slot = 0.0;
+        self.agent_count = 1.0;
+        self.active_slots = [false; PARTICLE_CAPACITY];
+        self.active_slots[0] = true;
+        self.selected = 0.0;
+        self.reset = true;
+    }
+}
+
+struct FrameStats {
+    frames_per_second: f32,
+    gpu_memory_mb: f32,
+    gpu_frame_ms: f32,
+    gpu_budget_ms: f32,
+    gpu_pressure: f32,
+    previous_frame: Instant,
+}
+
+impl FrameStats {
+    fn new(rate_hz: f32) -> Self {
+        Self {
+            frames_per_second: rate_hz,
+            gpu_memory_mb: 0.0,
+            gpu_frame_ms: 0.0,
+            gpu_budget_ms: 1000.0 / rate_hz.max(1.0),
+            gpu_pressure: 0.0,
+            previous_frame: Instant::now(),
+        }
+    }
+
+    fn record(&mut self, gpu_elapsed: Duration, gpu_memory_mb: Option<f32>) {
+        let now = Instant::now();
+        let frame_seconds = now.duration_since(self.previous_frame).as_secs_f32();
+        self.previous_frame = now;
+        if frame_seconds > 0.0 {
+            let instantaneous = 1.0 / frame_seconds;
+            self.frames_per_second = self.frames_per_second * 0.9 + instantaneous * 0.1;
+        }
+        if let Some(memory) = gpu_memory_mb {
+            self.gpu_memory_mb = memory;
+        }
+        self.gpu_frame_ms = gpu_elapsed.as_secs_f32() * 1000.0;
+        self.gpu_pressure = if self.gpu_budget_ms > 0.0 {
+            (self.gpu_frame_ms / self.gpu_budget_ms * 100.0).clamp(0.0, 999.0)
+        } else {
+            0.0
+        };
+    }
+}
+
+fn active_mask(slots: &[bool]) -> u32 {
+    slots
+        .iter()
+        .enumerate()
+        .fold(0_u32, |mask, (index, active)| {
+            mask | (u32::from(*active) << index)
+        })
+}
+
+fn command_modifier_down(window: &Window) -> bool {
+    window.is_key_down(Key::LeftCtrl)
+        || window.is_key_down(Key::RightCtrl)
+        || window.is_key_down(Key::LeftSuper)
+        || window.is_key_down(Key::RightSuper)
 }
 
 fn view_name(graph: &loom_core::ModuleGraph) -> Option<&str> {
@@ -374,6 +696,10 @@ impl BaselineCudaState {
         })
     }
 
+    fn selected_particle(&self, driver: &mut CudaDriver) -> Result<f32, CudaDiagnostic> {
+        Ok(self.selected.copy_to_vec(driver, 1)?[0])
+    }
+
     fn set_control(
         &mut self,
         driver: &mut CudaDriver,
@@ -401,16 +727,6 @@ impl BaselineCudaState {
                 .copy_from(driver, &[value.clamp(0.0, 31.0).round()]),
             _ => Ok(()),
         }
-    }
-
-    fn panel_values(&self) -> Vec<(String, f32)> {
-        vec![
-            ("interaction.hud_fps".to_owned(), 120.0),
-            ("interaction.hud_gpu_mb".to_owned(), 0.0),
-            ("interaction.hud_gpu_frame_ms".to_owned(), 0.0),
-            ("interaction.hud_gpu_budget_ms".to_owned(), 8.333333),
-            ("interaction.hud_gpu_pressure".to_owned(), 0.0),
-        ]
     }
 }
 
@@ -589,6 +905,7 @@ struct CudaDriver {
     cu_module_get_function:
         unsafe extern "C" fn(*mut CUfunction, CUmodule, *const c_char) -> CUresult,
     cu_mem_alloc: unsafe extern "C" fn(*mut CUdeviceptr, usize) -> CUresult,
+    cu_mem_get_info: unsafe extern "C" fn(*mut usize, *mut usize) -> CUresult,
     cu_memcpy_htod: unsafe extern "C" fn(CUdeviceptr, *const c_void, usize) -> CUresult,
     cu_memcpy_dtoh: unsafe extern "C" fn(*mut c_void, CUdeviceptr, usize) -> CUresult,
     cu_launch_kernel: unsafe extern "C" fn(
@@ -645,6 +962,10 @@ impl CudaDriver {
             b"cuMemAlloc_v2\0",
             unsafe extern "C" fn(*mut CUdeviceptr, usize) -> CUresult
         );
+        let cu_mem_get_info = load_symbol!(
+            b"cuMemGetInfo_v2\0",
+            unsafe extern "C" fn(*mut usize, *mut usize) -> CUresult
+        );
         let cu_memcpy_htod = load_symbol!(
             b"cuMemcpyHtoD_v2\0",
             unsafe extern "C" fn(CUdeviceptr, *const c_void, usize) -> CUresult
@@ -685,6 +1006,7 @@ impl CudaDriver {
             cu_module_load_data,
             cu_module_get_function,
             cu_mem_alloc,
+            cu_mem_get_info,
             cu_memcpy_htod,
             cu_memcpy_dtoh,
             cu_launch_kernel,
@@ -734,6 +1056,16 @@ impl CudaDriver {
             "cuMemAlloc",
         )?;
         Ok(ptr)
+    }
+
+    fn memory_used_mb(&self) -> Result<f32, CudaDiagnostic> {
+        let mut free = 0_usize;
+        let mut total = 0_usize;
+        self.check(
+            unsafe { (self.cu_mem_get_info)(&mut free, &mut total) },
+            "cuMemGetInfo",
+        )?;
+        Ok(total.saturating_sub(free) as f32 / (1024.0 * 1024.0))
     }
 
     fn copy_htod<T>(&mut self, device: CUdeviceptr, values: &[T]) -> Result<(), CudaDiagnostic> {
