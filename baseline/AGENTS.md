@@ -14,6 +14,13 @@ authority for executable Pqo syntax and semantics.
 
 ## General rules
 
+- Every project created by `pqo new` is a native Metal-view application. Treat
+  requests to create, add, draw, show, or visualize project content as changes
+  to the primary `.pqo` graph and its Metal kernels/shaders so the result
+  appears in the native Metal viewer.
+- Do not implement project visuals, simulated objects, or world state in Vue,
+  HTML, CSS, SVG, or canvas. The web UI is only for controls and telemetry
+  unless the user explicitly asks to change the control panel itself.
 - State the intended behavior and affected rule before editing.
 - Use only executable Pqo 0.1 syntax; do not copy future syntax from roadmap
   documents.

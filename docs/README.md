@@ -73,6 +73,13 @@ Install the complete Apple Silicon macOS distribution:
 curl -fsSL https://raw.githubusercontent.com/danaia/pqo/main/install.sh | sh
 ```
 
+From a source checkout, build and globally install the local revision for the
+current user through the same installer and checksum path:
+
+```text
+./scripts/install-global.sh
+```
+
 Everything required to use Pqo lives below `~/.pqo`: the compiler and Metal
 runtime, examples, handbook, version, and installation manifest. The installer
 adds only a `~/.local/bin/pqo` symlink outside that directory. Rust and Cargo are

@@ -300,6 +300,8 @@ fn create_project(project_name: &str) -> Result<(), u8> {
     }
     rename_baseline_source(&staged_project, project_name)
         .map_err(|message| new_error("rename", &message))?;
+    verify_metal_view_project(&staged_project, project_name)
+        .map_err(|message| new_error("metal_view", &message))?;
     personalize_controls_title(&staged_project, project_name)
         .map_err(|message| new_error("panel_title", &message))?;
     install_project_dependencies(&staged_project)
@@ -335,6 +337,29 @@ fn rename_baseline_source(project_root: &Path, project_name: &str) -> Result<(),
         fs::remove_file(&prebuilt_package).map_err(|error| {
             format!("could not remove `{}`: {error}", prebuilt_package.display())
         })?;
+    }
+    Ok(())
+}
+
+fn verify_metal_view_project(project_root: &Path, project_name: &str) -> Result<(), String> {
+    let source_path = project_root.join(format!("{project_name}.pqo"));
+    let source = fs::read_to_string(&source_path)
+        .map_err(|error| format!("could not read `{}`: {error}", source_path.display()))?;
+    let graph = parse(&source).map_err(|diagnostics| {
+        format!(
+            "starter source `{}` is invalid: {diagnostics:?}",
+            source_path.display()
+        )
+    })?;
+    let presents_view = graph
+        .schedules
+        .iter()
+        .any(|schedule| !schedule.presentation_views.is_empty());
+    if graph.views.is_empty() || !presents_view {
+        return Err(format!(
+            "starter source `{}` must declare and draw a Metal view",
+            source_path.display()
+        ));
     }
     Ok(())
 }
@@ -604,7 +629,7 @@ mod tests {
 
     use super::{
         CliAction, Command, copy_project_tree, parse_arguments, personalize_controls_title,
-        rename_baseline_source,
+        rename_baseline_source, verify_metal_view_project,
     };
 
     fn args(values: &[&str]) -> Vec<String> {
@@ -690,6 +715,29 @@ mod tests {
             serde_json::from_slice(&fs::read(ui.join("pqo-ui.json")).expect("UI config"))
                 .expect("valid UI config");
         assert_eq!(config["title"], "Pqo network — Controls");
+    }
+
+    #[test]
+    fn new_requires_a_presented_metal_view() {
+        let project = tempfile::tempdir().expect("project directory");
+        fs::write(
+            project.path().join("network.pqo"),
+            include_str!("../../../baseline/baseline.pqo"),
+        )
+        .expect("baseline source");
+
+        verify_metal_view_project(project.path(), "network").expect("presented Metal view");
+
+        let headless = include_str!("../../../baseline/baseline.pqo")
+            .replace(
+                "view viewport(\n  color=render.color\n  position=render.position\n  radius=render.radius\n  scale=render.aspect\n) extern metal {\n  source=\"shaders/baseline.metal\"\n  entry=\"baseline_pipeline\"\n}\n\n",
+                "",
+            )
+            .replace("  draw viewport after project\n", "");
+        fs::write(project.path().join("headless.pqo"), headless).expect("headless source");
+        let error = verify_metal_view_project(project.path(), "headless")
+            .expect_err("headless starter must be rejected");
+        assert!(error.contains("must declare and draw a Metal view"));
     }
 
     #[test]

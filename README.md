@@ -6,6 +6,17 @@ Install Pqo on an Apple Silicon Mac:
 curl -fsSL https://raw.githubusercontent.com/danaia/pqo/main/install.sh | sh
 ```
 
+Or build the current checkout and install it globally for your user with the
+same verified installer flow:
+
+```sh
+./scripts/install-global.sh
+```
+
+Both commands install under `~/.pqo` and expose `pqo` through
+`~/.local/bin/pqo`. Override `PQO_HOME` or `PQO_BIN_DIR` when a different
+user-local location is needed.
+
 ## The cool part
 
 Pqo is an agent-native, low-level GPU language for Apple Silicon. It lets AI
