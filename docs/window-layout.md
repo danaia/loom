@@ -1,6 +1,6 @@
 # Window layout configuration
 
-Projects with a Loom UI can keep window snapping policy in:
+Projects with a Pqo UI can keep window snapping policy in:
 
 ```text
 config/window-layout.json

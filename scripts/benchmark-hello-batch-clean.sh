@@ -53,11 +53,11 @@ run_trial() {
 
 for ((trial = 1; trial <= TRIALS; trial += 1)); do
   if ((trial % 2 == 1)); then
-    run_trial "${trial}" loom
+    run_trial "${trial}" pqo
     run_trial "${trial}" direct-metal
   else
     run_trial "${trial}" direct-metal
-    run_trial "${trial}" loom
+    run_trial "${trial}" pqo
   fi
 done
 

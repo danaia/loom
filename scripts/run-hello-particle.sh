@@ -18,7 +18,7 @@ for argument in "$@"; do
 done
 
 if [[ "${BENCHMARK}" == true ]]; then
-  exec cargo run --release --package loom-metal --bin hello-particle-view -- "$@"
+  exec cargo run --release --package pqo-metal --bin hello-particle-view -- "$@"
 fi
 
-exec cargo run --package loom-metal --bin hello-particle-view -- "$@"
+exec cargo run --package pqo-metal --bin hello-particle-view -- "$@"

@@ -257,7 +257,7 @@ onBeforeUnmount(() => {
         <div class="identity">
           <span class="particle-mark" aria-hidden="true"></span>
           <div>
-            <h1>Loom Baseline</h1>
+            <h1>Pqo Baseline</h1>
             <p>Selectable particles · zero gravity</p>
           </div>
         </div>

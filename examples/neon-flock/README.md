@@ -11,11 +11,11 @@ Build the repository CLI so its embedded Metal package includes this example's
 external kernels:
 
 ```text
-cargo build --package loom-cli
+cargo build --package pqo-cli
 export PATH="$PWD/target/debug:$PATH"
-loom check examples/neon-flock/neon-flock.loom
-loom explain examples/neon-flock/neon-flock.loom
-loom examples/neon-flock/neon-flock.loom
+pqo check examples/neon-flock/neon-flock.pqo
+pqo explain examples/neon-flock/neon-flock.pqo
+pqo examples/neon-flock/neon-flock.pqo
 ```
 
 ## Run from this directory
@@ -24,29 +24,29 @@ Build the repository CLI and put that build first in `PATH`:
 
 ```text
 cd examples/neon-flock
-cargo build --manifest-path ../../Cargo.toml --package loom-cli
+cargo build --manifest-path ../../Cargo.toml --package pqo-cli
 export PATH="$(cd ../.. && pwd)/target/debug:$PATH"
-which loom
-loom check neon-flock.loom
-loom explain neon-flock.loom
-loom neon-flock.loom
+which pqo
+pqo check neon-flock.pqo
+pqo explain neon-flock.pqo
+pqo neon-flock.pqo
 ```
 
-`which loom` must print a path ending in `/dev/loom/target/debug/loom`.
-An older installed `~/.loom/bin/loom` reports the same language version but
+`which pqo` must print a path ending in `/dev/pqo/target/debug/pqo`.
+An older installed `~/.pqo/bin/pqo` reports the same language version but
 does not embed this checkout's new Metal sources; using it produces
 `no packaged Metal source for kernels/neon_flock.metal`.
 
-Close the Metal window to stop the program. `loom run neon-flock.loom` is the
-explicit equivalent of `loom neon-flock.loom`.
+Close the Metal window to stop the program. `pqo run neon-flock.pqo` is the
+explicit equivalent of `pqo neon-flock.pqo`.
 
 ## Kernel boundary
 
-Every implementation boundary is explicit in `neon-flock.loom`:
+Every implementation boundary is explicit in `neon-flock.pqo`:
 
-- **Native Loom — `advance_agents`:** element-wise `f32x2` acceleration,
+- **Native Pqo — `advance_agents`:** element-wise `f32x2` acceleration,
   damping, velocity update, and position integration.
-- **Native Loom — `evolve_trails`:** element-wise exponential lag of each
+- **Native Pqo — `evolve_trails`:** element-wise exponential lag of each
   agent's trail position.
 - **External Metal — `flock_neighborhood`:** all-agent neighborhood reads,
   deterministic central seeding, conditional cohesion/alignment/separation,
@@ -57,7 +57,7 @@ Every implementation boundary is explicit in `neon-flock.loom`:
   `shaders/neon_flock.metal`.
 
 Neighborhood access, conditionals, speed clamps, and render stages are outside
-Loom 0.1's current native compiler gates, so they deliberately remain visible
-`extern metal` declarations. The `.loom` file remains the source of truth for
+Pqo 0.1's current native compiler gates, so they deliberately remain visible
+`extern metal` declarations. The `.pqo` file remains the source of truth for
 population size, physical units, stream authority, constants, bindings, pass
 order, and the native/external boundary.

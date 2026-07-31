@@ -2,7 +2,7 @@
   "experiment": "hello_batch",
   "particle_count": 100000,
   "mode": "Rendered",
-  "runner": "LoomPlan",
+  "runner": "PqoPlan",
   "viewport": {
     "width": 960,
     "height": 720

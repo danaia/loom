@@ -1,0 +1,9 @@
+{
+  "framework": "vue3",
+  "dist": "dist",
+  "entry": "index.html",
+  "title": "Pqo Baseline — Controls",
+  "width": 340,
+  "height": 530
+}
+

@@ -1,6 +1,6 @@
 # Hello Worm
 
-`hello_worm_builder()` creates an interactive Loom species called the **Scent
+`hello_worm_builder()` creates an interactive Pqo species called the **Scent
 Weaver**. Its 24 linked body segments, food state, smell signal, steering memory,
 meal count, and camera are persistent GPU streams.
 

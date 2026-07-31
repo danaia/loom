@@ -1,29 +1,29 @@
-# Loom Coding Reference for AI Agents
+# Pqo Coding Reference for AI Agents
 
-Status: executable Loom 0.1 reference  
+Status: executable Pqo 0.1 reference
 Audience: coding models that need to create or modify meaningful GPU experiments  
 Target: Apple Silicon and Metal
 
 This document is deliberately literal. Follow the forms shown here. Do not
-invent syntax from CUDA, Rust, Python, WGSL, or future Loom design documents.
+invent syntax from CUDA, Rust, Python, WGSL, or future Pqo design documents.
 
 ## 1. Required agent behavior
 
-When asked to build a Loom experiment:
+When asked to build a Pqo experiment:
 
 1. State one testable question.
 2. Choose the closest working source:
    - arithmetic or particle motion:
-     `examples/hello-particle/hello-particle.loom`
+     `examples/hello-particle/hello-particle.pqo`
    - fields, fracture, components, healing, or interactive 3D material:
-     `examples/hello-crystal/crystal.loom`
+     `examples/hello-crystal/crystal.pqo`
 3. Copy the working source before changing it.
 4. Change one behavior class at a time.
 5. Keep every resource type, unit, access mode, and binding explicit.
-6. Use native Loom only for the operations listed in this document.
+6. Use native Pqo only for the operations listed in this document.
 7. Keep unsupported work visibly declared as `extern metal`.
-8. Run `loom check` after every structural change.
-9. Run `loom explain` before claiming what Metal or pass order Loom produced.
+8. Run `pqo check` after every structural change.
+9. Run `pqo explain` before claiming what Metal or pass order Pqo produced.
 10. Run the program before claiming that it works.
 
 Never report success when `status` is not `valid`. Never claim speed without a
@@ -31,7 +31,7 @@ benchmark. Never describe a visual result that was not actually observed.
 
 ## 2. The executable mental model
 
-A Loom program is a typed GPU graph:
+A Pqo program is a typed GPU graph:
 
 ```text
 constants + streams
@@ -56,8 +56,8 @@ bind every parameter.
 
 Every source begins with this exact header:
 
-```loom
-loom 0.1
+```pqo
+pqo 0.1
 module experiment_name
 target metal
 ```
@@ -90,7 +90,7 @@ f32x2 f32x3 f32x4
 
 Important current limits:
 
-- Native Loom kernel generation supports only `f32` and `f32x2..f32x4`.
+- Native Pqo kernel generation supports only `f32` and `f32x2..f32x4`.
 - `bool`, integer, and `f16` resources can be declared for external Metal
   kernels, subject to validator and runtime support.
 - `f16` source literals are not implemented.
@@ -105,7 +105,7 @@ m   kg   s
 
 Use `*`, `/`, and integer exponents:
 
-```loom
+```pqo
 f32<m>
 f32x3<m/s>
 f32x3<m/s^2>
@@ -123,7 +123,7 @@ Unit rules inside a native kernel:
 
 ### Accepted literals
 
-```loom
+```pqo
 true
 false
 12
@@ -141,14 +141,14 @@ initialized stream element.
 
 Form:
 
-```loom
+```pqo
 const NAME: TYPE = LITERAL
 const NAME: TYPE<UNIT> = LITERAL
 ```
 
 Examples:
 
-```loom
+```pqo
 const world.gravity: f32x3<m/s^2> = [0, -9.81, 0]
 const material.drag: f32 = 0.98
 const field.width: u32 = 100
@@ -164,7 +164,7 @@ flow. Its type is `f32<s>`. Bind it explicitly when a kernel needs the timestep.
 
 Form:
 
-```loom
+```pqo
 stream NAME: TYPE {
   cap=CAPACITY len=LENGTH buffers=BUFFER_COUNT access=ACCESS storage=STORAGE
   init=[ELEMENTS]
@@ -173,7 +173,7 @@ stream NAME: TYPE {
 
 Units follow the type:
 
-```loom
+```pqo
 stream particles.position: f32x3<m> {
   cap=4 len=4 buffers=1 access=rw storage=device
   init=[[0, 0, 0], [0.2, 0, 0], [-0.2, 0, 0], [0, 0.2, 0]]
@@ -205,11 +205,11 @@ Rules:
 - Increasing a fixed population requires updating every aligned stream's
   `cap`, `len`, and initializer count.
 
-## 7. Native Loom kernels
+## 7. Native Pqo kernels
 
 Native form:
 
-```loom
+```pqo
 kernel NAME(
   PARAMETER: ACCESS RESOURCE<TYPE,UNIT>,
   PARAMETER: ACCESS RESOURCE<TYPE>
@@ -239,7 +239,7 @@ stream authority allows them.
 
 ### Native operations available now
 
-Native Loom currently accepts:
+Native Pqo currently accepts:
 
 - reading `value` parameters by name,
 - reading the current stream element as `stream_name[i]`,
@@ -254,7 +254,7 @@ Numeric literals in native expressions are dimensionless `f32` values.
 
 Example:
 
-```loom
+```pqo
 kernel integrate(
   position: rw stream<f32x3,m>,
   velocity: rw stream<f32x3,m/s>,
@@ -288,13 +288,13 @@ Do not generate these inside `each`:
 - native vertex or fragment stages.
 
 Use an existing external Metal kernel for those operations. Do not write
-conceptual future syntax into an executable `.loom` file.
+conceptual future syntax into an executable `.pqo` file.
 
 ## 8. External Metal kernels
 
 External form:
 
-```loom
+```pqo
 kernel contact_ground(
   position: rw stream<f32x3,m>,
   velocity: rw stream<f32x3,m/s>,
@@ -309,7 +309,7 @@ kernel contact_ground(
 `all` means a kernel may access the whole stream rather than only its
 corresponding element:
 
-```loom
+```pqo
 damage: in all stream<f32>
 counter: atomic all stream<u32>
 ```
@@ -337,18 +337,18 @@ dispatch index      → uint gid [[thread_position_in_grid]]
 ```
 
 External Metal paths are project-relative. Every referenced source must live
-under the directory containing the primary `.loom` file:
+under the directory containing the primary `.pqo` file:
 
 ```text
-project.loom
+project.pqo
 kernels/simulation.metal
 shaders/render.metal
 src/runtime.rs
 ```
 
-Use `loom build project.loom` to produce `project.lmp`. The package contains the
+Use `pqo build project.pqo` to produce `project.lmp`. The package contains the
 primary graph, all referenced Metal, the optional Rust project extension source,
-and its compiled target library. `loom project.lmp` loads those assets through
+and its compiled target library. `pqo project.lmp` loads those assets through
 the global runtime; project-specific shaders and controls are never added to the
 runtime executable.
 
@@ -356,7 +356,7 @@ runtime executable.
 
 Form:
 
-```loom
+```pqo
 pass PASS_NAME = KERNEL_NAME(
   parameter=resource.name
   parameter=resource.name
@@ -365,7 +365,7 @@ pass PASS_NAME = KERNEL_NAME(
 
 Example:
 
-```loom
+```pqo
 pass move = integrate(
   position=particles.position
   velocity=particles.velocity
@@ -388,7 +388,7 @@ Rules:
 
 Current views are external Metal:
 
-```loom
+```pqo
 view viewport(
   color=particles.color
   position=particles.position
@@ -403,14 +403,14 @@ The packaged particle renderer expects the bindings `color`, `position`, and
 `radius`. Keep these names and compatible stream types when reusing it.
 
 The packaged Crystal renderer is already wired by
-`examples/hello-crystal/crystal.loom`. Modify that graph conservatively instead
+`examples/hello-crystal/crystal.pqo`. Modify that graph conservatively instead
 of reconstructing the render ABI from memory.
 
 ## 11. Flows
 
 Form:
 
-```loom
+```pqo
 flow FLOW_NAME rate=INTEGERhz {
   first_pass -> second_pass -> third_pass
   draw VIEW_NAME after PRODUCER_PASS
@@ -419,14 +419,14 @@ flow FLOW_NAME rate=INTEGERhz {
 
 Examples:
 
-```loom
+```pqo
 flow simulation rate=120hz {
   move
   draw viewport after move
 }
 ```
 
-```loom
+```pqo
 flow simulation rate=120hz {
   fall -> bounce
   draw viewport after bounce
@@ -448,10 +448,10 @@ Rules:
 This program asks: how do four particles with different initial velocities move
 under the same weak acceleration?
 
-Save it as `four-particle-drift.loom`.
+Save it as `four-particle-drift.pqo`.
 
-```loom
-loom 0.1
+```pqo
+pqo 0.1
 module four_particle_drift
 target metal
 
@@ -512,9 +512,9 @@ flow simulation rate=120hz {
 Validate and inspect it:
 
 ```sh
-loom check four-particle-drift.loom
-loom explain four-particle-drift.loom
-loom four-particle-drift.loom
+pqo check four-particle-drift.pqo
+pqo explain four-particle-drift.pqo
+pqo four-particle-drift.pqo
 ```
 
 Safe experiment variations:
@@ -535,8 +535,8 @@ For fields, growth, fracture, healing, component labeling, or interactive 3D
 rendering, begin with:
 
 ```sh
-cp examples/hello-crystal/crystal.loom my-experiment.loom
-loom check my-experiment.loom
+cp examples/hello-crystal/crystal.pqo my-experiment.pqo
+pqo check my-experiment.pqo
 ```
 
 Then use this order:
@@ -544,8 +544,8 @@ Then use this order:
 1. Rename the module with a simple identifier.
 2. State the hypothesis.
 3. Change one constant or initializer.
-4. Run `loom check`.
-5. Use `loom explain` to confirm the bindings and pass order.
+4. Run `pqo check`.
+5. Use `pqo explain` to confirm the bindings and pass order.
 6. Run and observe the same number of ticks or the same interaction.
 7. Save the source hash and observation.
 8. Only then modify a kernel boundary or add a pass.
@@ -576,7 +576,7 @@ without changing all aligned counts and choosing an in-range seed.
 Run:
 
 ```sh
-loom check program.loom
+pqo check program.pqo
 ```
 
 Read the JSON `status` first:
@@ -604,9 +604,9 @@ Mechanical repair algorithm:
 1. Read diagnostics[0].code, message, and span.
 2. Inspect only the declaration containing that span.
 3. Fix the first error without redesigning unrelated code.
-4. Run loom check again.
+4. Run pqo check again.
 5. Repeat until status is valid.
-6. Run loom explain.
+6. Run pqo explain.
 7. Confirm native_kernels/external_kernels and execution order.
 8. Run the program.
 ```
@@ -639,12 +639,12 @@ Question:
 Independent variable:
 Controlled inputs:
 Observed stream or visual behavior:
-Native Loom kernels:
+Native Pqo kernels:
 External Metal kernels:
-loom check result:
+pqo check result:
 source_graph_hash:
 artifact_fingerprint:
-loom explain inspection:
+pqo explain inspection:
 run result:
 limitations:
 ```
@@ -652,12 +652,12 @@ limitations:
 Minimum command sequence:
 
 ```sh
-loom check PATH
-loom explain PATH
-loom PATH
+pqo check PATH
+pqo explain PATH
+pqo PATH
 ```
 
-For compiler or runtime changes in the Loom repository, also run the closest
+For compiler or runtime changes in the Pqo repository, also run the closest
 focused Rust test and a real-Metal test. If performance is part of the claim,
 use a release build, warm-up, repeated samples, fixed workload, and report the
 device.
@@ -669,23 +669,23 @@ Use this prompt with this document:
 ```text
 Read docs/agent-coding-reference.md completely.
 
-Create one runnable Loom experiment that answers this question:
+Create one runnable Pqo experiment that answers this question:
 [QUESTION]
 
-Start from the closest checked-in example. Use only executable Loom 0.1 syntax.
+Start from the closest checked-in example. Use only executable Pqo 0.1 syntax.
 Do not invent conditionals, loops, intrinsics, random functions, neighbor
 indexing, atomics, reductions, scans, or native render syntax. Keep unsupported
 operations visibly extern metal and use only packaged Metal source paths unless
-you are explicitly modifying and rebuilding the Loom runtime.
+you are explicitly modifying and rebuilding the Pqo runtime.
 
 Change one behavior class at a time. Preserve types, physical units, resource
 effects, complete pass bindings, compatible stream lengths, and explicit flow
 order.
 
 Finish only after:
-1. loom check reports status valid;
-2. loom explain confirms the intended kernels, bindings, and order;
-3. loom PATH runs successfully;
+1. pqo check reports status valid;
+2. pqo explain confirms the intended kernels, bindings, and order;
+3. pqo PATH runs successfully;
 4. you report the question, changed variables, native/external boundary,
    hashes, observed result, and limitations.
 ```
@@ -695,8 +695,8 @@ Finish only after:
 When sources disagree, trust them in this order:
 
 1. the current parser and validator,
-2. `loom check` and `loom explain`,
-3. checked-in runnable `.loom` examples,
+2. `pqo check` and `pqo explain`,
+3. checked-in runnable `.pqo` examples,
 4. this document,
 5. conceptual design and roadmap documents.
 

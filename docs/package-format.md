@@ -1,12 +1,12 @@
-# Loom Package Format
+# Pqo Package Format
 
-A Loom source project is a directory rooted at its primary `.loom` file.
+A Pqo source project is a directory rooted at its primary `.pqo` file.
 External source paths in the graph are relative to that directory and may not
 be absolute or contain `..`.
 
 ```text
 marble-water/
-├── marble-water.loom
+├── marble-water.pqo
 ├── config/
 │   └── window-layout.json
 ├── kernels/
@@ -14,7 +14,7 @@ marble-water/
 ├── shaders/
 │   └── marble_water.metal
 ├── ui/
-│   ├── loom-ui.json
+│   ├── pqo-ui.json
 │   ├── package.json
 │   ├── src/
 │   └── dist/
@@ -22,22 +22,22 @@ marble-water/
     └── runtime.rs
 ```
 
-`src/runtime.rs` is optional. When present, `loom build` compiles it as a
+`src/runtime.rs` is optional. When present, `pqo build` compiles it as a
 versioned project extension using only the stable C ABI supplied by the global
 runtime.
 
 ```text
-loom build marble-water.loom
-loom marble-water.lmp
+pqo build marble-water.pqo
+pqo marble-water.lmp
 ```
 
 The resulting `.lmp` is a ZIP-compatible archive with a distinct extension. Its
-root contains `loom-package.json`, the primary graph, every referenced external
+root contains `pqo-package.json`, the primary graph, every referenced external
 source, the project extension source, a target-specific compiled extension, and
 an optional project UI. The manifest records the format version, module, entry
 graph, file inventory, extension ABI, target triple, and UI entry point.
 
-When `ui/loom-ui.json` exists, `loom build` runs the UI package's `npm run build`
+When `ui/pqo-ui.json` exists, `pqo build` runs the UI package's `npm run build`
 script and includes both its Vue source and generated assets. Running the `.lmp`
 opens those assets in the installed generic Tauri panel beside the Metal viewer.
 The UI is project-owned; the Tauri shell and authenticated local IPC bridge are
@@ -54,7 +54,7 @@ runtime-owned.
 }
 ```
 
-The global Loom runtime owns validation, scheduling, Metal execution, windowing,
+The global Pqo runtime owns validation, scheduling, Metal execution, windowing,
 and host statistics. The package owns all application-specific graphs, shaders,
 input behavior, HUD behavior, and value overrides.
 
@@ -72,7 +72,7 @@ unzip marble-water.lmp -d marble-water
 cd marble-water
 ```
 
-Edit the primary `.loom`, files under `kernels/` or `shaders/`, or
+Edit the primary `.pqo`, files under `kernels/` or `shaders/`, or
 `src/runtime.rs`, or the Vue project under `ui/`, then run
-`loom build marble-water.loom` again. The extracted target-specific `runtime/`
+`pqo build marble-water.pqo` again. The extracted target-specific `runtime/`
 directory and `ui/dist/` are generated artifacts and may be deleted.

@@ -1975,92 +1975,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0ceec5bc11778974d1bcb055b18002eba7f4b3518b6a0081b3af5f21666da9ad"
 
 [[package]]
-name = "loom-cli"
-version = "0.1.11"
-dependencies = [
- "loom-core",
- "loom-metal",
- "loom-syntax",
- "loom-validator",
- "loom-windowing",
- "serde",
- "serde_json",
- "tempfile",
- "zip",
-]
-
-[[package]]
-name = "loom-core"
-version = "0.1.11"
-dependencies = [
- "serde",
- "serde_json",
- "sha2",
-]
-
-[[package]]
-name = "loom-metal"
-version = "0.1.11"
-dependencies = [
- "block",
- "core-graphics-types 0.1.3",
- "libc",
- "libloading 0.8.9",
- "loom-core",
- "loom-syntax",
- "loom-validator",
- "loom-windowing",
- "metal",
- "objc",
- "serde",
- "serde_json",
- "sha2",
- "winit",
-]
-
-[[package]]
-name = "loom-syntax"
-version = "0.1.11"
-dependencies = [
- "loom-core",
- "loom-validator",
- "serde",
-]
-
-[[package]]
-name = "loom-ui-panel"
-version = "0.1.11"
-dependencies = [
- "keyring",
- "loom-windowing",
- "reqwest 0.12.28",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "zeroize",
-]
-
-[[package]]
-name = "loom-validator"
-version = "0.1.11"
-dependencies = [
- "loom-core",
- "serde",
- "serde_json",
- "sha2",
-]
-
-[[package]]
-name = "loom-windowing"
-version = "0.1.11"
-dependencies = [
- "serde",
- "serde_json",
- "tempfile",
-]
-
-[[package]]
 name = "lru-slab"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2802,6 +2716,92 @@ name = "powerfmt"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "439ee305def115ba05938db6eb1644ff94165c5ab5e9420d1c1bcedbba909391"
+
+[[package]]
+name = "pqo-cli"
+version = "0.1.11"
+dependencies = [
+ "pqo-core",
+ "pqo-metal",
+ "pqo-syntax",
+ "pqo-validator",
+ "pqo-windowing",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "zip",
+]
+
+[[package]]
+name = "pqo-core"
+version = "0.1.11"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
+name = "pqo-metal"
+version = "0.1.11"
+dependencies = [
+ "block",
+ "core-graphics-types 0.1.3",
+ "libc",
+ "libloading 0.8.9",
+ "metal",
+ "objc",
+ "pqo-core",
+ "pqo-syntax",
+ "pqo-validator",
+ "pqo-windowing",
+ "serde",
+ "serde_json",
+ "sha2",
+ "winit",
+]
+
+[[package]]
+name = "pqo-syntax"
+version = "0.1.11"
+dependencies = [
+ "pqo-core",
+ "pqo-validator",
+ "serde",
+]
+
+[[package]]
+name = "pqo-ui-panel"
+version = "0.1.11"
+dependencies = [
+ "keyring",
+ "pqo-windowing",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "zeroize",
+]
+
+[[package]]
+name = "pqo-validator"
+version = "0.1.11"
+dependencies = [
+ "pqo-core",
+ "serde",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
+name = "pqo-windowing"
+version = "0.1.11"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tempfile",
+]
 
 [[package]]
 name = "precomputed-hash"

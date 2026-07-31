@@ -1,5 +1,5 @@
 ---
-name: "Loom project runtime"
+name: "Pqo project runtime"
 description: "Rules for the project-local Rust extension ABI"
 applyTo: "src/**/*.rs"
 ---
@@ -13,9 +13,9 @@ applyTo: "src/**/*.rs"
 - Do not mutate GPU buffers or duplicate authoritative simulation state in Rust.
 - Clamp untrusted input at the project boundary.
 - Keep control and telemetry names identical across Rust, UI, and
-  the primary `.loom` file.
+  the primary `.pqo` file.
 - Use standard Rust formatting and focused state methods; avoid new dependencies
   when the standard library suffices.
-- Replace `PROJECT.loom` with the primary filename, run `rustc` through
-  `loom build PROJECT.loom`, and exercise each changed input path in the packaged
+- Replace `PROJECT.pqo` with the primary filename, run `rustc` through
+  `pqo build PROJECT.pqo`, and exercise each changed input path in the packaged
   application.

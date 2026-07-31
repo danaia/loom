@@ -394,7 +394,7 @@ onBeforeUnmount(() => {
       <div class="brand">
         <span class="brand-mark"><api-outlined /></span>
         <div>
-          <h1>Loom Agents</h1>
+          <h1>Pqo Agents</h1>
           <p>AI workspace for GPU systems</p>
         </div>
       </div>
@@ -480,13 +480,13 @@ onBeforeUnmount(() => {
           <div v-if="connectionPhase === 'connecting' && !messages.length" class="loading-state">
             <span class="agent-avatar"><api-outlined /></span>
             <div class="loading-dots"><i></i><i></i><i></i></div>
-            <p>Starting Loom Agent with {{ modelLabel }}…</p>
+            <p>Starting Pqo Agent with {{ modelLabel }}…</p>
           </div>
 
           <div v-else-if="!messages.length && !connected" class="welcome">
             <span class="welcome-mark"><api-outlined /></span>
-            <h3>Connect Loom Agents</h3>
-            <p>Use your OpenAI API key to start a project-aware assistant for building and diagnosing Loom applications.</p>
+            <h3>Connect Pqo Agents</h3>
+            <p>Use your OpenAI API key to start a project-aware assistant for building and diagnosing Pqo applications.</p>
             <button type="button" @click="showKeySetup = true">
               <key-outlined />
               Connect OpenAI
@@ -502,7 +502,7 @@ onBeforeUnmount(() => {
             >
               <span v-if="message.role === 'agent'" class="message-avatar"><api-outlined /></span>
               <div>
-                <strong>{{ message.role === 'agent' ? 'Loom Agent' : 'You' }}</strong>
+                <strong>{{ message.role === 'agent' ? 'Pqo Agent' : 'You' }}</strong>
                 <p>{{ message.text }}</p>
               </div>
             </article>
@@ -510,7 +510,7 @@ onBeforeUnmount(() => {
             <article v-if="sending" class="message message--agent">
               <span class="message-avatar"><api-outlined /></span>
               <div>
-                <strong>Loom Agent</strong>
+                <strong>Pqo Agent</strong>
                 <div class="agent-activity">
                   <span>{{ agentActivity }}</span>
                   <div class="loading-dots loading-dots--inline"><i></i><i></i><i></i></div>
@@ -529,7 +529,7 @@ onBeforeUnmount(() => {
             <textarea
               v-model="prompt"
               :disabled="!connected || sending"
-              :placeholder="connected ? 'Message Loom Agent' : 'Connect OpenAI to begin'"
+              :placeholder="connected ? 'Message Pqo Agent' : 'Connect OpenAI to begin'"
               rows="1"
               @keydown="handleComposerKeydown"
             ></textarea>

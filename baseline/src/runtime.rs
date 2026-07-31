@@ -254,29 +254,29 @@ fn push(o: &mut ProjectFrameOutputV1, n: &str, v: f32) {
     }
 }
 #[no_mangle]
-pub extern "C" fn loom_project_abi_version_v1() -> u32 {
+pub extern "C" fn pqo_project_abi_version_v1() -> u32 {
     ABI_VERSION
 }
 #[no_mangle]
-pub extern "C" fn loom_project_title_v1() -> *const c_char {
-    b"Loom Baseline - selectable particles\0".as_ptr() as *const c_char
+pub extern "C" fn pqo_project_title_v1() -> *const c_char {
+    b"Pqo Baseline - selectable particles\0".as_ptr() as *const c_char
 }
 #[no_mangle]
-pub extern "C" fn loom_project_help_v1() -> *const c_char {
+pub extern "C" fn pqo_project_help_v1() -> *const c_char {
     b"click or drag a particle to move it, click space to set its target, Command-click space to add the chosen agent type\0".as_ptr() as *const c_char
 }
 #[no_mangle]
-pub extern "C" fn loom_project_create_v1() -> *mut c_void {
+pub extern "C" fn pqo_project_create_v1() -> *mut c_void {
     Box::into_raw(Box::new(State::default())) as *mut c_void
 }
 #[no_mangle]
-pub unsafe extern "C" fn loom_project_destroy_v1(s: *mut c_void) {
+pub unsafe extern "C" fn pqo_project_destroy_v1(s: *mut c_void) {
     if !s.is_null() {
         drop(Box::from_raw(s as *mut State))
     }
 }
 #[no_mangle]
-pub unsafe extern "C" fn loom_project_event_v1(s: *mut c_void, e: *const ProjectEventV1) -> u32 {
+pub unsafe extern "C" fn pqo_project_event_v1(s: *mut c_void, e: *const ProjectEventV1) -> u32 {
     if s.is_null() || e.is_null() {
         return 0;
     };
@@ -284,7 +284,7 @@ pub unsafe extern "C" fn loom_project_event_v1(s: *mut c_void, e: *const Project
     1
 }
 #[no_mangle]
-pub unsafe extern "C" fn loom_project_control_v1(
+pub unsafe extern "C" fn pqo_project_control_v1(
     s: *mut c_void,
     c: *const ProjectControlV1,
 ) -> u32 {
@@ -299,7 +299,7 @@ pub unsafe extern "C" fn loom_project_control_v1(
     u32::from((*(s as *mut State)).control(n, c.value))
 }
 #[no_mangle]
-pub unsafe extern "C" fn loom_project_frame_v1(
+pub unsafe extern "C" fn pqo_project_frame_v1(
     s: *mut c_void,
     c: *const ProjectFrameContextV1,
     o: *mut ProjectFrameOutputV1,

@@ -6,7 +6,7 @@ Advance the implemented Hello Population, Hello Field, and Hello Organism
 correctness specimens into optimized neighborhoods, populated scaling,
 adaptive hierarchy, and cross-domain proofs.
 
-Build evidence that Loom is a scalable, precise, agent-native systems language.
+Build evidence that Pqo is a scalable, precise, agent-native systems language.
 
 ## Language Improvement Loop
 
@@ -53,7 +53,7 @@ admission while the simulation advances on its independent fixed 120 Hz clock.
 Command-buffer GPU completion and actual drawable presentation are measured
 separately. GPU deadline misses, presentation misses, skipped presentations, and
 drawable starvation have separate counters. Hello Batch remains open only until
-longer interleaved Loom/direct-Metal trials are recorded from a clean tree.
+longer interleaved Pqo/direct-Metal trials are recorded from a clean tree.
 
 ## 2. Hello Field
 
@@ -175,7 +175,7 @@ performance work; global metrics never feed back into cell decisions.
 
 ## Direct-Metal Comparison
 
-Loom and the baseline must use identical:
+Pqo and the baseline must use identical:
 
 - MSL kernels and input data,
 - buffer layouts and storage modes,
@@ -189,16 +189,16 @@ Report GPU execution time and CPU orchestration time separately.
 
 ## Final Proofs
 
-- Loom approaches direct Metal with small measured overhead.
+- Pqo approaches direct Metal with small measured overhead.
 - The runtime is not specialized around Hello Particle.
 - Benchmarks are reproducible through runtime fingerprints.
-- The kernel-model report identifies the minimum portable operations Loom needs.
+- The kernel-model report identifies the minimum portable operations Pqo needs.
 - Agents can generate, diagnose, repair, benchmark, and compare each specimen.
 - Every performance claim names its device, workload, artifact, and measurement.
 
 ## Proof Standard
 
-Loom earns the claim through:
+Pqo earns the claim through:
 
 - **Correctness:** deterministic scenarios and executable contracts.
 - **Performance:** direct-Metal comparisons using identical kernels and data.
@@ -255,7 +255,7 @@ Loom earns the claim through:
 - [x] Report p95/p99 against the 8.33 ms budget without assuming success.
 - [ ] Test 1K, 10K, 100K, and 1M particles.
 - [ ] Publish results that are reproducible from a runtime fingerprint.
-- [ ] Run clean-tree interleaved 30–60 second Loom/direct-Metal trials.
+- [ ] Run clean-tree interleaved 30–60 second Pqo/direct-Metal trials.
 
 ### Agent Experience
 
@@ -269,6 +269,6 @@ Loom earns the claim through:
 
 - Parser work.
 - CUDA or other backends.
-- A native Loom kernel language.
+- A native Pqo kernel language.
 - Complex boid behavior.
 - Tauri integration.

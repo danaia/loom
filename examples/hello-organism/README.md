@@ -1,8 +1,8 @@
 # Hello Organism
 
 The executable typed graph is built by
-`loom_core::hello_organism_builder(capacity)`. It intentionally remains
-parser-independent while Loom v0 syntax is unfrozen.
+`pqo_core::hello_organism_builder(capacity)`. It intentionally remains
+parser-independent while Pqo v0 syntax is unfrozen.
 
 The specimen declares:
 

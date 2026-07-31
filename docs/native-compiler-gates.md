@@ -1,11 +1,11 @@
-# Loom Native Compiler Gates
+# Pqo Native Compiler Gates
 
 Status: working roadmap  
-North star: expand native Loom through small, measured kernel classes before
+North star: expand native Pqo through small, measured kernel classes before
 attempting to rewrite Hello Crystal.
 
-Loom has crossed its first native kernel gate: `integrate` in Hello Particle is
-authored in Loom, lowered into the canonical typed graph, generated as Metal,
+Pqo has crossed its first native kernel gate: `integrate` in Hello Particle is
+authored in Pqo, lowered into the canonical typed graph, generated as Metal,
 compiled, executed on Apple GPU hardware, and rendered in a native application.
 Ground contact and rendering remain explicit Metal escape hatches.
 
@@ -24,8 +24,8 @@ A gate is complete only when it has all of the following:
 3. **Validation** — unsafe access, illegal aliasing, unsupported shapes, and
    authority violations fail before artifact identity is issued.
 4. **Metal generation** — generated source has stable bindings and inspectable
-   provenance under `loom://generated/...`.
-5. **Differential proof** — the native Loom implementation and the packaged Metal
+   provenance under `pqo://generated/...`.
+5. **Differential proof** — the native Pqo implementation and the packaged Metal
    reference receive the same initialized state and produce the same logical result
    within an explicit numeric tolerance.
 6. **Hardware proof** — the generated pipeline compiles and executes on a real
@@ -58,7 +58,7 @@ same logical result
 - Reject divergent resource effects and out-of-bounds index construction.
 - Native specimen: replace `contact_ground` in Hello Particle.
 - Differential oracle: current `kernels/ground_contact.metal`.
-- Exit proof: Hello Particle compute is entirely native Loom; rendering remains
+- Exit proof: Hello Particle compute is entirely native Pqo; rendering remains
   the only external stage.
 
 ### Gate 3 — Field sampling and deposits
@@ -156,14 +156,14 @@ render stages native yet.
 
 ### Gate 10 — Native vertex and fragment stages
 
-**Purpose:** make a complete visible application authorable in Loom.
+**Purpose:** make a complete visible application authorable in Pqo.
 
 - Extend implementation kinds beyond compute while retaining the same typed
   resource, effect, and provenance model.
 - Add stage inputs/outputs, interpolation qualifiers, render targets, depth/blend
   state, and a constrained intrinsic set.
 - Keep render pipeline configuration explicit and validated.
-- Native specimen: replace `shaders/particle.metal` with Loom-authored vertex and
+- Native specimen: replace `shaders/particle.metal` with Pqo-authored vertex and
   fragment stages.
 - Exit proof: Hello Particle contains no external Metal, generated render
   pipelines are fingerprinted, and image comparison stays within a declared
@@ -192,7 +192,7 @@ atomically when the repair is unambiguous.
 ## Immediate work queue
 
 1. Freeze Gate 2’s supported expression and control-flow subset.
-2. Convert `contact_ground` into the first conditional native Loom fixture while
+2. Convert `contact_ground` into the first conditional native Pqo fixture while
    preserving the external implementation as the oracle.
 3. Add component access and the minimum intrinsic set required by contact.
 4. Add source-span diagnostics for illegal conditional writes and unit mistakes.

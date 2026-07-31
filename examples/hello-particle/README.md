@@ -1,29 +1,29 @@
 # Hello Particle
 
-Update Loom first:
+Update Pqo first:
 
 ```text
-loom update
-loom --version
+pqo update
+pqo --version
 ```
 
 ## Run from this directory
 
 ```text
 cd examples/hello-particle
-loom hello-particle.loom
+pqo hello-particle.pqo
 ```
 
 The explicit form does the same thing:
 
 ```text
-loom run hello-particle.loom
+pqo run hello-particle.pqo
 ```
 
 ## Run from the repository root
 
 ```text
-loom examples/hello-particle/hello-particle.loom
+pqo examples/hello-particle/hello-particle.pqo
 ```
 
 ## Run the installed copy
@@ -31,7 +31,7 @@ loom examples/hello-particle/hello-particle.loom
 The curl installer places a copy that can be launched from any directory:
 
 ```text
-loom ~/.loom/examples/hello-particle.loom
+pqo ~/.pqo/examples/hello-particle.pqo
 ```
 
 ## Check and explain
@@ -39,9 +39,9 @@ loom ~/.loom/examples/hello-particle.loom
 These commands do not open the Metal window:
 
 ```text
-loom check hello-particle.loom
-loom explain hello-particle.loom
+pqo check hello-particle.pqo
+pqo explain hello-particle.pqo
 ```
 
-This example uses a native Loom integration kernel, an explicit Metal ground
+This example uses a native Pqo integration kernel, an explicit Metal ground
 contact kernel, and an explicit Metal particle view.

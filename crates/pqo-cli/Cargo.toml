@@ -1,0 +1,22 @@
+[package]
+name = "pqo-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+pqo-core = { path = "../pqo-core" }
+pqo-syntax = { path = "../pqo-syntax" }
+pqo-validator = { path = "../pqo-validator" }
+pqo-windowing = { path = "../pqo-windowing" }
+serde.workspace = true
+serde_json.workspace = true
+tempfile = "3"
+zip = { version = "2.2", default-features = false, features = ["deflate"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+pqo-metal = { path = "../pqo-metal" }
+
+[[bin]]
+name = "pqo"
+path = "src/main.rs"

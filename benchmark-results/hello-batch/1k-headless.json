@@ -2,7 +2,7 @@
   "experiment": "hello_batch",
   "particle_count": 1000,
   "mode": "Headless",
-  "runner": "LoomPlan",
+  "runner": "PqoPlan",
   "viewport": null,
   "warmup_ticks": 1048061,
   "sample_ticks": 2104948,

@@ -61,7 +61,7 @@ kernel void worm_think_and_move(
         smell_strength[0] = clamp(1.25f / (0.18f + best_distance), 0.0f, 5.0f);
     }
 
-    // A Loom worm remembers its current heading and turns deliberately instead
+    // A Pqo worm remembers its current heading and turns deliberately instead
     // of snapping to a target. Closer scents increase its confidence and speed.
     float turn_rate = scented ? clamp(0.07f + smell_strength[0] * 0.018f, 0.07f, 0.16f) : 0.035f;
     forward = normalize(mix(forward, desired, turn_rate));

@@ -1,34 +1,34 @@
 # Hello Crystal
 
-[`crystal.loom`](crystal.loom) is a directly runnable Loom-language program for a
+[`crystal.pqo`](crystal.pqo) is a directly runnable Pqo-language program for a
 one-million-cell (`100³`) interactive mesoscopic crystal. It grows on the GPU,
 can be sliced with the mouse, and heals itself. One element is a material volume,
 not an atom.
 
-Update Loom first:
+Update Pqo first:
 
 ```text
-loom update
-loom --version
+pqo update
+pqo --version
 ```
 
 ## Run from this directory
 
 ```text
 cd examples/hello-crystal
-loom crystal.loom
+pqo crystal.pqo
 ```
 
 The explicit form does the same thing:
 
 ```text
-loom run crystal.loom
+pqo run crystal.pqo
 ```
 
 ## Run from the repository root
 
 ```text
-loom examples/hello-crystal/crystal.loom
+pqo examples/hello-crystal/crystal.pqo
 ```
 
 ## Run the installed copy
@@ -36,7 +36,7 @@ loom examples/hello-crystal/crystal.loom
 The curl installer places a copy that can be launched from any directory:
 
 ```text
-loom ~/.loom/examples/crystal.loom
+pqo ~/.pqo/examples/crystal.pqo
 ```
 
 ## Controls
@@ -55,16 +55,16 @@ red seam closes automatically.
 These commands do not open the Metal window:
 
 ```text
-loom check crystal.loom
-loom explain crystal.loom
+pqo check crystal.pqo
+pqo explain crystal.pqo
 ```
 
-If an older interactive shell still selects a previous Loom command after
+If an older interactive shell still selects a previous Pqo command after
 upgrading, run `rehash` in zsh or `hash -r` in bash.
 
 ## Configurable development runner
 
-`loom_core::hello_crystal_builder(cell_count)` remains the configurable,
+`pqo_core::hello_crystal_builder(cell_count)` remains the configurable,
 parser-independent graph builder used for development and benchmark runs.
 
 The language example and default builder demonstration use
@@ -75,7 +75,7 @@ The language example and default builder demonstration use
 - an orientation-dependent cubic growth law and rotated Wulff-like material envelope,
 - latent-heat release and solute consumption,
 - zero autonomous damage,
-- slicing, healing, orbit, and zoom through explicit Loom interventions,
+- slicing, healing, orbit, and zoom through explicit Pqo interventions,
 - iterative connected-component labels,
 - gravity and independent motion for detached material,
 - GPU-reduced morphology, material, slice, and damage metrics,

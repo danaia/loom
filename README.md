@@ -1,12 +1,22 @@
-# Loom
+# Pqo
 
-Loom is an agent-native, low-level GPU language for Apple Silicon. It lets AI
+Install Pqo on an Apple Silicon Mac:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/danaia/pqo/main/install.sh | sh
+```
+
+## The cool part
+
+Pqo is an agent-native, low-level GPU language for Apple Silicon. It lets AI
 agents author, validate, inspect, repair, and run Metal applications from one
-`.loom` source.
+`.pqo` source.
 
-Programs run as compiled GPU kernels instead of interpreted agent logic.
-An agent can inspect diagnostics and generated Metal, correct failed source, and
-continue refining the same program.
+In other words: you describe a world once, and Pqo turns it into validated,
+native GPU code that can evolve millions of particles, cells, robots, or agents
+in parallel. The source stays compact and inspectable, the generated Metal stays
+visible, and an AI agent can diagnose a failure, repair the program, and keep it
+running—all from the same `.pqo` file.
 
 This creates a tight self-reflective development loop for fast autonomous
 systems—including swarms, simulations, and procedural organisms that can detect
@@ -18,9 +28,9 @@ agent. It's way powerful and open source. Enjoy!
 
 ## What that power can be used for
 
-A Loom element can represent a particle, robot, cell, transaction, material
+A Pqo element can represent a particle, robot, cell, transaction, material
 point, network node, order, or task. The GPU can update large populations of
-these elements in parallel while Loom keeps their memory, rules, passes, and
+these elements in parallel while Pqo keeps their memory, rules, passes, and
 effects explicit.
 
 That creates a useful foundation for:
@@ -42,7 +52,7 @@ That creates a useful foundation for:
 - **Autonomous software:** many local decision-makers operating inside bounded,
   validated rules
 
-Loom does not automatically solve these industries. It provides a low-level
+Pqo does not automatically solve these industries. It provides a low-level
 way to build and test the large parallel systems they increasingly depend on.
 
 
@@ -56,59 +66,51 @@ Most tools handle one part of the problem:
 - a simulation framework coordinates many actors
 - a validator checks whether the program is safe to run
 
-Loom is designed to combine these parts in one language and runtime.
+Pqo is designed to combine these parts in one language and runtime.
 
 An AI agent can author a low-level GPU program, validate its memory and resource
 access, inspect the generated Metal, run millions of parallel elements, render
-the result, and continue refining the same `.loom` source.
+the result, and continue refining the same `.pqo` source.
 
-This combination is unusual. Loom is not a prompt wrapper, a shader toy, or a
+This combination is unusual. Pqo is not a prompt wrapper, a shader toy, or a
 finished simulation engine. It is an attempt to make agent-authored autonomous
 systems a first-class GPU programming model.
 
-You write a `.loom` program. Loom validates it, generates Metal for supported
+You write a `.pqo` program. Pqo validates it, generates Metal for supported
 kernels, connects declared Metal kernels, schedules the GPU work, and opens a
 native window.
 
 
 ## Get started
 
-Loom currently requires an Apple Silicon Mac.
-
-Install:
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/danaia/loom/main/install.sh | sh
-```
-
 Run a particle:
 
 ```sh
-loom ~/.loom/examples/hello-particle.loom
+pqo ~/.pqo/examples/hello-particle.pqo
 ```
 
 Run the interactive self-healing crystal:
 
 ```sh
-loom ~/.loom/examples/crystal.loom
+pqo ~/.pqo/examples/crystal.pqo
 ```
 
 You do not need Rust or Cargo to use the installed release.
 
 ## Portable `.lmp` projects
 
-A Loom project keeps its primary `.loom` file, referenced Metal sources, and
+A Pqo project keeps its primary `.pqo` file, referenced Metal sources, and
 optional `src/runtime.rs` extension in one directory. Build that directory into
 a single distributable package:
 
 ```sh
-loom build examples/marble-water/marble-water.loom
-loom examples/marble-water/marble-water.lmp
+pqo build examples/marble-water/marble-water.pqo
+pqo examples/marble-water/marble-water.lmp
 ```
 
 The `.lmp` contains the graph, every referenced Metal file, the Rust extension
 source, and its compiled target library. Running the package requires only the
-global `loom` runtime. Building a project with `src/runtime.rs` requires `rustc`.
+global `pqo` runtime. Building a project with `src/runtime.rs` requires `rustc`.
 
 `.lmp` is ZIP-compatible, so a package can be reopened for editing:
 
@@ -116,12 +118,12 @@ global `loom` runtime. Building a project with `src/runtime.rs` requires `rustc`
 mkdir marble-water
 unzip marble-water.lmp -d marble-water
 cd marble-water
-loom build marble-water.loom
+pqo build marble-water.pqo
 ```
 
-## What Loom does
+## What Pqo does
 
-A Loom program defines:
+A Pqo program defines:
 
 - GPU data, types, units, and memory limits
 - which kernels may read or change that data
@@ -129,28 +131,28 @@ A Loom program defines:
 - rendering
 - the update rate
 
-Loom then:
+Pqo then:
 
 ```text
-parses the .loom source
+parses the .pqo source
 → checks types, units, memory, and access
 → builds a validated execution graph
 → generates or loads Metal kernels
 → runs the program on the Apple GPU
 ```
 
-## How Loom is different technically
+## How Pqo is different technically
 
-Loom is not a Python wrapper around a finished engine. The `.loom` file owns the
+Pqo is not a Python wrapper around a finished engine. The `.pqo` file owns the
 GPU program.
 
 - It exposes low-level GPU concepts such as streams, capacities, access modes,
   kernels, passes, and flows.
 - Its compact syntax is designed for AI coding agents.
-- Supported Loom kernels compile into inspectable Metal source.
+- Supported Pqo kernels compile into inspectable Metal source.
 - Unsupported work stays visible as `extern metal`.
-- `loom check` rejects invalid programs before they run.
-- `loom explain` shows the graph, execution plan, and generated Metal.
+- `pqo check` rejects invalid programs before they run.
+- `pqo explain` shows the graph, execution plan, and generated Metal.
 
 The goal is a CUDA-like authoring language for Metal, designed for agents and
 GPU systems with many independent elements.
@@ -160,7 +162,7 @@ GPU systems with many independent elements.
 A GPU can update thousands or millions of elements at the same time. An element
 can represent a particle, cell, voxel, material point, or agent.
 
-Loom gives those elements persistent state, local rules, shared fields, bounded
+Pqo gives those elements persistent state, local rules, shared fields, bounded
 memory, ordered compute passes, and rendering.
 
 This can be used to build:
@@ -175,11 +177,11 @@ This can be used to build:
 The program defines the rules. The GPU calculates the resulting structure over
 time.
 
-## A real Loom kernel
+## A real Pqo kernel
 
 This kernel updates particle velocity and position:
 
-```loom
+```pqo
 kernel integrate(
   position: rw stream<f32x3,m>,
   velocity: rw stream<f32x3,m/s>,
@@ -191,11 +193,11 @@ kernel integrate(
 }
 ```
 
-Loom checks the types and units, then generates the Metal implementation.
+Pqo checks the types and units, then generates the Metal implementation.
 
 The program schedules it at 120 Hz:
 
-```loom
+```pqo
 pass fall = integrate(
   position=particles.position
   velocity=particles.velocity
@@ -210,7 +212,7 @@ flow simulation rate=120hz {
 ```
 
 Read the complete source:
-[`examples/hello-particle/hello-particle.loom`](examples/hello-particle/hello-particle.loom).
+[`examples/hello-particle/hello-particle.pqo`](examples/hello-particle/hello-particle.pqo).
 
 ## Examples
 
@@ -219,10 +221,10 @@ Read the complete source:
 One particle falls, hits the ground, and renders in a Metal window.
 
 ```sh
-loom examples/hello-particle/hello-particle.loom
+pqo examples/hello-particle/hello-particle.pqo
 ```
 
-Its integration kernel is native Loom. Ground contact and rendering are explicit
+Its integration kernel is native Pqo. Ground contact and rendering are explicit
 Metal kernels.
 
 ### Hello Crystal
@@ -232,10 +234,10 @@ across it to slice it, drag the black background to spin it, and scroll to zoom.
 The cut glows red while damaged, then heals itself.
 
 ```sh
-loom examples/hello-crystal/crystal.loom
+pqo examples/hello-crystal/crystal.pqo
 ```
 
-Loom owns the typed GPU graph. Advanced field, neighborhood, component, and
+Pqo owns the typed GPU graph. Advanced field, neighborhood, component, and
 render kernels currently use explicit Metal.
 
 ### Hello Organism
@@ -252,18 +254,18 @@ It is currently a compiler-development example:
 ## Commands
 
 ```sh
-loom program.loom          # Run
-loom project.lmp           # Run a self-contained package
-loom build program.loom    # Build program.lmp
-loom check program.loom    # Validate
-loom check project.lmp     # Validate a package
-loom explain program.loom  # Inspect the graph and generated Metal
-loom new my-project        # Start from the Baseline project
-loom update                # Install the latest release
-loom --version             # Print the version
+pqo program.pqo          # Run
+pqo project.lmp           # Run a self-contained package
+pqo build program.pqo    # Build program.lmp
+pqo check program.pqo    # Validate
+pqo check project.lmp     # Validate a package
+pqo explain program.pqo  # Inspect the graph and generated Metal
+pqo new my-project        # Start from the Baseline project
+pqo update                # Install the latest release
+pqo --version             # Print the version
 ```
 
-`loom program.loom` and `loom run program.loom` are equivalent.
+`pqo program.pqo` and `pqo run program.pqo` are equivalent.
 
 ## Ask an AI agent to build something
 
@@ -271,16 +273,16 @@ loom --version             # Print the version
 Read docs/agent-coding-reference.md completely, then read the closest runnable
 example.
 
-Build a runnable .loom particle system with visible GPU motion.
-Use native Loom for supported kernels and explicit extern metal for unsupported
+Build a runnable .pqo particle system with visible GPU motion.
+Use native Pqo for supported kernels and explicit extern metal for unsupported
 work. Do not invent syntax.
 
 Finish only when these commands succeed:
-loom check PATH_TO_PROGRAM
-loom explain PATH_TO_PROGRAM
-loom PATH_TO_PROGRAM
+pqo check PATH_TO_PROGRAM
+pqo explain PATH_TO_PROGRAM
+pqo PATH_TO_PROGRAM
 
-Document which kernels are native Loom and which are external Metal.
+Document which kernels are native Pqo and which are external Metal.
 ```
 
 The [AI agent coding reference](docs/agent-coding-reference.md) gives smaller
@@ -289,7 +291,7 @@ compiler limits, diagnostic repairs, and an evidence checklist.
 
 ## Current scope
 
-Loom is early software. Native Loom currently supports the first element-wise
+Pqo is early software. Native Pqo currently supports the first element-wise
 arithmetic kernel class.
 
 Conditionals, fields, stencils, atomics, reductions, neighborhood access, scans,
@@ -302,11 +304,11 @@ See the [native compiler roadmap](docs/native-compiler-gates.md).
 ## Update or remove
 
 ```sh
-loom update
+pqo update
 ```
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/danaia/loom/main/uninstall.sh | sh
+curl -fsSL https://raw.githubusercontent.com/danaia/pqo/main/uninstall.sh | sh
 ```
 
 ## More

@@ -1,8 +1,8 @@
-# Loom GPU Authoring Handbook
+# Pqo GPU Authoring Handbook
 
-This handbook explains how to author Loom programs that lower cleanly to efficient
-GPU execution. It is written for human developers and for agents modifying Loom
-graphs, Metal implementations, benchmarks, or future native Loom kernel bodies.
+This handbook explains how to author Pqo programs that lower cleanly to efficient
+GPU execution. It is written for human developers and for agents modifying Pqo
+graphs, Metal implementations, benchmarks, or future native Pqo kernel bodies.
 
 It is guidance, not a replacement for the language charter or validator. If this
 handbook conflicts with the typed graph, validator, or a language decision record,
@@ -29,33 +29,33 @@ the implementation and normative documents win.
 
 ## Know the current boundary
 
-Loom v0 is a typed compute/render graph with a validated execution model. Its
+Pqo v0 is a typed compute/render graph with a validated execution model. Its
 first native kernel subset generates Metal for f32 scalar/vector indexed
 arithmetic. Complex arithmetic is still supplied by explicit external Metal.
 
 The executable path today is:
 
 ```text
-Loom typed declarations
+Pqo typed declarations
 → native expression type/unit/effect checking
 → validator
 → execution plan
-→ loom-metal
+→ pqo-metal
 → generated or explicit packaged Metal
 → Metal pipelines
 → GPU execution
 ```
 
 The executable agent-native source is
-[`examples/hello-particle/hello-particle.agent.loom`](../examples/hello-particle/hello-particle.agent.loom).
-Its integration kernel is native Loom and its contact kernel demonstrates the
+[`examples/hello-particle/hello-particle.agent.pqo`](../examples/hello-particle/hello-particle.agent.pqo).
+Its integration kernel is native Pqo and its contact kernel demonstrates the
 explicit Metal escape hatch. The larger crystal and organism programs are still
 constructed through the Rust builder API.
 
 The growing native path is:
 
 ```text
-Loom declarations plus native kernel bodies
+Pqo declarations plus native kernel bodies
 → validated IR
 → optimized execution graph
 → generated Metal
@@ -67,9 +67,9 @@ paths. Only the place where kernel arithmetic is written changes.
 
 Use these labels when documenting examples:
 
-- **Executable v0** — represented by native Loom and/or explicit Metal lowered
+- **Executable v0** — represented by native Pqo and/or explicit Metal lowered
   through the current typed graph.
-- **Canonical text** — valid semantic shape illustrated by the checked-in `.loom`
+- **Canonical text** — valid semantic shape illustrated by the checked-in `.pqo`
   specimen; punctuation may still evolve.
 - **Conceptual future syntax** — branches, loops, atomics, threadgroup memory,
   SIMD-group operations, and other forms not accepted by the current parser.
@@ -87,9 +87,9 @@ GPU-resident streams
 → GPU-resident render inputs
 ```
 
-Each Loom construct has a performance role:
+Each Pqo construct has a performance role:
 
-| Loom construct | GPU meaning | Cost to make explicit |
+| Pqo construct | GPU meaning | Cost to make explicit |
 | --- | --- | --- |
 | `value` | Immutable parameter buffer | Value upload and binding |
 | `stream` | Dense typed GPU buffer | Capacity, element width, buffering |
@@ -100,7 +100,7 @@ Each Loom construct has a performance role:
 | `capability` | Exceptional mutation or observation authority | Synchronization or trust boundary |
 | `contract` | Verifiable performance or correctness claim | Measurement scope |
 
-Loom makes expensive behavior visible. It does not make a poor algorithm fast.
+Pqo makes expensive behavior visible. It does not make a poor algorithm fast.
 Performance still comes from locality, parallelism, bounded communication, low
 contention, GPU residency, and controlled synchronization.
 
@@ -140,7 +140,7 @@ of program design, not cleanup work.
 
 Represent independently consumed properties as separate streams:
 
-```loom
+```pqo
 stream particles.position: vec3<f32> unit m { ... }
 stream particles.velocity: vec3<f32> unit m/s { ... }
 stream particles.radius: f32 unit m { ... }
@@ -164,7 +164,7 @@ total bytes  = sum(stream bytes) + indirect arguments + textures + staging
 ```
 
 Do not assume source-language vector width equals storage stride. The current
-Metal kernels use `packed_float3` for Loom `vec3<f32>` buffers. Keep the declared
+Metal kernels use `packed_float3` for Pqo `vec3<f32>` buffers. Keep the declared
 type, generated ABI, upload representation, and MSL parameter type consistent.
 
 Use `f16`, quantized integers, or bit packing only when range, precision,
@@ -195,7 +195,7 @@ validator rejects mismatched domains.
 Use `device_private` for simulation and render streams that do not require direct
 host mutation:
 
-```loom
+```pqo
 storage device_private
 access device_read_write
 ```
@@ -228,14 +228,14 @@ This distinction helps answer:
 - Which streams belong in replay identity?
 - Which streams can be recomputed instead of stored?
 
-Loom does not yet infer all transient aliasing. Declare separate resources unless
+Pqo does not yet infer all transient aliasing. Declare separate resources unless
 aliasing and lifetime safety are explicitly proven.
 
 ## Declare kernels as exact effect boundaries
 
 A kernel signature must declare every resource it reaches:
 
-```loom
+```pqo
 kernel integrate {
   slot position: stream<vec3<f32>, m> read_write
   slot velocity: stream<vec3<f32>, m/s> read_write
@@ -288,7 +288,7 @@ If an optimization needs aliasing:
 ### Keep the ABI exact
 
 The current Metal runtime binds buffers in `KernelAbi.binding_order`. The MSL
-`[[buffer(n)]]` indices must match that order exactly. Loom values and streams are
+`[[buffer(n)]]` indices must match that order exactly. Pqo values and streams are
 both buffer bindings.
 
 The current dispatch index is a global linear `u32`:
@@ -302,7 +302,7 @@ updating the ABI, or rely on an ambient constant.
 
 ### Let the backend derive threadgroup width first
 
-With no explicit pass override, `loom-metal` chooses the smaller of:
+With no explicit pass override, `pqo-metal` chooses the smaller of:
 
 - the pipeline's `threadExecutionWidth`, and
 - its `maxTotalThreadsPerThreadgroup`.
@@ -319,7 +319,7 @@ the kernel.
 
 A pass binds a reusable kernel to concrete resources and a dispatch domain:
 
-```loom
+```pqo
 pass fall uses integrate {
   bind position = particles.position
   bind velocity = particles.velocity
@@ -395,7 +395,7 @@ authority. Autonomous simulation ticks should not poll mutable CPU object state.
 
 Order every conflicting producer and consumer:
 
-```loom
+```pqo
 schedule simulation fixed 120 Hz {
   run fall
   run bounce after fall
@@ -566,13 +566,13 @@ overload policy. Never allow a dropped frame to change simulation results.
 ## Author the current Metal implementation
 
 Metal supplies the hot-path arithmetic in v0. Keep it mechanically aligned with the
-Loom graph.
+Pqo graph.
 
 ### Match types and bindings
 
 For every kernel:
 
-1. Copy the Loom ABI binding order into a review table.
+1. Copy the Pqo ABI binding order into a review table.
 2. Verify each MSL `[[buffer(n)]]` index.
 3. Verify scalar/vector width and signedness.
 4. Verify `constant` versus `device` address space.
@@ -600,7 +600,7 @@ The conversion between packed storage and arithmetic vectors is deliberate.
 
 ### Make bounds semantics obvious
 
-For fixed and dynamic Loom dispatch, the runtime emits the declared logical thread
+For fixed and dynamic Pqo dispatch, the runtime emits the declared logical thread
 count. A kernel may rely on `gid` being inside that dispatch domain only if every
 bound stream shares the validated length.
 
@@ -620,7 +620,7 @@ work for inactive elements may outweigh divergence.
 
 - Load a reused scalar or element once into a local value.
 - Coalesce neighboring accesses where the data layout permits it.
-- Avoid writing an unchanged stream only when the Loom effect and downstream
+- Avoid writing an unchanged stream only when the Pqo effect and downstream
   semantics also permit omission.
 - Use threadgroup memory for measured reuse, not as a reflex.
 - Watch register and threadgroup-memory growth because both can lower occupancy.
@@ -683,9 +683,9 @@ Mean time can hide deadline-breaking tails.
 
 ### Compare orchestration fairly
 
-The `loom` and `direct-metal` benchmark runners share initialized buffers, MSL,
+The `pqo` and `direct-metal` benchmark runners share initialized buffers, MSL,
 pipeline states, threadgroup sizing, dispatch, command-buffer grouping, and render
-target. Use this comparison to isolate steady-state Loom orchestration overhead,
+target. Use this comparison to isolate steady-state Pqo orchestration overhead,
 not to compare two different algorithms.
 
 Use a clean tree and interleaved ordering for publishable evidence:
@@ -711,7 +711,7 @@ hypothesis
 
 ## Avoid common failure modes
 
-| Failure | Why it is slow or unsafe | Loom-shaped repair |
+| Failure | Why it is slow or unsafe | Pqo-shaped repair |
 | --- | --- | --- |
 | CPU loop over particles | Serial host work and upload | Dispatch over a GPU stream |
 | Per-element object graph | Poor locality and hidden allocation | Dense typed streams |
@@ -727,7 +727,7 @@ hypothesis
 | Extra dependency “for safety” | Prevents legal overlap | Declare actual effects and hazards |
 | Excess in-flight work | Memory growth and latency | Tune bounded concurrency |
 | Benchmark only the mean | Misses tail latency | Report p95, p99, maximum, misses |
-| Claim generated Loom kernels today | Misstates compiler maturity | Label external Metal boundary |
+| Claim generated Pqo kernels today | Misstates compiler maturity | Label external Metal boundary |
 
 ## Follow the authoring workflow
 
@@ -763,14 +763,14 @@ Keep ordinary kernel effects separate from exceptional authority.
 
 ### 6. Implement the typed graph
 
-Use canonical Loom text where supported by the current language path and the Rust
+Use canonical Pqo text where supported by the current language path and the Rust
 builder for implemented specimens that do not yet have parser coverage. Preserve
 stable names and exact units, types, bindings, and dependencies.
 
 ### 7. Implement or generate the backend kernel
 
 For v0, author MSL against the declared ABI. For a future native kernel compiler,
-inspect generated Metal and retain the Loom-level performance contract.
+inspect generated Metal and retain the Pqo-level performance contract.
 
 ### 8. Validate correctness and lifetime
 
@@ -791,7 +791,7 @@ fingerprint, distribution, and stated limitations.
 
 ## Use the agent protocol
 
-When an agent is asked to write or optimize Loom code, follow this procedure:
+When an agent is asked to write or optimize Pqo code, follow this procedure:
 
 1. Read the language charter, semantic model, scheduling rules, and this handbook.
 2. Inspect the actual typed graph, external kernel, runtime lowering, and benchmark
@@ -880,6 +880,6 @@ An agent must not:
 - [ ] The artifact fingerprint and source cleanliness are recorded.
 - [ ] Smoke proofs, development evidence, and release baselines are labeled honestly.
 
-The target is not “Metal-looking Loom.” The target is a program whose semantics
+The target is not “Metal-looking Pqo.” The target is a program whose semantics
 make dense memory, GPU residency, bounded communication, explicit hazards, direct
 rendering, and reproducible measurement the easiest correct implementation.

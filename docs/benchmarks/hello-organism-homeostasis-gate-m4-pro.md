@@ -60,7 +60,7 @@ environmental perturbation. It does not yet prove repair after structural loss.
 ## Clean Gate 4 timing
 
 ```text
-cargo run --release -q -p loom-metal --bin hello-particle-view -- \
+cargo run --release -q -p pqo-metal --bin hello-particle-view -- \
   organism 1024 --bench headless --warmup 30000 --samples 100
 ```
 

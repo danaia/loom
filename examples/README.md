@@ -1,16 +1,16 @@
-# Runnable Loom examples
+# Runnable Pqo examples
 
-Every `.loom` entry point in this directory can be launched directly with the
-Loom CLI.
+Every `.pqo` entry point in this directory can be launched directly with the
+Pqo CLI.
 
 From the repository root:
 
 ```text
-loom examples/hello-particle/hello-particle.loom
-loom examples/neon-flock/neon-flock.loom
-loom examples/hello-crystal/crystal.loom
-loom build examples/marble-water/marble-water.loom
-loom examples/marble-water/marble-water.lmp
+pqo examples/hello-particle/hello-particle.pqo
+pqo examples/neon-flock/neon-flock.pqo
+pqo examples/hello-crystal/crystal.pqo
+pqo build examples/marble-water/marble-water.pqo
+pqo examples/marble-water/marble-water.lmp
 ```
 
 The Crystal example is interactive: drag across the crystal to slice it, drag
@@ -21,27 +21,27 @@ From inside an example directory:
 
 ```text
 cd examples/hello-particle
-loom hello-particle.loom
+pqo hello-particle.pqo
 
 cd ../hello-crystal
-loom crystal.loom
+pqo crystal.pqo
 ```
 
 The installed distribution places the same programs at:
 
 ```text
-loom ~/.loom/examples/hello-particle.loom
-loom ~/.loom/examples/neon-flock.loom
-loom ~/.loom/examples/crystal.loom
-loom ~/.loom/examples/marble-water.lmp
+pqo ~/.pqo/examples/hello-particle.pqo
+pqo ~/.pqo/examples/neon-flock.pqo
+pqo ~/.pqo/examples/crystal.pqo
+pqo ~/.pqo/examples/marble-water.lmp
 ```
 
-`loom run FILE` is the explicit equivalent of `loom FILE`. Use `loom check FILE`
-to validate without opening a window and `loom explain FILE` to inspect the
+`pqo run FILE` is the explicit equivalent of `pqo FILE`. Use `pqo check FILE`
+to validate without opening a window and `pqo explain FILE` to inspect the
 canonical graph, execution plan, and generated or packaged Metal.
 
 Update the installed compiler and runtime with:
 
 ```text
-loom update
+pqo update
 ```

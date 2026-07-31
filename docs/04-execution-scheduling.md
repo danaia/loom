@@ -1,4 +1,4 @@
-# Loom Execution and Scheduling Semantics
+# Pqo Execution and Scheduling Semantics
 
 This document closes the version 0 execution rules required by Hello Particle.
 
@@ -6,7 +6,7 @@ This document closes the version 0 execution rules required by Hello Particle.
 
 `after` always means completion:
 
-```loom
+```pqo
 run bounce after fall
 ```
 
@@ -50,7 +50,7 @@ Every schedule selects one overlap policy:
 
 ### Require resource versions
 
-```loom
+```pqo
 tick_overlap require_resource_versions
 ```
 
@@ -58,7 +58,7 @@ Each stream written by the schedule needs at least as many physical versions as 
 
 ### Serialize conflicting ticks
 
-```loom
+```pqo
 tick_overlap serialize_conflicting_ticks
 ```
 
@@ -68,7 +68,7 @@ Hello Particle uses this conservative policy while its streams have `buffering 1
 
 ### Queue-ordered reuse
 
-```loom
+```pqo
 tick_overlap queue_ordered_reuse
 queue proof single_serial_queue_completion
 ```
@@ -81,7 +81,7 @@ Tick serialization does not prove that a previous render has finished reading a 
 
 ### Require resource versions
 
-```loom
+```pqo
 presentation_lifetime require_resource_versions
 ```
 
@@ -90,7 +90,7 @@ render frames in flight and the view's historical lag.
 
 ### Block until presentation completes
 
-```loom
+```pqo
 presentation_lifetime block_next_tick_until_views_complete
 ```
 
@@ -98,7 +98,7 @@ The next conflicting simulation tick waits for the previous view's GPU reads to 
 
 ### Queue-ordered presentation reuse
 
-```loom
+```pqo
 presentation_lifetime queue_ordered_reuse
 queue proof single_serial_queue_completion
 ```

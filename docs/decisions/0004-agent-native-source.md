@@ -11,7 +11,7 @@ bindings, and schedule structure. Its intended semantics are sound, but that
 repetition increases the number of tokens an agent must generate and the number
 of places it must keep synchronized.
 
-Loom needs a canonical source representation optimized for reliable agent
+Pqo needs a canonical source representation optimized for reliable agent
 generation, inspection, diagnosis, and repair. Optimizing for agents does not
 mean minifying the source. The objective is to minimize total generation and
 repair work.
@@ -20,7 +20,7 @@ repair work.
 
 The first executable agent-native syntax uses these rules:
 
-- `loom 0.1`, `module`, and `target` form a fixed header.
+- `pqo 0.1`, `module`, and `target` form a fixed header.
 - Kernel parameter order is the backend ABI order.
 - Kernel parameter access is the effect signature.
 - `stream<T,unit>` and `value<T,unit>` distinguish resource kinds.
@@ -42,7 +42,7 @@ access, `+`, `-`, `*`, `/`, and assignment. More complex kernels may use
 
 ## Example
 
-```loom
+```pqo
 kernel integrate(
   position: rw stream<f32x3,m>,
   velocity: rw stream<f32x3,m/s>,

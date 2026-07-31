@@ -1,6 +1,6 @@
 # Marble Water
 
-A keyboard-controlled Loom/Metal marble experiment with eight GPU-simulated hunters and an adjustable water-particle surface.
+A keyboard-controlled Pqo/Metal marble experiment with eight GPU-simulated hunters and an adjustable water-particle surface.
 
 - WASD or arrow keys steer the yellow marble.
 - Left-drag the water plane to move the yellow marble in X/Z.
@@ -26,16 +26,16 @@ A keyboard-controlled Loom/Metal marble experiment with eight GPU-simulated hunt
 - Higher amplification increases impact energy and wave speed while reducing damping for larger, longer-lived ripples.
 - Rendering reads the staged GPU state directly; no CPU-side particle model exists.
 
-Build the self-contained Loom package:
+Build the self-contained Pqo package:
 
 ```text
-loom build examples/marble-water/marble-water.loom
-loom check examples/marble-water/marble-water.lmp
-loom examples/marble-water/marble-water.lmp
+pqo build examples/marble-water/marble-water.pqo
+pqo check examples/marble-water/marble-water.lmp
+pqo examples/marble-water/marble-water.lmp
 ```
 
-`marble-water.lmp` is the distributable project. It contains the primary Loom
+`marble-water.lmp` is the distributable project. It contains the primary Pqo
 graph, both Metal sources, `src/runtime.rs`, the Vue 3 panel source and built
 assets, and the compiled Rust extension for the build machine's target. The
-installed global `loom` runtime and its generic Tauri panel shell are its only
+installed global `pqo` runtime and its generic Tauri panel shell are its only
 external dependencies.

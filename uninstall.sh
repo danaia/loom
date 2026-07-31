@@ -1,40 +1,40 @@
 #!/bin/sh
 set -eu
 
-LOOM_HOME="${LOOM_HOME:-${HOME}/.loom}"
+PQO_HOME="${PQO_HOME:-${HOME}/.pqo}"
 
 fail() {
-  echo "loom remover: $*" >&2
+  echo "pqo remover: $*" >&2
   exit 1
 }
 
-case "${LOOM_HOME}" in
-  ""|"/"|"."|"${HOME}") fail "refusing unsafe LOOM_HOME: ${LOOM_HOME}" ;;
+case "${PQO_HOME}" in
+  ""|"/"|"."|"${HOME}") fail "refusing unsafe PQO_HOME: ${PQO_HOME}" ;;
 esac
 
-if [ ! -e "${LOOM_HOME}" ]; then
-  echo "Loom is not installed at ${LOOM_HOME}."
+if [ ! -e "${PQO_HOME}" ]; then
+  echo "Pqo is not installed at ${PQO_HOME}."
   exit 0
 fi
 
-MANIFEST="${LOOM_HOME}/install-manifest"
+MANIFEST="${PQO_HOME}/install-manifest"
 [ -f "${MANIFEST}" ] ||
-  fail "${LOOM_HOME} is not a managed Loom installation; nothing was removed"
-grep -q '^loom-install-layout=1$' "${MANIFEST}" ||
-  fail "${LOOM_HOME} has an unrecognized layout; nothing was removed"
+  fail "${PQO_HOME} is not a managed Pqo installation; nothing was removed"
+grep -q '^pqo-install-layout=1$' "${MANIFEST}" ||
+  fail "${PQO_HOME} has an unrecognized layout; nothing was removed"
 
-LOOM_BIN_DIR="$(
+PQO_BIN_DIR="$(
   sed -n 's/^bin_dir=//p' "${MANIFEST}" | tail -n 1
 )"
-LOOM_BIN_DIR="${LOOM_BIN_DIR:-${HOME}/.local/bin}"
-LOOM_LINK="${LOOM_BIN_DIR}/loom"
+PQO_BIN_DIR="${PQO_BIN_DIR:-${HOME}/.local/bin}"
+PQO_LINK="${PQO_BIN_DIR}/pqo"
 
-if [ -L "${LOOM_LINK}" ] &&
-  [ "$(readlink "${LOOM_LINK}")" = "${LOOM_HOME}/bin/loom" ]; then
-  rm "${LOOM_LINK}"
-elif [ -e "${LOOM_LINK}" ] || [ -L "${LOOM_LINK}" ]; then
-  echo "loom remover: leaving unrelated ${LOOM_LINK} in place" >&2
+if [ -L "${PQO_LINK}" ] &&
+  [ "$(readlink "${PQO_LINK}")" = "${PQO_HOME}/bin/pqo" ]; then
+  rm "${PQO_LINK}"
+elif [ -e "${PQO_LINK}" ] || [ -L "${PQO_LINK}" ]; then
+  echo "pqo remover: leaving unrelated ${PQO_LINK} in place" >&2
 fi
 
-rm -rf "${LOOM_HOME}"
-echo "Removed Loom from ${LOOM_HOME}."
+rm -rf "${PQO_HOME}"
+echo "Removed Pqo from ${PQO_HOME}."
