@@ -2719,7 +2719,7 @@ checksum = "439ee305def115ba05938db6eb1644ff94165c5ab5e9420d1c1bcedbba909391"
 
 [[package]]
 name = "pqo-cli"
-version = "0.1.11"
+version = "0.1.19"
 dependencies = [
  "pqo-core",
  "pqo-metal",
@@ -2734,7 +2734,7 @@ dependencies = [
 
 [[package]]
 name = "pqo-core"
-version = "0.1.11"
+version = "0.1.19"
 dependencies = [
  "serde",
  "serde_json",
@@ -2743,7 +2743,7 @@ dependencies = [
 
 [[package]]
 name = "pqo-metal"
-version = "0.1.11"
+version = "0.1.19"
 dependencies = [
  "block",
  "core-graphics-types 0.1.3",
@@ -2763,7 +2763,7 @@ dependencies = [
 
 [[package]]
 name = "pqo-syntax"
-version = "0.1.11"
+version = "0.1.19"
 dependencies = [
  "pqo-core",
  "pqo-validator",
@@ -2772,7 +2772,7 @@ dependencies = [
 
 [[package]]
 name = "pqo-ui-panel"
-version = "0.1.11"
+version = "0.1.19"
 dependencies = [
  "keyring",
  "pqo-windowing",
@@ -2786,7 +2786,7 @@ dependencies = [
 
 [[package]]
 name = "pqo-validator"
-version = "0.1.11"
+version = "0.1.19"
 dependencies = [
  "pqo-core",
  "serde",
@@ -2796,7 +2796,7 @@ dependencies = [
 
 [[package]]
 name = "pqo-windowing"
-version = "0.1.11"
+version = "0.1.19"
 dependencies = [
  "serde",
  "serde_json",
