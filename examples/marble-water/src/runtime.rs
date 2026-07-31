@@ -487,36 +487,36 @@ fn cursor_target(
 }
 
 #[no_mangle]
-pub extern "C" fn loom_project_abi_version_v1() -> u32 {
+pub extern "C" fn pqo_project_abi_version_v1() -> u32 {
     ABI_VERSION
 }
 
 #[no_mangle]
-pub extern "C" fn loom_project_title_v1() -> *const c_char {
-    b"Loom - Marble Water - water drag: marble | background drag: orbit | scroll: zoom\0"
+pub extern "C" fn pqo_project_title_v1() -> *const c_char {
+    b"Pqo - Marble Water - water drag: marble | background drag: orbit | scroll: zoom\0"
         .as_ptr() as *const c_char
 }
 
 #[no_mangle]
-pub extern "C" fn loom_project_help_v1() -> *const c_char {
+pub extern "C" fn pqo_project_help_v1() -> *const c_char {
     b"left-drag the water to move the yellow marble; scroll while held to change its drop height; drag the background to orbit; scroll elsewhere to zoom toward the pointer; WASD/arrow keys steer\0"
         .as_ptr() as *const c_char
 }
 
 #[no_mangle]
-pub extern "C" fn loom_project_create_v1() -> *mut c_void {
+pub extern "C" fn pqo_project_create_v1() -> *mut c_void {
     Box::into_raw(Box::new(State::default())) as *mut c_void
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn loom_project_destroy_v1(state: *mut c_void) {
+pub unsafe extern "C" fn pqo_project_destroy_v1(state: *mut c_void) {
     if !state.is_null() {
         drop(Box::from_raw(state as *mut State));
     }
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn loom_project_event_v1(
+pub unsafe extern "C" fn pqo_project_event_v1(
     state: *mut c_void,
     event: *const ProjectEventV1,
 ) -> u32 {
@@ -528,7 +528,7 @@ pub unsafe extern "C" fn loom_project_event_v1(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn loom_project_control_v1(
+pub unsafe extern "C" fn pqo_project_control_v1(
     state: *mut c_void,
     control: *const ProjectControlV1,
 ) -> u32 {
@@ -548,7 +548,7 @@ pub unsafe extern "C" fn loom_project_control_v1(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn loom_project_frame_v1(
+pub unsafe extern "C" fn pqo_project_frame_v1(
     state: *mut c_void,
     context: *const ProjectFrameContextV1,
     output: *mut ProjectFrameOutputV1,

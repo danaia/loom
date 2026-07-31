@@ -6,7 +6,7 @@ Advance the implemented Hello Population, Hello Field, and Hello Organism
 correctness specimens into optimized neighborhoods, populated scaling,
 adaptive hierarchy, and cross-domain proofs.
 
-Build evidence that Loom is a scalable, precise, agent-native systems language.
+Build evidence that Pqo is a scalable, precise, agent-native systems language.
 
 ## Language Improvement Loop
 
@@ -53,7 +53,7 @@ admission while the simulation advances on its independent fixed 120 Hz clock.
 Command-buffer GPU completion and actual drawable presentation are measured
 separately. GPU deadline misses, presentation misses, skipped presentations, and
 drawable starvation have separate counters. Hello Batch remains open only until
-longer interleaved Loom/direct-Metal trials are recorded from a clean tree.
+longer interleaved Pqo/direct-Metal trials are recorded from a clean tree.
 
 ## 2. Hello Field
 
@@ -173,26 +173,9 @@ performance work; global metrics never feed back into cell decisions.
 - Begin with frozen resident fine state and exact re-expansion.
 - Add eviction and procedural reconstruction only after error contracts pass.
 
-## 6. CUDA/RTX Backend
-
-- Add `loom-cuda` as a separate backend crate that accepts only validated CUDA
-  graphs.
-- Start headless: Hello Batch on device-private CUDA buffers, CUDA events, async
-  upload, and no presentation.
-- Add CUDA graph replay for steady fixed schedules.
-- Port binning, radix sort, compaction, and overflow diagnostics before promising
-  large swarm or volume workloads.
-- Add CUDA or OptiX views for dense splats, geometry, shadows, and raymarched
-  sparse volumes.
-- Publish Loom-vs-direct-CUDA evidence on the named RTX 5090-class workstation.
-
-See [`cuda-rtx-architecture.md`](cuda-rtx-architecture.md) for the backend
-contract, memory model, dense-particle tiers, sparse cloud/fire representation,
-lighting path, and benchmark standard.
-
 ## Direct-Metal Comparison
 
-Loom and the baseline must use identical:
+Pqo and the baseline must use identical:
 
 - MSL kernels and input data,
 - buffer layouts and storage modes,
@@ -206,16 +189,16 @@ Report GPU execution time and CPU orchestration time separately.
 
 ## Final Proofs
 
-- Loom approaches direct Metal with small measured overhead.
+- Pqo approaches direct Metal with small measured overhead.
 - The runtime is not specialized around Hello Particle.
 - Benchmarks are reproducible through runtime fingerprints.
-- The kernel-model report identifies the minimum portable operations Loom needs.
+- The kernel-model report identifies the minimum portable operations Pqo needs.
 - Agents can generate, diagnose, repair, benchmark, and compare each specimen.
 - Every performance claim names its device, workload, artifact, and measurement.
 
 ## Proof Standard
 
-Loom earns the claim through:
+Pqo earns the claim through:
 
 - **Correctness:** deterministic scenarios and executable contracts.
 - **Performance:** direct-Metal comparisons using identical kernels and data.
@@ -272,7 +255,7 @@ Loom earns the claim through:
 - [x] Report p95/p99 against the 8.33 ms budget without assuming success.
 - [ ] Test 1K, 10K, 100K, and 1M particles.
 - [ ] Publish results that are reproducible from a runtime fingerprint.
-- [ ] Run clean-tree interleaved 30–60 second Loom/direct-Metal trials.
+- [ ] Run clean-tree interleaved 30–60 second Pqo/direct-Metal trials.
 
 ### Agent Experience
 
@@ -286,6 +269,6 @@ Loom earns the claim through:
 
 - Parser work.
 - CUDA or other backends.
-- A native Loom kernel language.
+- A native Pqo kernel language.
 - Complex boid behavior.
 - Tauri integration.

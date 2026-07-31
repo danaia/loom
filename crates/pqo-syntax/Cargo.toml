@@ -1,0 +1,12 @@
+[package]
+name = "pqo-syntax"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+pqo-core = { path = "../pqo-core" }
+serde.workspace = true
+
+[dev-dependencies]
+pqo-validator = { path = "../pqo-validator" }

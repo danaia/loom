@@ -5,13 +5,13 @@
 
 ## Decision
 
-Loom keeps its precise v0 description:
+Pqo keeps its precise v0 description:
 
-> Loom is an agent-native, low-level physical-compute systems DSL.
+> Pqo is an agent-native, low-level physical-compute systems DSL.
 
 Its long-term thesis is:
 
-> Loom is becoming a deterministic distributed-computation substrate where
+> Pqo is becoming a deterministic distributed-computation substrate where
 > stateful entities and fields cooperate to produce emergent structure,
 > behavior, adaptation, and visualization.
 

@@ -87,7 +87,7 @@ regrowth or a hidden global morphology correction.
 ## Clean post-Gate-5 timing
 
 ```text
-cargo run --release -q -p loom-metal --bin hello-particle-view -- \
+cargo run --release -q -p pqo-metal --bin hello-particle-view -- \
   organism 1024 --bench headless --warmup 30000 --samples 100
 ```
 
@@ -119,7 +119,7 @@ interactive performance benchmark.
 Proof command:
 
 ```text
-cargo test --release -p loom-metal \
+cargo test --release -p pqo-metal \
   runtime::tests::committed_homeostatic_checkpoint_branches_into_causal_regeneration_proofs \
   -- --nocapture
 ```

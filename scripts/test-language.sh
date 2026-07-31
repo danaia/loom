@@ -3,7 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-RESULT_FILE="$(mktemp "${TMPDIR:-/tmp}/loom-language-test.XXXXXX")"
+RESULT_FILE="$(mktemp "${TMPDIR:-/tmp}/pqo-language-test.XXXXXX")"
 
 cleanup() {
   rm -f "${RESULT_FILE}"
@@ -22,7 +22,7 @@ echo "==> Running typed-graph and validator tests"
 cargo test --workspace
 
 echo "==> Exercising agent-actionable overlap diagnostics"
-cargo run --quiet --package loom-validator --example hello_particle >"${RESULT_FILE}"
+cargo run --quiet --package pqo-validator --example hello_particle >"${RESULT_FILE}"
 
 CONFLICT_COUNT="$(grep -Ec '"code": "(InsufficientBufferVersions|UnsafePresentationLifetime)"' "${RESULT_FILE}")"
 FIX_COUNT="$(grep -c '"SetStreamBuffering"' "${RESULT_FILE}")"
@@ -63,7 +63,7 @@ if [[ ! "${ARTIFACT_FINGERPRINT}" =~ ^[0-9a-f]{64}$ ]]; then
 fi
 
 echo
-echo "Loom validator-hardening milestone passed."
+echo "Pqo validator-hardening milestone passed."
 echo "Untrusted source graph: ${SOURCE_HASH}"
 echo "Validated artifact:     ${ARTIFACT_FINGERPRINT}"
 echo "Verified: invalid graphs receive no artifact identity; two edits applied atomically and revalidated."

@@ -8,9 +8,9 @@ import type { ParticleAgentRecord } from './bridge'
 import { particlePanelSchema } from './particlePanelSchema'
 import type { UnlistenFn } from '@tauri-apps/api/event'
 
-const rosterKey = 'loom.particle-agents.v1'
-const rosterChangedEvent = 'loom-particle-roster-changed'
-const baselineResetEvent = 'loom-baseline-reset'
+const rosterKey = 'pqo.particle-agents.v1'
+const rosterChangedEvent = 'pqo-particle-roster-changed'
+const baselineResetEvent = 'pqo-baseline-reset'
 
 export type ParticleAgent = ParticleAgentRecord
 

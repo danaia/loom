@@ -1,0 +1,1 @@
+{"particle-sync":{"identifier":"particle-sync","description":"Allows Pqo's control and Agents windows to synchronize particle state.","local":true,"windows":["pqo-project-panel","pqo-project-agents"],"permissions":["core:event:default"]}}

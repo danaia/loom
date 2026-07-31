@@ -2,7 +2,7 @@
 
 Date: 2026-07-25
 
-This milestone closes Loom's first complete emergent-system arc:
+This milestone closes Pqo's first complete emergent-system arc:
 
 ```text
 one organizer
@@ -35,7 +35,7 @@ acceptance behavior are identical to the clean benchmarked implementation.
 ## Reproduction
 
 ```text
-cargo test --release -p loom-metal \
+cargo test --release -p pqo-metal \
   runtime::tests::committed_homeostatic_checkpoint_branches_into_causal_regeneration_proofs \
   -- --nocapture
 ```

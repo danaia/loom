@@ -5,10 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta
       name="description"
-      content="Install Loom, run your first native Metal program, and learn how agent-authored rules become living GPU systems."
+      content="Install Pqo, run your first native Metal program, and learn how agent-authored rules become living GPU systems."
     />
     <meta name="theme-color" content="#f3f0e7" />
-    <title>Loom — Software as a Living Process</title>
+    <title>Pqo — Software as a Living Process</title>
     <link rel="stylesheet" href="./styles.css" />
     <script src="./app.js" defer></script>
   </head>
@@ -16,13 +16,13 @@
     <div class="reading-progress" aria-hidden="true"><span></span></div>
 
     <header class="site-header">
-      <a class="brand" href="#top" aria-label="Loom handbook home">
+      <a class="brand" href="#top" aria-label="Pqo handbook home">
         <svg viewBox="0 0 44 44" aria-hidden="true">
           <path d="M22 4 38 13v18L22 40 6 31V13Z" />
           <circle cx="22" cy="22" r="5" />
           <path d="m22 9 0 8m0 10 0 8M10 15l7 4m10 6 7 4m0-14-7 4m-10 6-7 4" />
         </svg>
-        <span>LOOM</span>
+        <span>PQO</span>
       </a>
       <nav class="desktop-nav" aria-label="Primary navigation">
         <a href="#get-started">Get started</a>
@@ -51,12 +51,12 @@
           <p class="eyebrow reveal">An agent-native language for Apple GPUs</p>
           <h1 class="reveal">Software as a <em>living process.</em></h1>
           <p class="hero-deck reveal">
-            Loom programs systems that are not fully drawn in advance. Agents perceive,
+            Pqo programs systems that are not fully drawn in advance. Agents perceive,
             fields communicate, rules constrain, structures emerge, and systems can repair
             themselves.
           </p>
           <div class="hero-actions reveal">
-            <a class="button button-dark" href="#get-started">Install Loom <span>↓</span></a>
+            <a class="button button-dark" href="#get-started">Install Pqo <span>↓</span></a>
             <button class="text-button" data-scroll-to="idea" type="button">Explore the idea <span>↗</span></button>
           </div>
         </div>
@@ -93,12 +93,11 @@
         <div class="start-heading">
           <div>
             <p class="eyebrow">From zero to a native Metal window</p>
-            <h2>Install Loom. Run a living GPU program in under a minute.</h2>
+            <h2>Install Pqo. Run a living GPU program in under a minute.</h2>
           </div>
           <p>
-            The complete compiler, backend runtime where available, examples, and handbook
-            install beneath <code>~/.loom-metal</code> or <code>~/.loom-cuda</code>.
-            No Rust toolchain or Cargo command is required.
+            The complete compiler, Metal runtime, examples, and handbook install beneath
+            <code>~/.pqo</code>. No Rust toolchain or Cargo command is required.
           </p>
         </div>
 
@@ -107,24 +106,24 @@
             <span class="mini-label">APPLE SILICON MAC</span>
             <h3>One directory. One command.</h3>
             <p>
-              The installer verifies the release, adds <code>loom-metal</code> or
-              <code>loom-cuda</code>, and includes Particle and Crystal programs ready to run.
+              The installer verifies the release, adds the <code>pqo</code> command, and
+              includes Particle and Crystal programs ready to run.
             </p>
-            <div class="install-layout" aria-label="Installed Loom directory layout">
-              <span>~/.loom-metal/</span>
-              <i>bin/loom</i>
+            <div class="install-layout" aria-label="Installed Pqo directory layout">
+              <span>~/.pqo/</span>
+              <i>bin/pqo</i>
               <i>examples/</i>
-              <i>share/loom/docs/</i>
+              <i>share/pqo/docs/</i>
             </div>
           </div>
           <div class="install-commands">
             <div class="code-header">
-              <span>INSTALL LOOM</span>
+              <span>INSTALL PQO</span>
               <button
                 class="copy-button"
                 type="button"
                 data-copy-target="install-command"
-                aria-label="Copy Loom install command"
+                aria-label="Copy Pqo install command"
               >
                 <svg viewBox="0 0 20 20" aria-hidden="true">
                   <rect x="6.5" y="6.5" width="9" height="10" rx="1.5"></rect>
@@ -134,10 +133,10 @@
               </button>
             </div>
             <pre><code id="install-command">curl -fsSL \
-  https://raw.githubusercontent.com/danaia/loom/v0.1.12/install.sh | LOOM_BACKEND=metal sh</code></pre>
+  https://raw.githubusercontent.com/danaia/pqo/main/install.sh | sh</code></pre>
             <div class="remove-command">
               <span>THEN RUN</span>
-              <code>loom-metal ~/.loom-metal/examples/crystal.loom</code>
+              <code>pqo ~/.pqo/examples/crystal.pqo</code>
             </div>
           </div>
         </div>
@@ -146,27 +145,27 @@
           <article>
             <span>01 / PARTICLE</span>
             <h3>Drop one bright agent into gravity.</h3>
-            <code>loom-metal ~/.loom-metal/examples/hello-particle.loom</code>
+            <code>pqo ~/.pqo/examples/hello-particle.pqo</code>
           </article>
           <article>
             <span>02 / CRYSTAL</span>
             <h3>Slice, spin, zoom, and watch a GPU crystal heal itself.</h3>
-            <code>loom-metal ~/.loom-metal/examples/crystal.loom</code>
+            <code>pqo ~/.pqo/examples/crystal.pqo</code>
           </article>
           <article>
             <span>03 / STAY CURRENT</span>
             <h3>Upgrade the compiler and runtime in place.</h3>
-            <code>loom-metal update</code>
+            <code>pqo update</code>
           </article>
         </div>
 
         <div class="agent-prompt-intro">
           <div>
             <span class="mini-label">PASTE INTO A CODING AGENT</span>
-            <h3>Three prompts designed to produce real, runnable Loom programs.</h3>
+            <h3>Three prompts designed to produce real, runnable Pqo programs.</h3>
           </div>
           <p>
-            Each prompt tells the agent to inspect the actual compiler, use native Loom where
+            Each prompt tells the agent to inspect the actual compiler, use native Pqo where
             supported, declare Metal escape hatches honestly, and prove the result through the CLI.
           </p>
         </div>
@@ -180,16 +179,16 @@
                 <span>Copy</span>
               </button>
             </div>
-            <pre><code id="prompt-flock">You are an AI coding agent inside the Loom repository.
+            <pre><code id="prompt-flock">You are an AI coding agent inside the Pqo repository.
 
-Build examples/neon-flock/neon-flock.loom: a beautiful GPU flock of luminous agents that cohere, avoid crowding, and leave a subtle color trail.
+Build examples/neon-flock/neon-flock.pqo: a beautiful GPU flock of luminous agents that cohere, avoid crowding, and leave a subtle color trail.
 
-First inspect the current grammar, Hello Particle, and the native compiler gates. Keep .loom as the source of truth. Use native Loom for supported element-wise f32 math and explicit extern metal only for unsupported neighborhood or render work. Never invent syntax.
+First inspect the current grammar, Hello Particle, and the native compiler gates. Keep .pqo as the source of truth. Use native Pqo for supported element-wise f32 math and explicit extern metal only for unsupported neighborhood or render work. Never invent syntax.
 
 Iterate until all three succeed:
-loom check examples/neon-flock/neon-flock.loom
-loom explain examples/neon-flock/neon-flock.loom
-loom examples/neon-flock/neon-flock.loom
+pqo check examples/neon-flock/neon-flock.pqo
+pqo explain examples/neon-flock/neon-flock.pqo
+pqo examples/neon-flock/neon-flock.pqo
 
 Add a README with exact run commands and clearly label every native versus external kernel.</code></pre>
           </article>
@@ -202,13 +201,13 @@ Add a README with exact run commands and clearly label every native versus exter
                 <span>Copy</span>
               </button>
             </div>
-            <pre><code id="prompt-crystal">You are an AI coding agent extending the runnable Loom Crystal example.
+            <pre><code id="prompt-crystal">You are an AI coding agent extending the runnable Pqo Crystal example.
 
-Create examples/crystal-garden/crystal-garden.loom: a slow garden of faceted teal, violet, and acid-green growth with multiple visible growth centers and an elegant dark renderer.
+Create examples/crystal-garden/crystal-garden.pqo: a slow garden of faceted teal, violet, and acid-green growth with multiple visible growth centers and an elegant dark renderer.
 
-Begin from examples/hello-crystal/crystal.loom. Preserve its typed graph and one-million-cell, 100³ bounded field. Make the smallest compiler or Metal changes necessary, never hide the program in a Rust-only builder, and do not claim native coverage the compiler does not have.
+Begin from examples/hello-crystal/crystal.pqo. Preserve its typed graph and one-million-cell, 100³ bounded field. Make the smallest compiler or Metal changes necessary, never hide the program in a Rust-only builder, and do not claim native coverage the compiler does not have.
 
-Prove it with loom check, loom explain, and a real loom run. Add a README explaining the rules, GPU passes, controls, and native/external boundary.</code></pre>
+Prove it with pqo check, pqo explain, and a real pqo run. Add a README explaining the rules, GPU passes, controls, and native/external boundary.</code></pre>
           </article>
 
           <article class="prompt-card reveal">
@@ -219,13 +218,13 @@ Prove it with loom check, loom explain, and a real loom run. Add a README explai
                 <span>Copy</span>
               </button>
             </div>
-            <pre><code id="prompt-tissue">You are an AI coding agent building a flagship Loom demo.
+            <pre><code id="prompt-tissue">You are an AI coding agent building a flagship Pqo demo.
 
-Create a CLI-runnable healing-tissue.loom where thousands of cells use local nutrient, injury, attachment, and repair rules. A visible lesion should close without storing a target shape.
+Create a CLI-runnable healing-tissue.pqo where thousands of cells use local nutrient, injury, attachment, and repair rules. A visible lesion should close without storing a target shape.
 
-Inspect the organism proof and compiler roadmap first. Extend native Loom coverage when the next gate is small and measurable; otherwise use an explicit Metal escape hatch with a differential test. Keep bounded resources and deterministic scheduling.
+Inspect the organism proof and compiler roadmap first. Extend native Pqo coverage when the next gate is small and measurable; otherwise use an explicit Metal escape hatch with a differential test. Keep bounded resources and deterministic scheduling.
 
-Done means the source passes loom check, its graph is inspectable with loom explain, loom healing-tissue.loom opens a Metal window, and the README states exactly what is generated versus handwritten.</code></pre>
+Done means the source passes pqo check, its graph is inspectable with pqo explain, pqo healing-tissue.pqo opens a Metal window, and the README states exactly what is generated versus handwritten.</code></pre>
           </article>
         </div>
       </section>
@@ -236,10 +235,10 @@ Done means the source passes loom check, its graph is inspectable with loom expl
           <p>THE IDEA</p>
         </div>
         <div class="manifesto-copy">
-          <h2>Most software describes the answer. Loom describes how the answer <em>comes to exist.</em></h2>
+          <h2>Most software describes the answer. Pqo describes how the answer <em>comes to exist.</em></h2>
           <p>
             A normal program often starts with a finished object, then moves or updates it.
-            Loom starts with small actors and local rules. The finished form is what happens
+            Pqo starts with small actors and local rules. The finished form is what happens
             when those rules run together, many times, in parallel.
           </p>
         </div>
@@ -258,8 +257,8 @@ Done means the source passes loom check, its graph is inspectable with loom expl
             </div>
             <p>Build the final object, then tell it what to do.</p>
           </article>
-          <article class="comparison-loom">
-            <span class="comparison-label">LOOM</span>
+          <article class="comparison-pqo">
+            <span class="comparison-label">PQO</span>
             <div class="comparison-diagram emergent">
               <div class="local-rules">
                 <i>+</i><i>↗</i><i>○</i>
@@ -277,7 +276,7 @@ Done means the source passes loom check, its graph is inspectable with loom expl
 
         <blockquote class="pull-quote reveal">
           <span>“</span>
-          <p>Loom does not draw the answer first. It runs the rules that create the answer.</p>
+          <p>Pqo does not draw the answer first. It runs the rules that create the answer.</p>
         </blockquote>
       </section>
 
@@ -328,7 +327,7 @@ Done means the source passes loom check, its graph is inspectable with loom expl
           </div>
           <p>
             Each student sees nearby people and chooses a path. Together they form lanes,
-            clusters, traffic jams, and flows. A Loom particle works the same way: local
+            clusters, traffic jams, and flows. A Pqo particle works the same way: local
             information in, local choice out, larger pattern over time.
           </p>
         </div>
@@ -347,7 +346,7 @@ Done means the source passes loom check, its graph is inspectable with loom expl
       <section class="mechanism" id="mechanism">
         <div class="section-marker">
           <span>03</span>
-          <p>HOW LOOM WORKS</p>
+          <p>HOW PQO WORKS</p>
         </div>
         <div class="mechanism-heading">
           <h2>Particles make choices. Fields carry information. Resolvers keep the world honest.</h2>
@@ -423,7 +422,7 @@ Done means the source passes loom check, its graph is inspectable with loom expl
             of stations, all preparing the same kind of step at once.
           </p>
           <p>
-            Loom keeps state on the GPU: it stores, updates, measures, and renders the
+            Pqo keeps state on the GPU: it stores, updates, measures, and renders the
             particles without hauling a million records back and forth every frame.
           </p>
         </div>
@@ -445,7 +444,7 @@ Done means the source passes loom check, its graph is inspectable with loom expl
             <p>CPU update <b>→</b> upload <b>→</b> render <b>→</b> repeat</p>
           </div>
           <div class="good-path">
-            <span>LOOM’S GPU-RESIDENT LOOP</span>
+            <span>PQO’S GPU-RESIDENT LOOP</span>
             <p>store <b>→</b> update <b>→</b> measure <b>→</b> render <b>↻</b></p>
           </div>
         </div>
@@ -459,17 +458,17 @@ Done means the source passes loom check, its graph is inspectable with loom expl
         <div class="language-grid">
           <div>
             <p class="eyebrow">A clear boundary builds trust</p>
-            <h2>Loom now writes its first GPU math. Metal remains the advanced escape hatch.</h2>
+            <h2>Pqo now writes its first GPU math. Metal remains the advanced escape hatch.</h2>
             <p>
-              Loom v0 is real, but it is not a finished general-purpose language. Native
-              Loom kernels now type-check scalar and vector arithmetic and generate Metal.
+              Pqo v0 is real, but it is not a finished general-purpose language. Native
+              Pqo kernels now type-check scalar and vector arithmetic and generate Metal.
               Complex kernels can still use explicit packaged Metal while the language grows.
             </p>
           </div>
           <div class="now-future reveal">
             <article>
               <span>NOW</span>
-              <h3>Loom compiles</h3>
+              <h3>Pqo compiles</h3>
               <ul>
                 <li>what exists</li><li>what runs</li><li>what may change</li>
                 <li>what depends on what</li><li>how much work executes</li>
@@ -479,9 +478,9 @@ Done means the source passes loom check, its graph is inspectable with loom expl
             <div class="future-arrow">→</div>
             <article class="future-card">
               <span>NOW GROWING</span>
-              <h3>Native Loom code</h3>
+              <h3>Native Pqo code</h3>
               <div class="compiler-flow">
-                <i>LOOM</i><b>→</b><i>COMPILER</i><b>→</b><i>METAL</i><b>→</b><i>GPU</i>
+                <i>PQO</i><b>→</b><i>COMPILER</i><b>→</b><i>METAL</i><b>→</b><i>GPU</i>
               </div>
               <p>The first end-to-end native kernel path now generates and executes GPU work.</p>
             </article>
@@ -501,7 +500,7 @@ Done means the source passes loom check, its graph is inspectable with loom expl
             <h2>Compact where repetition is cheap. Explicit where trust matters.</h2>
           </div>
           <p>
-            Loom keeps names, units, access modes, implementations, ordering, and dispatch
+            Pqo keeps names, units, access modes, implementations, ordering, and dispatch
             visible. An agent can author quickly without hiding what the program will do.
           </p>
         </div>
@@ -512,7 +511,7 @@ Done means the source passes loom check, its graph is inspectable with loom expl
             <h3>State, kernels, escape hatches, and flows stay visible in the source.</h3>
           </div>
           <p>
-            Loom syntax is optimized for agents to produce, inspect, and repair. Names,
+            Pqo syntax is optimized for agents to produce, inspect, and repair. Names,
             units, access modes, implementations, ordering, and dispatch stay visible.
           </p>
         </div>
@@ -529,7 +528,7 @@ Done means the source passes loom check, its graph is inspectable with loom expl
           </article>
 
           <article class="code-card code-card-acid reveal">
-            <div class="code-header"><span>02 / NATIVE KERNEL</span><i>Loom → Metal</i></div>
+            <div class="code-header"><span>02 / NATIVE KERNEL</span><i>Pqo → Metal</i></div>
             <pre><code><span class="kw">kernel</span> integrate(
   position: rw stream&lt;f32x3,m&gt;,
   velocity: rw stream&lt;f32x3,m/s&gt;,
@@ -568,11 +567,11 @@ Done means the source passes loom check, its graph is inspectable with loom expl
         <aside class="native-boundary reveal">
           <strong>What is native today?</strong>
           <p>
-            Integration is authored in Loom and generated into Metal. Ground contact and
+            Integration is authored in Pqo and generated into Metal. Ground contact and
             rendering are explicit Metal implementations packaged inside the installed
-            runtime. Loom never hides which path a kernel takes.
+            runtime. Pqo never hides which path a kernel takes.
           </p>
-          <a href="../../examples/hello-particle/hello-particle.agent.loom">Open the complete source <span>↗</span></a>
+          <a href="../../examples/hello-particle/hello-particle.agent.pqo">Open the complete source <span>↗</span></a>
         </aside>
       </section>
 
@@ -733,7 +732,7 @@ Done means the source passes loom check, its graph is inspectable with loom expl
           </div>
           <h2>“Make something cool” is not a specification.</h2>
           <p>
-            Loom is being designed so AI builders can reason about state, permissions,
+            Pqo is being designed so AI builders can reason about state, permissions,
             dependencies, costs, invariants, tests, and performance—not only appearance.
           </p>
           <blockquote>
@@ -793,7 +792,7 @@ Done means the source passes loom check, its graph is inspectable with loom expl
         </div>
         <div class="limits-grid">
           <div>
-            <h3>Loom is not yet…</h3>
+            <h3>Pqo is not yet…</h3>
             <ul>
               <li>a biologically exact simulator</li>
               <li>an atom-by-atom material model</li>
@@ -813,7 +812,7 @@ Done means the source passes loom check, its graph is inspectable with loom expl
             </ul>
           </div>
         </div>
-        <blockquote>Loom provides the machinery for emergent systems. It does not automatically discover the right rules.</blockquote>
+        <blockquote>Pqo provides the machinery for emergent systems. It does not automatically discover the right rules.</blockquote>
       </section>
 
       <section class="closing">
@@ -821,12 +820,12 @@ Done means the source passes loom check, its graph is inspectable with loom expl
         <p class="eyebrow">YOUR FIRST RULE IS ENOUGH</p>
         <h2>Start small. <em>See what grows.</em></h2>
         <p>
-          Install Loom, run a living example, then give your coding agent one clear
+          Install Pqo, run a living example, then give your coding agent one clear
           system to build. The language and validator will keep the result grounded.
         </p>
-        <a class="button button-light" href="#get-started">Build your first Loom program <span>↑</span></a>
+        <a class="button button-light" href="#get-started">Build your first Pqo program <span>↑</span></a>
         <div class="closing-line">
-          <span>LOOM / 2026</span>
+          <span>PQO / 2026</span>
           <span>Grow · organize · adapt · repair</span>
         </div>
       </section>
@@ -838,7 +837,7 @@ Done means the source passes loom check, its graph is inspectable with loom expl
           <path d="M22 4 38 13v18L22 40 6 31V13Z" />
           <circle cx="22" cy="22" r="5" />
         </svg>
-        <span>LOOM</span>
+        <span>PQO</span>
       </a>
       <p>A beginner-friendly guide to intelligent particles, GPU computing, artificial organisms, and agent-based programming.</p>
       <a href="#top">Back to top ↑</a>

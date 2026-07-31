@@ -373,7 +373,7 @@ section:not(.hero):not(.closing) {
   font-size: 9px;
   font-style: normal;
 }
-.comparison-loom { background: #eef6df; }
+.comparison-pqo { background: #eef6df; }
 .local-rules { display: flex; flex-direction: column; gap: 7px; }
 .local-rules i { width: 46px; color: var(--ink); background: var(--acid); border-color: var(--ink); font-size: 15px; }
 .emergent-shape { position: relative; width: 150px; height: 150px; }

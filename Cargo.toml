@@ -1,18 +1,17 @@
 [workspace]
 members = [
-    "crates/loom-cli",
-    "crates/loom-core",
-    "crates/loom-cuda",
-    "crates/loom-metal",
-    "crates/loom-ui-panel",
-    "crates/loom-syntax",
-    "crates/loom-validator",
-    "crates/loom-windowing",
+    "crates/pqo-cli",
+    "crates/pqo-core",
+    "crates/pqo-metal",
+    "crates/pqo-ui-panel",
+    "crates/pqo-syntax",
+    "crates/pqo-validator",
+    "crates/pqo-windowing",
 ]
 resolver = "2"
 
 [workspace.package]
-version = "0.1.18"
+version = "0.1.11"
 edition = "2024"
 license = "MIT"
 

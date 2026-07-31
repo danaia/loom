@@ -41,14 +41,14 @@ Matched 240-tick offscreen-rendered runs:
 
 | Runner | GPU mean | GPU p95 | CPU submission mean | CPU submission p95 |
 | --- | ---: | ---: | ---: | ---: |
-| Loom plan | 0.4153 ms | 0.4613 ms | 0.3252 ms | 0.4211 ms |
+| Pqo plan | 0.4153 ms | 0.4613 ms | 0.3252 ms | 0.4211 ms |
 | Direct Metal encoding | 0.4134 ms | 0.4568 ms | 0.3238 ms | 0.4079 ms |
 
 The mean CPU difference is about 0.0014 ms. At this workload the plan-driven path
 is effectively at the fixed-encoding control’s measurement floor. Longer,
 interleaved trials are still required before publishing a formal overhead ratio.
 
-The control shares Loom’s validated setup and initialized resources, then bypasses
+The control shares Pqo’s validated setup and initialized resources, then bypasses
 execution-plan traversal and typed binding lookup during each measured tick. This
 holds GPU work constant and isolates command encoding; it is not yet a wholly
 independent direct-Metal application.
@@ -80,7 +80,7 @@ work remains below 8.33 ms. A paced 120 Hz presented test is still required.
 
 Constructing the current one-million-particle graph peaked around 3.0–3.4 GB because
 initial stream contents are represented as expanded literal arrays. This is now a
-measured language/runtime issue: Loom needs compact, explicit initialization before
+measured language/runtime issue: Pqo needs compact, explicit initialization before
 the 1M path is considered production-clean.
 
 Resolved by the compact initializer milestone documented in

@@ -5,13 +5,13 @@
 
 ## Problem
 
-Loom needs a language agents enjoy using, but a full parser and prematurely frozen syntax could consume the project before the execution model is tested.
+Pqo needs a language agents enjoy using, but a full parser and prematurely frozen syntax could consume the project before the execution model is tested.
 
 At the same time, implementing Metal directly before agreeing on the agent's primary patterns would make the language a retrospective wrapper around runtime code.
 
 ## Decision
 
-Loom begins with:
+Pqo begins with:
 
 1. a language charter,
 2. a minimal canonical semantic graph,
@@ -21,7 +21,7 @@ Loom begins with:
 
 The first runtime milestone consumes that semantic graph and proves it end to end on Metal.
 
-The `.loom` block syntax in the Hello Particle specimen is a working projection, not yet a frozen grammar. Semantic meaning, identity, effects, and dependencies are locked before punctuation.
+The `.pqo` block syntax in the Hello Particle specimen is a working projection, not yet a frozen grammar. Semantic meaning, identity, effects, and dependencies are locked before punctuation.
 
 ## Rejected Alternatives
 
@@ -39,7 +39,7 @@ Rejected because particles do not cleanly model storage, kernels, render views, 
 
 ### Hide bindings and dependencies through inference
 
-Rejected because local convenience would obscure authority, effects, synchronization, and reproducibility. Loom may suggest missing declarations, but accepted programs contain explicit bindings and semantic dependency edges.
+Rejected because local convenience would obscure authority, effects, synchronization, and reproducibility. Pqo may suggest missing declarations, but accepted programs contain explicit bindings and semantic dependency edges.
 
 ## Consequences
 

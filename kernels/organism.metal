@@ -1,8 +1,8 @@
 #include <metal_stdlib>
 using namespace metal;
 
-constant uint LOOM_Q16 = 65536;
-constant uint LOOM_DECISION_MAX = 4095;
+constant uint PQO_Q16 = 65536;
+constant uint PQO_DECISION_MAX = 4095;
 
 inline uint field_index(float2 position, uint width) {
     const float2 normalized = clamp(position * 0.45f + 0.5f, 0.0f, 0.999999f);
@@ -32,7 +32,7 @@ inline float sample_field_bilinear(
 }
 
 inline uint decision_bin(float value, float maximum) {
-    return uint(round(clamp(value / maximum, 0.0f, 1.0f) * float(LOOM_DECISION_MAX)));
+    return uint(round(clamp(value / maximum, 0.0f, 1.0f) * float(PQO_DECISION_MAX)));
 }
 
 kernel void organism_sample(
@@ -162,10 +162,10 @@ kernel void organism_decide(
     divide_intent[index] = can_divide || regenerative_division ? 1 : 0;
     death_intent[index] = current_health == 2 || energy_bin[index] == 0 ? 1 : 0;
     repair_intent[index] = repair || regenerative_division ? 1u : 0u;
-    activator_deposit[index] = organizer ? LOOM_Q16 : LOOM_Q16 / 16;
-    inhibitor_deposit[index] = organizer ? LOOM_Q16 / 256 : LOOM_Q16 / 16;
+    activator_deposit[index] = organizer ? PQO_Q16 : PQO_Q16 / 16;
+    inhibitor_deposit[index] = organizer ? PQO_Q16 / 256 : PQO_Q16 / 16;
     injury_deposit[index] =
-        current_health == 1u && current_phase != 2u ? LOOM_Q16 / 32u : 0u;
+        current_health == 1u && current_phase != 2u ? PQO_Q16 / 32u : 0u;
 }
 
 inline bool fate_allowed(uint from, uint to) {
@@ -274,14 +274,14 @@ kernel void organism_resolve_state(
     age[index] += 1;
     const float previous_energy = energy[index];
     const float absorbed =
-        float(nutrient_bin[index]) / float(LOOM_DECISION_MAX) * 0.00978f;
+        float(nutrient_bin[index]) / float(PQO_DECISION_MAX) * 0.00978f;
     const float maintenance = 0.001f + previous_energy * 0.0022f;
     const float signaling =
         float(
             activator_deposit[index] +
             inhibitor_deposit[index] +
             injury_deposit[index]) /
-        float(LOOM_Q16) * 0.0001f;
+        float(PQO_Q16) * 0.0001f;
     const float decisions =
         float(
             divide_intent[index] +
@@ -356,7 +356,7 @@ kernel void organism_deposit(
             const bool saturated =
                 saturating_add(&activator[field], activator_amount[index] * weight / 16) |
                 saturating_add(&inhibitor[field], inhibitor_amount[index] * weight / 16) |
-                saturating_add(&density[field], LOOM_Q16 * weight / 16) |
+                saturating_add(&density[field], PQO_Q16 * weight / 16) |
                 saturating_add(&injury[field], injury_amount[index] * weight / 16);
             if (saturated) {
                 atomic_fetch_add_explicit(
@@ -388,7 +388,7 @@ inline float diffuse_channel(
         4.0f * center;
     return clamp(
         center + alpha * laplacian - decay * center +
-        float(deposit[index]) / float(LOOM_Q16),
+        float(deposit[index]) / float(PQO_Q16),
         0.0f, maximum);
 }
 
@@ -423,7 +423,7 @@ kernel void organism_diffuse(
     density_next[index] = diffuse_channel(
         density, density_deposit, index, width, 0.08f, 0.08f, 16.0f);
     const float local_consumption =
-        float(density_deposit[index]) / float(LOOM_Q16) * 0.00005f;
+        float(density_deposit[index]) / float(PQO_Q16) * 0.00005f;
     nutrient_next[index] = clamp(
         nutrient[index] +
         0.001f * (clamp(nutrient_supply[0], 0.0f, 1.0f) - nutrient[index]) -
@@ -788,8 +788,8 @@ kernel void organism_apply_lesion_cells(
     const long shell_squared = shell_radius * shell_radius;
     for (uint cell = 0; cell < active_count[0]; ++cell) {
         const float2 point = float3(position[cell]).xy;
-        const long x = long(round(point.x * float(LOOM_Q16))) - long(center_x_q16);
-        const long y = long(round(point.y * float(LOOM_Q16))) - long(center_y_q16);
+        const long x = long(round(point.x * float(PQO_Q16))) - long(center_x_q16);
+        const long y = long(round(point.y * float(PQO_Q16))) - long(center_y_q16);
         const long distance_squared = x * x + y * y;
         if (fate[cell] != 0u && distance_squared <= radius_squared) {
             health[cell] = 2u;
@@ -832,9 +832,9 @@ kernel void organism_apply_lesion_field(
         (float2(float(x) + 0.5f, float(y) + 0.5f) / float(width) - 0.5f) /
         0.45f;
     const long dx =
-        long(round(world.x * float(LOOM_Q16))) - long(center_x_q16);
+        long(round(world.x * float(PQO_Q16))) - long(center_x_q16);
     const long dy =
-        long(round(world.y * float(LOOM_Q16))) - long(center_y_q16);
+        long(round(world.y * float(PQO_Q16))) - long(center_y_q16);
     if (dx * dx + dy * dy <= long(radius_q16) * long(radius_q16)) {
         injury[index] = max(
             injury[index],
@@ -867,12 +867,12 @@ kernel void organism_reduce_lesion_occupancy(
     if (index >= active_count[0] || radius_q16[0] == 0u) return;
     const float2 point = float3(position[index]).xy;
     const long dx =
-        long(round(point.x * float(LOOM_Q16))) - long(center_q16[0]);
+        long(round(point.x * float(PQO_Q16))) - long(center_q16[0]);
     const long dy =
-        long(round(point.y * float(LOOM_Q16))) - long(center_q16[1]);
+        long(round(point.y * float(PQO_Q16))) - long(center_q16[1]);
     const long occupied_radius =
         long(radius_q16[0]) +
-        long(round(clamp(cell_radius[index], 0.0f, 1.0f) * float(LOOM_Q16)));
+        long(round(clamp(cell_radius[index], 0.0f, 1.0f) * float(PQO_Q16)));
     if (dx * dx + dy * dy <= occupied_radius * occupied_radius) {
         atomic_fetch_add_explicit(&region_occupancy[0], 1u, memory_order_relaxed);
     }
@@ -957,7 +957,7 @@ kernel void organism_audit_regeneration(
     const uint required_occupancy = (removed_count[0] * 9u + 9u) / 10u;
     constexpr ulong PI_Q16 = 205887ul;
     const ulong reference_area_scaled =
-        ulong(metric_max[3]) * ulong(LOOM_Q16) * ulong(LOOM_Q16) / PI_Q16;
+        ulong(metric_max[3]) * ulong(PQO_Q16) * ulong(PQO_Q16) / PI_Q16;
     const uint centroid_tolerance =
         max(1u, integer_sqrt(reference_area_scaled) / 10u);
     const bool injury_cleared =
@@ -991,8 +991,8 @@ kernel void organism_audit_regeneration(
     }
 }
 
-constant uint LOOM_RADIX_BUCKETS = 16;
-constant uint LOOM_SCAN_BLOCK = 256;
+constant uint PQO_RADIX_BUCKETS = 16;
+constant uint PQO_SCAN_BLOCK = 256;
 
 inline uint stable_id_digit(
     uint source,
@@ -1019,16 +1019,16 @@ kernel void organism_radix_histogram(
     uint local [[thread_index_in_threadgroup]],
     uint group [[threadgroup_position_in_grid]])
 {
-    threadgroup atomic_uint histogram[LOOM_RADIX_BUCKETS];
-    if (local < LOOM_RADIX_BUCKETS) {
+    threadgroup atomic_uint histogram[PQO_RADIX_BUCKETS];
+    if (local < PQO_RADIX_BUCKETS) {
         atomic_store_explicit(&histogram[local], 0u, memory_order_relaxed);
     }
     threadgroup_barrier(mem_flags::mem_threadgroup);
     const uint digit = stable_id_digit(order[global], stable_id, shift);
     atomic_fetch_add_explicit(&histogram[digit], 1u, memory_order_relaxed);
     threadgroup_barrier(mem_flags::mem_threadgroup);
-    if (local < LOOM_RADIX_BUCKETS) {
-        block_count[group * LOOM_RADIX_BUCKETS + local] =
+    if (local < PQO_RADIX_BUCKETS) {
+        block_count[group * PQO_RADIX_BUCKETS + local] =
             atomic_load_explicit(&histogram[local], memory_order_relaxed);
     }
 }
@@ -1041,10 +1041,10 @@ kernel void organism_radix_offsets(
 {
     if (index != 0) return;
     uint bucket_base = 0;
-    for (uint bucket = 0; bucket < LOOM_RADIX_BUCKETS; ++bucket) {
+    for (uint bucket = 0; bucket < PQO_RADIX_BUCKETS; ++bucket) {
         uint running = bucket_base;
         for (uint block = 0; block < block_count_value; ++block) {
-            const uint slot = block * LOOM_RADIX_BUCKETS + bucket;
+            const uint slot = block * PQO_RADIX_BUCKETS + bucket;
             offset[slot] = running;
             running += block_count[slot];
         }
@@ -1063,29 +1063,29 @@ kernel void organism_radix_scatter(
 {
     const uint source = input[global];
     const uint digit = stable_id_digit(source, stable_id, shift);
-    const uint block_start = group * LOOM_SCAN_BLOCK;
+    const uint block_start = group * PQO_SCAN_BLOCK;
     uint local_rank = 0;
     for (uint preceding = block_start; preceding < global; ++preceding) {
         local_rank += uint(stable_id_digit(input[preceding], stable_id, shift) == digit);
     }
     const uint destination =
-        offset[group * LOOM_RADIX_BUCKETS + digit] + local_rank;
+        offset[group * PQO_RADIX_BUCKETS + digit] + local_rank;
     output[destination] = source;
 }
 
-constant uint LOOM_SPATIAL_AXIS = 64;
-constant uint LOOM_SPATIAL_BINS = LOOM_SPATIAL_AXIS * LOOM_SPATIAL_AXIS;
-constant uint LOOM_BIN_CAPACITY = 128;
+constant uint PQO_SPATIAL_AXIS = 64;
+constant uint PQO_SPATIAL_BINS = PQO_SPATIAL_AXIS * PQO_SPATIAL_AXIS;
+constant uint PQO_BIN_CAPACITY = 128;
 
 inline uint spatial_key(float2 position) {
     const float2 normalized = clamp(position * 0.5f + 0.5f, 0.0f, 0.999999f);
-    const uint2 cell = uint2(normalized * float(LOOM_SPATIAL_AXIS));
-    return cell.y * LOOM_SPATIAL_AXIS + cell.x;
+    const uint2 cell = uint2(normalized * float(PQO_SPATIAL_AXIS));
+    return cell.y * PQO_SPATIAL_AXIS + cell.x;
 }
 
 inline int2 spatial_cell(float2 position) {
     const uint key = spatial_key(position);
-    return int2(int(key % LOOM_SPATIAL_AXIS), int(key / LOOM_SPATIAL_AXIS));
+    return int2(int(key % PQO_SPATIAL_AXIS), int(key / PQO_SPATIAL_AXIS));
 }
 
 inline float2 daughter_position(float2 parent, float radius, uint sector) {
@@ -1104,11 +1104,11 @@ inline float2 daughter_position(float2 parent, float radius, uint sector) {
 }
 
 inline int2 q16_position(float2 value) {
-    return int2(round(value * float(LOOM_Q16)));
+    return int2(round(value * float(PQO_Q16)));
 }
 
 inline uint q16_radius(float value) {
-    return uint(round(max(value, 0.0f) * float(LOOM_Q16)));
+    return uint(round(max(value, 0.0f) * float(PQO_Q16)));
 }
 
 inline bool quantized_overlap(float2 left_position, float left_radius,
@@ -1149,8 +1149,8 @@ kernel void organism_bin_living(
     if (index >= active_count[0]) return;
     const uint key = spatial_key(float3(position[index]).xy);
     const uint slot = atomic_fetch_add_explicit(&count[key], 1u, memory_order_relaxed);
-    if (slot < LOOM_BIN_CAPACITY) {
-        indices[key * LOOM_BIN_CAPACITY + slot] = index;
+    if (slot < PQO_BIN_CAPACITY) {
+        indices[key * PQO_BIN_CAPACITY + slot] = index;
     } else {
         atomic_fetch_add_explicit(&overflow[0], 1u, memory_order_relaxed);
     }
@@ -1162,8 +1162,8 @@ kernel void organism_sort_bins(
     const device uint* stable_id [[buffer(2)]],
     uint bin [[thread_position_in_grid]])
 {
-    const uint length = min(count[bin], LOOM_BIN_CAPACITY);
-    const uint base = bin * LOOM_BIN_CAPACITY;
+    const uint length = min(count[bin], PQO_BIN_CAPACITY);
+    const uint base = bin * PQO_BIN_CAPACITY;
     for (uint i = 1; i < length; ++i) {
         const uint candidate = indices[base + i];
         const uint candidate_id = stable_id[candidate];
@@ -1220,10 +1220,10 @@ kernel void organism_observe_neighbors(
     for (int y = -1; y <= 1; ++y) {
         for (int x = -1; x <= 1; ++x) {
             const int2 cell = center_bin + int2(x, y);
-            if (any(cell < 0) || any(cell >= int(LOOM_SPATIAL_AXIS))) continue;
-            const uint key = uint(cell.y) * LOOM_SPATIAL_AXIS + uint(cell.x);
-            const uint length = min(bin_count[key], LOOM_BIN_CAPACITY);
-            const uint base = key * LOOM_BIN_CAPACITY;
+            if (any(cell < 0) || any(cell >= int(PQO_SPATIAL_AXIS))) continue;
+            const uint key = uint(cell.y) * PQO_SPATIAL_AXIS + uint(cell.x);
+            const uint length = min(bin_count[key], PQO_BIN_CAPACITY);
+            const uint base = key * PQO_BIN_CAPACITY;
             for (uint item = 0; item < length; ++item) {
                 const uint other = bin_indices[base + item];
                 if (other == index || stable_id[other] == stable_id[index]) continue;
@@ -1263,8 +1263,8 @@ kernel void organism_observe_neighbors(
     neighbor_count[index] = perceived;
     contact_count[index] = contacts;
     surface_mask[index] = occupied_mask;
-    surface_exposure_bin[index] = exposed_sectors * LOOM_DECISION_MAX / 8u;
-    local_density_bin[index] = perceived * LOOM_DECISION_MAX / 64u;
+    surface_exposure_bin[index] = exposed_sectors * PQO_DECISION_MAX / 8u;
+    local_density_bin[index] = perceived * PQO_DECISION_MAX / 64u;
 }
 
 kernel void organism_initialize_components(
@@ -1302,10 +1302,10 @@ kernel void organism_relax_components(
     for (int y = -1; y <= 1; ++y) {
         for (int x = -1; x <= 1; ++x) {
             const int2 cell = center_bin + int2(x, y);
-            if (any(cell < 0) || any(cell >= int(LOOM_SPATIAL_AXIS))) continue;
-            const uint key = uint(cell.y) * LOOM_SPATIAL_AXIS + uint(cell.x);
-            const uint length = min(bin_count[key], LOOM_BIN_CAPACITY);
-            const uint base = key * LOOM_BIN_CAPACITY;
+            if (any(cell < 0) || any(cell >= int(PQO_SPATIAL_AXIS))) continue;
+            const uint key = uint(cell.y) * PQO_SPATIAL_AXIS + uint(cell.x);
+            const uint length = min(bin_count[key], PQO_BIN_CAPACITY);
+            const uint base = key * PQO_BIN_CAPACITY;
             for (uint item = 0; item < length; ++item) {
                 const uint other = bin_indices[base + item];
                 if (other == index) continue;
@@ -1382,12 +1382,12 @@ kernel void organism_reduce_morphology(
     const uint radius_q16 = q16_radius(radius[index]);
     const ulong radius_squared = ulong(radius_q16) * ulong(radius_q16);
     const uint cell_area_q16 =
-        uint((radius_squared * 205887ul) / (ulong(LOOM_Q16) * ulong(LOOM_Q16)));
+        uint((radius_squared * 205887ul) / (ulong(PQO_Q16) * ulong(PQO_Q16)));
     const uint circumference_q16 =
-        uint((ulong(radius_q16) * 411775ul) / ulong(LOOM_Q16));
+        uint((ulong(radius_q16) * 411775ul) / ulong(PQO_Q16));
     const uint exposed_perimeter_q16 =
         uint(ulong(circumference_q16) * ulong(surface_exposure_bin[index]) /
-             ulong(LOOM_DECISION_MAX));
+             ulong(PQO_DECISION_MAX));
     atomic_fetch_add_explicit(&area_q16[0], cell_area_q16, memory_order_relaxed);
     atomic_fetch_add_explicit(
         &perimeter_q16[0], exposed_perimeter_q16, memory_order_relaxed);
@@ -1418,8 +1418,8 @@ kernel void organism_finalize_morphology(
     const ulong perimeter_squared =
         ulong(perimeter_q16[0]) * ulong(perimeter_q16[0]);
     compactness_q16[0] = perimeter_squared == 0 ? 0u : uint(min(
-        (ulong(area_q16[0]) * 823550ul * ulong(LOOM_Q16)) / perimeter_squared,
-        ulong(LOOM_Q16)));
+        (ulong(area_q16[0]) * 823550ul * ulong(PQO_Q16)) / perimeter_squared,
+        ulong(PQO_Q16)));
 }
 
 kernel void organism_reduce_radial_density(
@@ -1503,14 +1503,14 @@ kernel void organism_prequalify_population(
         for (int y = -1; y <= 1 && !invalid; ++y) {
             for (int x = -1; x <= 1 && !invalid; ++x) {
                 const int2 cell = center + int2(x, y);
-                if (any(cell < 0) || any(cell >= int(LOOM_SPATIAL_AXIS))) continue;
-                const uint key = uint(cell.y) * LOOM_SPATIAL_AXIS + uint(cell.x);
-                const uint length = min(bin_count[key], LOOM_BIN_CAPACITY);
-                const uint base = key * LOOM_BIN_CAPACITY;
+                if (any(cell < 0) || any(cell >= int(PQO_SPATIAL_AXIS))) continue;
+                const uint key = uint(cell.y) * PQO_SPATIAL_AXIS + uint(cell.x);
+                const uint length = min(bin_count[key], PQO_BIN_CAPACITY);
+                const uint base = key * PQO_BIN_CAPACITY;
                 for (uint item = 0; item < length; ++item) {
                     const uint other = bin_indices[base + item];
                     if (other == index) continue;
-                    if (observed++ >= LOOM_BIN_CAPACITY) {
+                    if (observed++ >= PQO_BIN_CAPACITY) {
                         atomic_fetch_add_explicit(
                             &overflow[0], 1u, memory_order_relaxed);
                         return;
@@ -1577,8 +1577,8 @@ kernel void organism_bin_candidates(
         float3(position[index]).xy, radius[index], candidate_sector[index]);
     const uint key = spatial_key(candidate);
     const uint slot = atomic_fetch_add_explicit(&count[key], 1u, memory_order_relaxed);
-    if (slot < LOOM_BIN_CAPACITY) {
-        indices[key * LOOM_BIN_CAPACITY + slot] = index;
+    if (slot < PQO_BIN_CAPACITY) {
+        indices[key * PQO_BIN_CAPACITY + slot] = index;
     } else {
         atomic_fetch_add_explicit(&overflow[0], 1u, memory_order_relaxed);
     }
@@ -1610,14 +1610,14 @@ kernel void organism_resolve_candidate_conflicts(
     for (int y = -1; y <= 1 && !blocked; ++y) {
         for (int x = -1; x <= 1 && !blocked; ++x) {
             const int2 cell = center + int2(x, y);
-            if (any(cell < 0) || any(cell >= int(LOOM_SPATIAL_AXIS))) continue;
-            const uint key = uint(cell.y) * LOOM_SPATIAL_AXIS + uint(cell.x);
-            const uint length = min(bin_count[key], LOOM_BIN_CAPACITY);
-            const uint base = key * LOOM_BIN_CAPACITY;
+            if (any(cell < 0) || any(cell >= int(PQO_SPATIAL_AXIS))) continue;
+            const uint key = uint(cell.y) * PQO_SPATIAL_AXIS + uint(cell.x);
+            const uint length = min(bin_count[key], PQO_BIN_CAPACITY);
+            const uint base = key * PQO_BIN_CAPACITY;
             for (uint item = 0; item < length; ++item) {
                 const uint other = bin_indices[base + item];
                 if (other == index || stable_id[other] >= stable_id[index]) continue;
-                if (observed++ >= LOOM_BIN_CAPACITY) {
+                if (observed++ >= PQO_BIN_CAPACITY) {
                     exceeded = true;
                     blocked = true;
                     break;
@@ -1650,14 +1650,14 @@ kernel void organism_scan_population_blocks(
     uint local [[thread_index_in_threadgroup]],
     uint group [[threadgroup_position_in_grid]])
 {
-    threadgroup uint survival_scan[LOOM_SCAN_BLOCK];
-    threadgroup uint birth_scan[LOOM_SCAN_BLOCK];
+    threadgroup uint survival_scan[PQO_SCAN_BLOCK];
+    threadgroup uint birth_scan[PQO_SCAN_BLOCK];
     const bool active = global < active_count[0];
     const uint source = active ? order[global] : UINT_MAX;
     survival_scan[local] = active ? survival[source] : 0u;
     birth_scan[local] = active ? birth[source] : 0u;
     threadgroup_barrier(mem_flags::mem_threadgroup);
-    for (uint offset = 1; offset < LOOM_SCAN_BLOCK; offset <<= 1) {
+    for (uint offset = 1; offset < PQO_SCAN_BLOCK; offset <<= 1) {
         const uint survival_add = local >= offset ? survival_scan[local - offset] : 0u;
         const uint birth_add = local >= offset ? birth_scan[local - offset] : 0u;
         threadgroup_barrier(mem_flags::mem_threadgroup);
@@ -1667,7 +1667,7 @@ kernel void organism_scan_population_blocks(
     }
     survival_prefix[global] = survival_scan[local];
     birth_prefix[global] = birth_scan[local];
-    if (local + 1 == LOOM_SCAN_BLOCK) {
+    if (local + 1 == PQO_SCAN_BLOCK) {
         survival_block_sum[group] = survival_scan[local];
         birth_block_sum[group] = birth_scan[local];
     }
@@ -1681,12 +1681,12 @@ kernel void organism_scan_population_block_sums(
     constant uint& block_count [[buffer(4)]],
     uint local [[thread_index_in_threadgroup]])
 {
-    threadgroup uint survival_scan[LOOM_SCAN_BLOCK];
-    threadgroup uint birth_scan[LOOM_SCAN_BLOCK];
+    threadgroup uint survival_scan[PQO_SCAN_BLOCK];
+    threadgroup uint birth_scan[PQO_SCAN_BLOCK];
     survival_scan[local] = local < block_count ? survival_block_sum[local] : 0u;
     birth_scan[local] = local < block_count ? birth_block_sum[local] : 0u;
     threadgroup_barrier(mem_flags::mem_threadgroup);
-    for (uint offset = 1; offset < LOOM_SCAN_BLOCK; offset <<= 1) {
+    for (uint offset = 1; offset < PQO_SCAN_BLOCK; offset <<= 1) {
         const uint survival_add = local >= offset ? survival_scan[local - offset] : 0u;
         const uint birth_add = local >= offset ? birth_scan[local - offset] : 0u;
         threadgroup_barrier(mem_flags::mem_threadgroup);

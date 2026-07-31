@@ -93,7 +93,7 @@ perception, decisions, deposits, component labels, or reductions.
   injury below 5% of its post-lesion peak, bounded energy residual, and no
   overflow, truncation, or saturation.
 
-The backend-neutral reference implementation lives in `loom_core::emergent`.
+The backend-neutral reference implementation lives in `pqo_core::emergent`.
 Metal implementations are required to match its logical rules and declared
 tolerances.
 

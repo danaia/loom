@@ -1,0 +1,4 @@
+interface:
+  display_name: "Engineer Pqo Systems"
+  short_description: "Build and evolve validated Pqo GPU systems"
+  default_prompt: "Use $engineer-pqo-systems to build or evolve this Pqo system with explicit rules and validation evidence."

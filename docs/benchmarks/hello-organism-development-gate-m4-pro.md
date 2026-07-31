@@ -48,7 +48,7 @@ reference envelope: 24–48 cells
 ## Populated reference timing
 
 ```text
-cargo run --release -q -p loom-metal --bin hello-particle-view -- \
+cargo run --release -q -p pqo-metal --bin hello-particle-view -- \
   organism 1024 --bench headless --warmup 3200 --samples 100
 ```
 

@@ -20,7 +20,7 @@ parallel scatter, staged commit, and authoritative count publication together.
 ## Declared-Capacity Smoke Benchmark
 
 ```text
-cargo run -q -p loom-metal --bin hello-particle-view -- \
+cargo run -q -p pqo-metal --bin hello-particle-view -- \
   organism 16384 --bench headless --warmup 25 --samples 100
 ```
 

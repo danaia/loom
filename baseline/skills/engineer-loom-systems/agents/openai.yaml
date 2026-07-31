@@ -1,4 +1,0 @@
-interface:
-  display_name: "Engineer Loom Systems"
-  short_description: "Build and evolve validated Loom GPU systems"
-  default_prompt: "Use $engineer-loom-systems to build or evolve this Loom system with explicit rules and validation evidence."

@@ -6,7 +6,7 @@
 
 **Architecture:** Keep the existing GPU-resident shallow-water height field as the bulk solver. Render it as a continuous grid surface, derive surface-energy data on Metal, and use fixed-capacity GPU-resident pools for secondary foam, spray, and bubble particles. Do not introduce CPU/GPU simulation readback in the frame loop; rendering consumes simulation streams directly.
 
-**Tech Stack:** Loom 0.1 graphs and schedules, external Metal compute/render kernels, Rust project extension, Vue 3 control panel, `loom check`, `loom explain`, and the `loom-metal` headless benchmark.
+**Tech Stack:** Pqo 0.1 graphs and schedules, external Metal compute/render kernels, Rust project extension, Vue 3 control panel, `pqo check`, `pqo explain`, and the `pqo-metal` headless benchmark.
 
 ---
 
@@ -46,7 +46,7 @@
 - Strong impacts create bubbles that rise, expire, and contribute foam at the surface.
 - Reset clears all secondary effects deterministically.
 - All particle counts remain within declared capacities.
-- `loom check`, `loom explain`, Rust tests, UI build, package build, and the Metal execution test pass.
+- `pqo check`, `pqo explain`, Rust tests, UI build, package build, and the Metal execution test pass.
 - Measured FPS and GPU memory are recorded for each quality preset.
 
 ---
@@ -57,13 +57,13 @@
 
 **Files:**
 - Create during implementation: `examples/marble-water/PERFORMANCE.md`
-- Test: `crates/loom-metal/tests/native_loom.rs`
+- Test: `crates/pqo-metal/tests/native_pqo.rs`
 
 **Steps:**
 
-1. Run `cargo run -q -p loom-cli -- check examples/marble-water/marble-water.loom`; expect `status: valid`.
-2. Run `cargo run -q -p loom-cli -- explain examples/marble-water/marble-water.loom` and save the pass order, dispatch sizes, and resource allocations in `PERFORMANCE.md`.
-3. Run `cargo test -p loom-metal marble_water_compiles_and_executes_the_particle_simulation -- --nocapture`; expect the Metal program to compile and execute.
+1. Run `cargo run -q -p pqo-cli -- check examples/marble-water/marble-water.pqo`; expect `status: valid`.
+2. Run `cargo run -q -p pqo-cli -- explain examples/marble-water/marble-water.pqo` and save the pass order, dispatch sizes, and resource allocations in `PERFORMANCE.md`.
+3. Run `cargo test -p pqo-metal marble_water_compiles_and_executes_the_particle_simulation -- --nocapture`; expect the Metal program to compile and execute.
 4. Run the interactive project at minimum, default, and maximum density. Record presented FPS, Metal allocation, resolution, and observed artifacts.
 5. Capture the default scene, a moving wake, and a marble drop as visual regression references.
 6. Set the quality gate: no later phase may regress default-preset FPS by more than 10% without an explicit quality/performance tradeoff recorded in `PERFORMANCE.md`.
@@ -77,10 +77,10 @@
 **Objective:** Make the current water grid appear smooth before increasing simulation complexity.
 
 **Files:**
-- Modify: `examples/marble-water/marble-water.loom`
+- Modify: `examples/marble-water/marble-water.pqo`
 - Modify: `examples/marble-water/shaders/marble_water.metal`
 - Modify: `examples/marble-water/kernels/marble_water.metal`
-- Test: `crates/loom-metal/tests/native_loom.rs`
+- Test: `crates/pqo-metal/tests/native_pqo.rs`
 
 **Steps:**
 
@@ -106,7 +106,7 @@
 **Objective:** Produce stable physical signals for foam and spray emission instead of relying on random spawning.
 
 **Files:**
-- Modify: `examples/marble-water/marble-water.loom`
+- Modify: `examples/marble-water/marble-water.pqo`
 - Modify: `examples/marble-water/kernels/marble_water.metal`
 - Modify: `examples/marble-water/shaders/marble_water.metal`
 - Modify: `examples/marble-water/ui/src/App.vue`
@@ -119,7 +119,7 @@
 3. Define a bounded emission score from curvature, vertical speed, compression, and marble impact energy.
 4. Clamp and sanitize every diagnostic output; non-finite values must become zero.
 5. Add a temporary diagnostic render mode that visualizes normal, curvature, and emission score.
-6. Add a panel selector for the debug mode and route it through `src/runtime.rs` as a Loom override.
+6. Add a panel selector for the debug mode and route it through `src/runtime.rs` as a Pqo override.
 7. Verify calm water produces near-zero emission, moving marbles create narrow wake signals, and drops create localized high-energy regions.
 8. Remove or hide debug visualization from the normal quality preset while keeping it available for development.
 
@@ -134,7 +134,7 @@
 **Objective:** Produce coherent foam patches that follow wakes and impacts without requiring every foam feature to be an individual particle.
 
 **Files:**
-- Modify: `examples/marble-water/marble-water.loom`
+- Modify: `examples/marble-water/marble-water.pqo`
 - Modify: `examples/marble-water/kernels/marble_water.metal`
 - Modify: `examples/marble-water/shaders/marble_water.metal`
 - Modify: `examples/marble-water/ui/src/App.vue`
@@ -163,10 +163,10 @@
 **Objective:** Establish bounded GPU-side lifecycle infrastructure shared by spray and bubbles.
 
 **Files:**
-- Modify: `examples/marble-water/marble-water.loom`
+- Modify: `examples/marble-water/marble-water.pqo`
 - Modify: `examples/marble-water/kernels/marble_water.metal`
 - Modify: `examples/marble-water/shaders/marble_water.metal`
-- Test: `crates/loom-metal/tests/native_loom.rs`
+- Test: `crates/pqo-metal/tests/native_pqo.rs`
 
 **Steps:**
 
@@ -193,7 +193,7 @@
 **Objective:** Create detached splash droplets that leave and re-enter the base water surface.
 
 **Files:**
-- Modify: `examples/marble-water/marble-water.loom`
+- Modify: `examples/marble-water/marble-water.pqo`
 - Modify: `examples/marble-water/kernels/marble_water.metal`
 - Modify: `examples/marble-water/shaders/marble_water.metal`
 
@@ -220,7 +220,7 @@
 **Objective:** Represent entrained air beneath strong impacts and allow it to rise and pop into surface foam.
 
 **Files:**
-- Modify: `examples/marble-water/marble-water.loom`
+- Modify: `examples/marble-water/marble-water.pqo`
 - Modify: `examples/marble-water/kernels/marble_water.metal`
 - Modify: `examples/marble-water/shaders/marble_water.metal`
 - Modify: `examples/marble-water/ui/src/App.vue`
@@ -247,7 +247,7 @@
 **Objective:** Scale visual density in measured steps rather than assuming the highest particle count is fastest or best.
 
 **Files:**
-- Modify: `examples/marble-water/marble-water.loom`
+- Modify: `examples/marble-water/marble-water.pqo`
 - Modify: `examples/marble-water/ui/src/App.vue`
 - Modify: `examples/marble-water/src/runtime.rs`
 - Modify: `examples/marble-water/PERFORMANCE.md`
@@ -255,12 +255,12 @@
 **Steps:**
 
 1. Define Low, Medium, High, and Ultra presets covering active grid size, foam capacity/use, spray rate, bubble rate, and optional shader quality.
-2. Preserve fixed maximum capacities in the Loom graph; presets change active work and emission limits rather than reallocating every frame.
+2. Preserve fixed maximum capacities in the Pqo graph; presets change active work and emission limits rather than reallocating every frame.
 3. Start High at 512×384 and treat 512×512 as an Ultra candidate.
-4. Add preset selection to the panel and map it to explicit Loom constants through `src/runtime.rs`.
+4. Add preset selection to the panel and map it to explicit Pqo constants through `src/runtime.rs`.
 5. Test preset defaults and clamping in Rust.
 6. Benchmark every preset after warm-up and record FPS, GPU time if available, allocation, active counts, and dropped spawns.
-7. Inspect `loom explain` to confirm dispatch domains and resource hazards remain explicit.
+7. Inspect `pqo explain` to confirm dispatch domains and resource hazards remain explicit.
 8. Reduce overdraw, pass count, or effect capacity before reducing physical stability.
 9. Select the default preset that sustains the 60 FPS acceptance target on the M4 Pro reference machine.
 
@@ -275,7 +275,7 @@
 **Objective:** Recover performance without changing the physical model blindly.
 
 **Files:**
-- Modify as measurements require: `examples/marble-water/marble-water.loom`
+- Modify as measurements require: `examples/marble-water/marble-water.pqo`
 - Modify as measurements require: `examples/marble-water/kernels/marble_water.metal`
 - Modify as measurements require: `examples/marble-water/shaders/marble_water.metal`
 - Modify: `examples/marble-water/PERFORMANCE.md`
@@ -283,7 +283,7 @@
 **Steps:**
 
 1. Measure each compute and render pass separately using Metal command-buffer timestamps where available.
-2. Check whether the always-dispatched reset pass is measurable during normal ticks; make reset work conditional if Loom/runtime semantics permit it.
+2. Check whether the always-dispatched reset pass is measurable during normal ticks; make reset work conditional if Pqo/runtime semantics permit it.
 3. Check tiny marble pass overhead and fuse only passes whose dependency boundaries and tests remain clear.
 4. Inspect threadgroup occupancy, memory access patterns, branch divergence, atomic contention, and transparent overdraw.
 5. Keep neighborhood data contiguous and avoid duplicate height/normal sampling across adjacent passes when fusion is demonstrably beneficial.
@@ -304,19 +304,19 @@
 **Files:**
 - Modify: `examples/marble-water/README.md`
 - Modify: `examples/marble-water/PERFORMANCE.md`
-- Modify: `crates/loom-metal/tests/native_loom.rs`
+- Modify: `crates/pqo-metal/tests/native_pqo.rs`
 - Rebuild: `examples/marble-water/marble-water.lmp`
 
 **Steps:**
 
 1. Document the layered solver, secondary effects, controls, capacities, presets, and limitations in the README.
 2. Run `cargo fmt --check`.
-3. Run `cargo test -p loom-metal marble_water_compiles_and_executes_the_particle_simulation -- --nocapture`.
-4. Run `cargo run -q -p loom-cli -- check examples/marble-water/marble-water.loom`; expect `status: valid`.
-5. Run `cargo run -q -p loom-cli -- explain examples/marble-water/marble-water.loom`; inspect pass order, hazards, dispatch domains, and generated Metal.
+3. Run `cargo test -p pqo-metal marble_water_compiles_and_executes_the_particle_simulation -- --nocapture`.
+4. Run `cargo run -q -p pqo-cli -- check examples/marble-water/marble-water.pqo`; expect `status: valid`.
+5. Run `cargo run -q -p pqo-cli -- explain examples/marble-water/marble-water.pqo`; inspect pass order, hazards, dispatch domains, and generated Metal.
 6. Run `npm run build` in `examples/marble-water/ui`.
-7. Run `cargo run -q -p loom-cli -- build examples/marble-water/marble-water.loom`.
-8. Run `cargo run -q -p loom-cli -- check examples/marble-water/marble-water.lmp`; expect `status: valid`.
+7. Run `cargo run -q -p pqo-cli -- build examples/marble-water/marble-water.pqo`.
+8. Run `cargo run -q -p pqo-cli -- check examples/marble-water/marble-water.lmp`; expect `status: valid`.
 9. Run the packaged `.lmp`, exercise every preset/control, reset under peak load, and inspect foam/spray/bubble cleanup.
 10. Record final M4 Pro FPS, allocation, active counts, dropped spawns, and known limits in `PERFORMANCE.md`.
 

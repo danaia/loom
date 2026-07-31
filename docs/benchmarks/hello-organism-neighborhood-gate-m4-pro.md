@@ -21,7 +21,7 @@ label changes.
 ## Declared-Capacity Smoke Benchmark
 
 ```text
-cargo run -q -p loom-metal --bin hello-particle-view -- \
+cargo run -q -p pqo-metal --bin hello-particle-view -- \
   organism 16384 --bench headless --warmup 10 --samples 50
 ```
 

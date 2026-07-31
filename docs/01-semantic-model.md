@@ -1,10 +1,10 @@
-# Loom Core Semantic Model
+# Pqo Core Semantic Model
 
-This document defines the primary patterns agents use to construct Loom programs. It describes semantics, not final punctuation.
+This document defines the primary patterns agents use to construct Pqo programs. It describes semantics, not final punctuation.
 
 ## The Composition Loop
 
-Every Loom program follows the same loop:
+Every Pqo program follows the same loop:
 
 ```text
 module
@@ -40,7 +40,7 @@ Domain concepts such as spaces, boundaries, materials, and cameras are typed val
 
 A stream is one logical field over an indexed population:
 
-```loom
+```pqo
 stream particles.position: vec3<f32> unit m {
   capacity 1
   storage device_private
@@ -71,13 +71,13 @@ The initial layout model is structure-of-arrays by construction. Each stream is 
 
 Capacity counts logical elements:
 
-```loom
+```pqo
 capacity 1024
 ```
 
 Buffering counts physical versions used for safe overlap:
 
-```loom
+```pqo
 buffering 3
 ```
 
@@ -103,7 +103,7 @@ or reduction. Reach is never inferred from a length mismatch.
 
 Values are immutable and may be scalar, vector, matrix, struct, handle, or compile-time expression:
 
-```loom
+```pqo
 value world.gravity: vec3<f32> unit m/s^2 = [0.0, -9.81, 0.0]
 value ground.height: f32 unit m = 0.0
 ```
@@ -114,7 +114,7 @@ Values do not imply global kernel access. They must still be bound into a pass.
 
 A kernel declares typed slots and their effects:
 
-```loom
+```pqo
 kernel integrate {
   slot position: stream<vec3<f32>, m> read_write
   slot velocity: stream<vec3<f32>, m/s> read_write
@@ -140,13 +140,13 @@ The access mode is semantic:
 
 The implementation cannot legally access anything outside the declared slots and granted capabilities.
 
-Version 0 may use external Metal implementations. A portable Loom kernel-body language is a separate decision and is not required to lock the primary composition patterns.
+Version 0 may use external Metal implementations. A portable Pqo kernel-body language is a separate decision and is not required to lock the primary composition patterns.
 
 ## Pattern 3 — Bind an Invocation
 
 A pass supplies every kernel slot and chooses a dispatch domain:
 
-```loom
+```pqo
 pass fall uses integrate {
   bind position = particles.position
   bind velocity = particles.velocity
@@ -175,7 +175,7 @@ compiled pipeline.
 
 A schedule composes passes and views:
 
-```loom
+```pqo
 schedule simulation fixed 120 Hz {
   run fall
   run bounce after fall
@@ -191,15 +191,15 @@ schedule simulation fixed 120 Hz {
 - render and inspection see a permitted version,
 - and the backend can realize the schedule.
 
-The Metal backend may realize an edge with command order, an encoder boundary, a memory barrier, a fence, or an event. That choice is not part of target-neutral Loom semantics.
+The Metal backend may realize an edge with command order, an encoder boundary, a memory barrier, a fence, or an event. That choice is not part of target-neutral Pqo semantics.
 
-A fixed schedule publishes immutable, typed schedule values such as `simulation.fixed_dt`. These values are part of the graph, appear in `loom explain`, and still require an explicit pass binding. They are not ambient kernel globals.
+A fixed schedule publishes immutable, typed schedule values such as `simulation.fixed_dt`. These values are part of the graph, appear in `pqo explain`, and still require an explicit pass binding. They are not ambient kernel globals.
 
 ### Timing and overload
 
 Timing policy belongs to the schedule:
 
-```loom
+```pqo
 schedule simulation fixed 120 Hz {
   catch_up at_most 4 ticks
   tick_overlap serialize_conflicting_ticks
@@ -212,13 +212,13 @@ schedule simulation fixed 120 Hz {
 }
 ```
 
-The policy states exactly which truth is preserved under load. Loom never silently stretches a fixed timestep.
+The policy states exactly which truth is preserved under load. Pqo never silently stretches a fixed timestep.
 
 ## Pattern 5 — State a Contract
 
 Contracts name claims and their scope:
 
-```loom
+```pqo
 contract realtime on simulation {
   steady_state after initialization {
     heap_allocations_per_tick == 0
@@ -243,7 +243,7 @@ Initialization and explicitly requested inspection are not silently included in 
 
 A scenario defines reproducible evidence:
 
-```loom
+```pqo
 scenario drop_and_bounce {
   reset to initial
   run simulation for 5 s
@@ -273,7 +273,7 @@ Scenario comparisons have defined operators and typed operands. Natural-language
 
 A view reads authoritative state without becoming that state:
 
-```loom
+```pqo
 view viewport render {
   read position = particles.position
   read radius = particles.radius
@@ -292,7 +292,7 @@ Render, inspector, telemetry, and debug projections share the same rule: they de
 
 Operations that cross the ordinary declared dataflow require a named capability:
 
-```loom
+```pqo
 capability inspect_particle_state {
   allow inspect particles.position particles.velocity
   delivery asynchronous
@@ -336,7 +336,7 @@ The semantic graph has:
 
 Unknown required fields are errors. Unknown optional fields may be retained only when the schema declares round-trip preservation safe.
 
-`.loom` printing is deterministic. `.loomb` serialization is deterministic for identical hermetic inputs and compiler identity.
+`.pqo` printing is deterministic. `.pqob` serialization is deterministic for identical hermetic inputs and compiler identity.
 
 ## Version 0 Type Surface
 
@@ -386,7 +386,7 @@ Version 0 rejects:
 
 ## Primary Agent Rhythm
 
-An agent should be able to approach any Loom task with the same questions:
+An agent should be able to approach any Pqo task with the same questions:
 
 1. What state and immutable values exist?
 2. What transformations are legal?

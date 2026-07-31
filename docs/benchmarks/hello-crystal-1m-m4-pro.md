@@ -6,7 +6,7 @@ This is a short execution proof for the first Hello Crystal vertical slice, not 
 sustained performance baseline.
 
 ```text
-cargo run --release -p loom-metal --bin hello-particle-view -- \
+cargo run --release -p pqo-metal --bin hello-particle-view -- \
   crystal 1m --bench headless --warmup 1 --samples 3
 ```
 

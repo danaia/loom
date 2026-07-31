@@ -82,5 +82,5 @@ implementation is committed, run:
 ./scripts/benchmark-hello-batch-clean.sh 1m presented 30 60 4
 ```
 
-The runner refuses a dirty source tree and alternates Loom/direct-Metal ordering.
+The runner refuses a dirty source tree and alternates Pqo/direct-Metal ordering.
 Commit result files separately before using them as release evidence.

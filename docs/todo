@@ -8,7 +8,7 @@ Here's what I found after a thorough scan of the codebase:
 
     Refactoring Opportunities
 
-    1. Giant spec files in loom-core/src/ (highest impact)
+    1. Giant spec files in pqo-core/src/ (highest impact)
 
     Problem: Four files are all enormous and follow an identical pattern:
 
@@ -30,7 +30,7 @@ Here's what I found after a thorough scan of the codebase:
     - A SpecSpec trait or builder pattern to eliminate the repetition
     - Move packaged_metal_implementation to a shared location
 
-    2. loom-core/src/builder.rs (1705 lines)
+    2. pqo-core/src/builder.rs (1705 lines)
 
     Problem: ModuleBuilder is huge but mostly a fluent builder with 10+ collection fields. The ModuleGraph has 10+ graph types
     (KernelGraph, PassGraph, ScheduleGraph, etc.) that all have identical Deref<[T]> + IntoIterator boilerplate (see model.rs:64-123).
@@ -39,7 +39,7 @@ Here's what I found after a thorough scan of the codebase:
     - Extract a Graph<T> generic wrapper that handles Deref + IntoIterator once instead of repeating it 3+ times
     - Consider whether the fluent builder needs 10 separate Vec fields — could be Vec<GraphItem> with an enum, or a more generic collection
 
-    3. loom-core/src/model.rs (732 lines)
+    3. pqo-core/src/model.rs (732 lines)
 
     Problem: One file with 20+ types — ModuleGraph, ResourceGraph, KernelGraph, PassGraph, ScheduleGraph, DataType, ScalarType,
     Unit, Literal, ValueNode, StreamNode, KernelNode, SlotNode, KernelAbi, PassNode, Binding, ViewNode, ScheduleNode,
@@ -51,14 +51,14 @@ Here's what I found after a thorough scan of the codebase:
     - model/nodes.rs — ValueNode, StreamNode, KernelNode, SlotNode, PassNode, ViewNode, ScheduleNode
     - model/abi.rs — KernelAbi, DispatchIndex, ThreadgroupBehavior, AliasingRule, BackendImplementation, Backend
 
-    4. loom-validator/src/lib.rs (2674 lines)
+    4. pqo-validator/src/lib.rs (2674 lines)
 
     Problem: 12 validation passes all in one file. Each pass is a distinct concern (structural refs, types, resource access, capacity,
     bindings, hazards, schedule DAG, buffer versions, backend ABI, observation points, determinism, fingerprint).
 
     Opportunity: Split into modules:
 
-    loom-validator/
+    pqo-validator/
       src/
         lib.rs          — entry, Validator struct, orchestration
         structural.rs   — pass 1
@@ -75,7 +75,7 @@ Here's what I found after a thorough scan of the codebase:
         fingerprint.rs  — pass 12
 
 
-    5. loom-syntax/src/lib.rs (1852 lines)
+    5. pqo-syntax/src/lib.rs (1852 lines)
 
     Problem: Lexer, parser, and lowerer all in one file. The lex function alone is hundreds of lines with manual byte-level parsing.
 
@@ -84,7 +84,7 @@ Here's what I found after a thorough scan of the codebase:
     - parser.rs — AST construction
     - lower.rs — lowering to ModuleGraph
 
-    6. loom-ui-panel/src/main.rs (1666 lines)
+    6. pqo-ui-panel/src/main.rs (1666 lines)
 
     Problem: Tauri app with chat DB management, OpenAI agent integration, keychain access, hot-reload, GPU telemetry, window management, and
     IPC all in one file.
@@ -108,12 +108,12 @@ Here's what I found after a thorough scan of the codebase:
 
     Priority ranking
 
-    1. loom-validator split — biggest file, cleanest boundaries (12 distinct passes)
-    2. loom-core model.rs split — 732 lines of mixed concerns, clean domain boundaries
-    3. loom-core spec file dedup — organism/emergent/crystal/worm share ~400 lines of duplicated helpers
-    4. loom-syntax split — lexer/parser/lowerer are naturally separate
-    5. loom-ui-panel split — large but more risky (Tauri interop)
-    6. loom-core builder.rs — big but the current structure works; lower urgency
+    1. pqo-validator split — biggest file, cleanest boundaries (12 distinct passes)
+    2. pqo-core model.rs split — 732 lines of mixed concerns, clean domain boundaries
+    3. pqo-core spec file dedup — organism/emergent/crystal/worm share ~400 lines of duplicated helpers
+    4. pqo-syntax split — lexer/parser/lowerer are naturally separate
+    5. pqo-ui-panel split — large but more risky (Tauri interop)
+    6. pqo-core builder.rs — big but the current structure works; lower urgency
     7. Graph<T> generic — nice-to-have, eliminates boilerplate but lower impact
 
     Want me to write a detailed plan for any of these?

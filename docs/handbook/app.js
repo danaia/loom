@@ -295,7 +295,7 @@ async function copyCode(button) {
       if (label) label.textContent = "Copy";
     }, 1800);
   } catch (error) {
-    console.warn("Loom handbook could not copy text", error);
+    console.warn("Pqo handbook could not copy text", error);
   }
 }
 

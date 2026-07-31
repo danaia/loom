@@ -1,6 +1,6 @@
-# Loom Graph Trust Boundary
+# Pqo Graph Trust Boundary
 
-Loom treats every deserialized, parsed, or agent-edited `ModuleGraph` as untrusted.
+Pqo treats every deserialized, parsed, or agent-edited `ModuleGraph` as untrusted.
 
 ```text
 Untrusted ModuleGraph
