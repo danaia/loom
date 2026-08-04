@@ -15,6 +15,11 @@ h1 { font-size:25px; margin:7px 0 0; font-weight:560; }
 label { display:grid; grid-template-columns:1fr auto; gap:8px; margin:0 0 25px; color:#b8cbd5; font-size:13px; }
 output { color:#eafaff; font-variant-numeric:tabular-nums; }
 input { grid-column:1 / -1; width:100%; accent-color:#54c8f4; }
+.layers { margin:-2px 0 25px; color:#b8cbd5; font-size:13px; }
+.layers > span { display:block; margin-bottom:10px; }
+.layers > div { display:flex; gap:16px; }
+.layers label { display:flex; align-items:center; gap:7px; color:#d7eaf2; cursor:pointer; }
+.layers input { width:auto; margin:0; }
 .telemetry { margin:34px 0 24px; padding:17px; border:1px solid #243943; border-radius:12px; background:#0c151a; display:grid; gap:12px; }
 .telemetry div { display:flex; justify-content:space-between; font-size:12px; }
 .telemetry span { color:#708a98; }

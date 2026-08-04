@@ -17,6 +17,11 @@ PQO_HEADLESS_TICKS=240 PQO_INSPECT_STREAM=field.phase \
   pqo run crystal-cuda.pqo --target cuda-headless
 ```
 
-Drag the crystal to orbit and scroll to zoom. The panel controls growth,
-anisotropy, temperature, and visible damage. The current desktop renderer is
+Drag across the crystal to make a cleavage cut; drag the background to orbit,
+and scroll to zoom. The specimen grows toward the selected growth target, and
+cuts visibly heal after a short interval. The panel controls growth,
+anisotropy, temperature, visible damage, and whether to render the continuous
+field, its particle-cell representation, or both. The particle-count slider
+controls display density (10,000 to 1,000,000); the CUDA simulation remains a
+fixed 100³ field. The current desktop renderer is
 Tauri/WebGL; zero-copy Vulkan presentation remains the next backend step.
