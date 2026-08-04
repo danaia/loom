@@ -9,8 +9,8 @@ use raw_window_handle::{
     HasRawDisplayHandle, HasRawWindowHandle, RawDisplayHandle, RawWindowHandle,
 };
 use winit::{
-    dpi::PhysicalSize,
-    event::{Event, WindowEvent},
+    dpi::{PhysicalPosition, PhysicalSize},
+    event::{ElementState, Event, MouseButton, MouseScrollDelta, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
     platform::run_return::EventLoopExtRunReturn,
     window::WindowBuilder,
@@ -67,6 +67,8 @@ pub fn run_native_window_with_controls(
         .ok()
         .and_then(|value| value.parse::<u64>().ok());
     let mut presented_frames = 0_u64;
+    let mut orbiting = false;
+    let mut last_cursor: Option<PhysicalPosition<f64>> = None;
 
     event_loop.run_return(|event, _, control_flow| {
         *control_flow = ControlFlow::Poll;
@@ -94,6 +96,51 @@ pub fn run_native_window_with_controls(
                 event: WindowEvent::CloseRequested,
                 ..
             } => *control_flow = ControlFlow::Exit,
+            Event::WindowEvent {
+                event:
+                    WindowEvent::MouseInput {
+                        state,
+                        button: MouseButton::Left,
+                        ..
+                    },
+                ..
+            } => {
+                orbiting = state == ElementState::Pressed;
+                if !orbiting {
+                    last_cursor = None;
+                }
+            }
+            Event::WindowEvent {
+                event: WindowEvent::CursorMoved { position, .. },
+                ..
+            } => {
+                if orbiting {
+                    if let Some(previous) = last_cursor {
+                        renderer.orbit(
+                            (position.x - previous.x) as f32 * 0.008,
+                            (position.y - previous.y) as f32 * 0.008,
+                        );
+                    }
+                    last_cursor = Some(position);
+                }
+            }
+            Event::WindowEvent {
+                event: WindowEvent::MouseWheel { delta, .. },
+                ..
+            } => {
+                let amount = match delta {
+                    MouseScrollDelta::LineDelta(_, vertical) => vertical * 0.12,
+                    MouseScrollDelta::PixelDelta(position) => position.y as f32 * 0.001,
+                };
+                renderer.zoom(amount);
+            }
+            Event::WindowEvent {
+                event: WindowEvent::Focused(false),
+                ..
+            } => {
+                orbiting = false;
+                last_cursor = None;
+            }
             _ => {}
         }
     });
@@ -137,6 +184,9 @@ struct CrystalControls {
     show_field: f32,
     show_particles: f32,
     particle_count: f32,
+    yaw: f32,
+    pitch: f32,
+    zoom: f32,
 }
 
 impl Default for CrystalControls {
@@ -150,6 +200,9 @@ impl Default for CrystalControls {
             show_field: 1.0,
             show_particles: 0.0,
             particle_count: 1_000_000.0,
+            yaw: -0.55,
+            pitch: -0.35,
+            zoom: 1.0,
         }
     }
 }
@@ -167,8 +220,23 @@ impl CrystalControls {
             "crystal.show_field" => self.show_field = if value >= 0.5 { 1.0 } else { 0.0 },
             "crystal.show_particles" => self.show_particles = if value >= 0.5 { 1.0 } else { 0.0 },
             "crystal.particle_count" => self.particle_count = value.clamp(10_000.0, 1_000_000.0),
+            "crystal.yaw" => self.yaw = value,
+            "crystal.pitch" => self.pitch = value.clamp(-1.45, 1.45),
+            "crystal.zoom" => self.zoom = value.clamp(0.55, 2.5),
+            "crystal.orbit_delta_yaw" => self.orbit(value, 0.0),
+            "crystal.orbit_delta_pitch" => self.orbit(0.0, value),
+            "crystal.zoom_delta" => self.zoom(value),
             _ => {}
         }
+    }
+
+    fn orbit(&mut self, delta_yaw: f32, delta_pitch: f32) {
+        self.yaw += delta_yaw;
+        self.pitch = (self.pitch + delta_pitch).clamp(-1.45, 1.45);
+    }
+
+    fn zoom(&mut self, amount: f32) {
+        self.zoom = (self.zoom * amount.exp()).clamp(0.55, 2.5);
     }
 }
 
@@ -481,6 +549,14 @@ impl NativeRenderer {
         self.controls.set(name, value);
     }
 
+    fn orbit(&mut self, delta_yaw: f32, delta_pitch: f32) {
+        self.controls.orbit(delta_yaw, delta_pitch);
+    }
+
+    fn zoom(&mut self, amount: f32) {
+        self.controls.zoom(amount);
+    }
+
     unsafe fn draw(&mut self) -> Result<(), String> {
         unsafe {
             self.device
@@ -731,6 +807,9 @@ mod tests {
         controls.set("crystal.show_field", 0.0);
         controls.set("crystal.show_particles", 1.0);
         controls.set("crystal.particle_count", 250_000.0);
+        controls.set("crystal.yaw", 1.2);
+        controls.set("crystal.pitch", 9.0);
+        controls.set("crystal.zoom", 0.1);
         assert_eq!(controls.growth, 0.41);
         assert_eq!(controls.anisotropy, 1.0);
         assert_eq!(controls.temperature, 0.0);
@@ -738,5 +817,14 @@ mod tests {
         assert_eq!(controls.show_field, 0.0);
         assert_eq!(controls.show_particles, 1.0);
         assert_eq!(controls.particle_count, 250_000.0);
+        assert_eq!(controls.yaw, 1.2);
+        assert_eq!(controls.pitch, 1.45);
+        assert_eq!(controls.zoom, 0.55);
+        controls.set("crystal.orbit_delta_yaw", 0.25);
+        controls.set("crystal.orbit_delta_pitch", -4.0);
+        controls.set("crystal.zoom_delta", 4.0);
+        assert_eq!(controls.yaw, 1.45);
+        assert_eq!(controls.pitch, -1.45);
+        assert_eq!(controls.zoom, 2.5);
     }
 }

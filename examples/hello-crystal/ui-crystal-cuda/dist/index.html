@@ -20,6 +20,20 @@
           <label><input id="show_particles" type="checkbox" /> Particles</label>
         </div>
       </section>
+      <section class="camera" aria-label="Camera controls">
+        <div class="camera__heading"><span>Camera</span><small>Drag the 3D window · Wheel to zoom</small></div>
+        <div class="camera__orbit">
+          <button data-camera="pitch" data-delta="-0.12" aria-label="Orbit up">↑</button>
+          <button data-camera="yaw" data-delta="-0.12" aria-label="Orbit left">←</button>
+          <button id="reset_camera" aria-label="Reset camera">Reset view</button>
+          <button data-camera="yaw" data-delta="0.12" aria-label="Orbit right">→</button>
+          <button data-camera="pitch" data-delta="0.12" aria-label="Orbit down">↓</button>
+        </div>
+        <div class="camera__zoom">
+          <button data-camera="zoom" data-delta="-0.15">− Zoom out</button>
+          <button data-camera="zoom" data-delta="0.15">Zoom in +</button>
+        </div>
+      </section>
       <label>Particle display count <output id="particle_countOut">1,000,000</output><input id="particle_count" type="range" min="10000" max="1000000" step="10000" value="1000000" /></label>
       <section class="telemetry">
         <div><span>Compute</span><strong>CUDA sm_120</strong></div>

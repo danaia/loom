@@ -11,6 +11,9 @@ layout(push_constant) uniform Frame {
     float show_field;
     float show_particles;
     float particle_count;
+    float yaw;
+    float pitch;
+    float zoom;
 } frame;
 
 mat2 rotate2(float angle) {
@@ -19,8 +22,8 @@ mat2 rotate2(float angle) {
 }
 
 float crystal_shape(vec3 point, float growth) {
-    point.yz = rotate2(-0.35) * point.yz;
-    point.xz = rotate2(-0.55) * point.xz;
+    point.yz = rotate2(frame.pitch) * point.yz;
+    point.xz = rotate2(frame.yaw) * point.xz;
     point.xz = rotate2(0.39) * point.xz;
     vec3 absolute_point = abs(point);
     float cube = max(absolute_point.x, max(absolute_point.y, absolute_point.z));
@@ -39,7 +42,7 @@ vec3 crystal_normal(vec3 point, float growth) {
 
 void main() {
     vec2 point_uv = vec2(uv.x * 1.35, -uv.y);
-    vec3 ray_origin = vec3(0.0, 0.0, 2.8);
+    vec3 ray_origin = vec3(0.0, 0.0, 2.8 / frame.zoom);
     vec3 ray_direction = normalize(vec3(point_uv, -1.7));
     float growth = frame.growth;
     float distance_along_ray = 0.0;

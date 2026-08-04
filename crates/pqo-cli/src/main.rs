@@ -919,6 +919,9 @@ fn serve_linux_panel(
         ("crystal.show_field".to_owned(), 1.0_f32),
         ("crystal.show_particles".to_owned(), 0.0_f32),
         ("crystal.particle_count".to_owned(), 1_000_000.0_f32),
+        ("crystal.yaw".to_owned(), -0.55_f32),
+        ("crystal.pitch".to_owned(), -0.35_f32),
+        ("crystal.zoom".to_owned(), 1.0_f32),
     ]);
     write_linux_snapshot(&mut stream, &values)?;
     for line in lines {

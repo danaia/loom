@@ -8,6 +8,9 @@ const controls = {
   particle_count: { value: 1000000, digits: 0 },
   show_field: { value: 1 },
   show_particles: { value: 0 },
+  yaw: { value: -.55, digits: 2 },
+  pitch: { value: -.35, digits: 2 },
+  zoom: { value: 1, digits: 2 },
 }
 
 function renderValue(name, value) {
@@ -36,6 +39,18 @@ for (const name of ['show_field', 'show_particles']) {
   })
 }
 
+for (const button of document.querySelectorAll('[data-camera]')) {
+  button.addEventListener('click', () => {
+    const name = button.dataset.camera
+    const bridgeName = name === 'yaw' ? 'orbit_delta_yaw' : name === 'pitch' ? 'orbit_delta_pitch' : 'zoom_delta'
+    invoke('set_control', { name: `crystal.${bridgeName}`, value: Number(button.dataset.delta) })
+  })
+}
+
+document.querySelector('#reset_camera').addEventListener('click', () => {
+  for (const [name, value] of Object.entries({ yaw: -.55, pitch: -.35, zoom: 1 })) send(name, value)
+})
+
 document.querySelector('#reset').addEventListener('click', () => {
   for (const [name, value] of Object.entries({
     growth: .72,
@@ -45,10 +60,13 @@ document.querySelector('#reset').addEventListener('click', () => {
     particle_count: 1000000,
     show_field: 1,
     show_particles: 0,
+    yaw: -.55,
+    pitch: -.35,
+    zoom: 1,
   })) {
     const element = document.querySelector(`#${name}`)
-    if (element.type === 'checkbox') element.checked = value === 1
-    else element.value = value
+    if (element?.type === 'checkbox') element.checked = value === 1
+    else if (element) element.value = value
     send(name, value)
   }
 })
@@ -64,8 +82,8 @@ async function connect() {
         const value = Number(rawValue)
         controls[name].value = value
         const element = document.querySelector(`#${name}`)
-        if (element.type === 'checkbox') element.checked = value >= .5
-        else element.value = value
+        if (element?.type === 'checkbox') element.checked = value >= .5
+        else if (element) element.value = value
         renderValue(name, value)
       }
     }
