@@ -11,6 +11,18 @@ Left-drag directly in the Vulkan window to orbit the crystal. Use the mouse
 wheel or a trackpad scroll gesture to zoom. The Tauri panel also provides orbit,
 zoom, and reset-view buttons for precise camera adjustments.
 
+The CUDA simulation also builds a GPU-resident spatial hierarchy every tick:
+
+- 15,625 leaf clusters covering 4³ cells each,
+- occupancy and visibility metadata in shared-presentation streams,
+- GPU-selected detail classes and active counts,
+- six reusable hierarchy levels in the engine plan,
+- automatic distance LOD with a user-adjustable detail bias.
+
+The hierarchy represents one million cells with under 256 KiB of planning
+metadata. The same planner bounds the hierarchy metadata for a cubic
+one-billion-element world to under 36 MiB when using 8³ leaf clusters.
+
 Run it on Linux with CUDA 12.8+ and an NVIDIA Blackwell-compatible driver:
 
 ```sh

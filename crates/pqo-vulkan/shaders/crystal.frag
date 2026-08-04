@@ -14,6 +14,8 @@ layout(push_constant) uniform Frame {
     float yaw;
     float pitch;
     float zoom;
+    float smart_lod;
+    float lod_bias;
 } frame;
 
 mat2 rotate2(float angle) {
@@ -69,6 +71,8 @@ void main() {
     float lattice = 0.5 + 0.5 * sin((point.x * 73.0 + point.y * 41.0 - point.z * 57.0) * 8.0);
     color *= 0.82 + 0.18 * lattice;
     float density = pow(max(frame.particle_count, 1.0), 1.0 / 3.0);
+    float automatic_scale = frame.zoom < 0.75 ? 0.25 : frame.zoom < 1.2 ? 0.5 : 1.0;
+    density *= mix(1.0, automatic_scale, frame.smart_lod) * exp2(frame.lod_bias);
     vec3 cell = fract((point + vec3(1.5)) * density) - 0.5;
     float particle = 1.0 - smoothstep(0.11, 0.24, length(cell));
     if (frame.show_field < 0.5 && (frame.show_particles < 0.5 || particle < 0.12)) {

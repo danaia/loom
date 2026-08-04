@@ -1,6 +1,7 @@
 #![cfg(target_os = "linux")]
 
 use std::{
+    collections::BTreeSet,
     ffi::{CStr, CString, c_char, c_int, c_uint, c_void},
     fs,
     path::{Path, PathBuf},
@@ -248,6 +249,7 @@ pub struct CudaInspection {
     pub bytes: usize,
     pub fnv1a64: String,
     pub first_f32: Option<f32>,
+    pub first_u32: Option<u32>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -384,12 +386,16 @@ fn compile_combined_cubin(
     nvcc: &Path,
 ) -> Result<PathBuf, String> {
     let mut source = String::new();
+    let mut seen_sources = BTreeSet::new();
     for kernel in &validated.graph().kernels {
         let implementation = kernel
             .implementations
             .iter()
             .find(|implementation| implementation.backend == Backend::Cuda)
             .ok_or_else(|| format!("kernel `{}` has no CUDA implementation", kernel.name))?;
+        if !seen_sources.insert(implementation.source.clone()) {
+            continue;
+        }
         let text = if let Some(text) = &implementation.source_text {
             text.clone()
         } else {
@@ -733,11 +739,14 @@ unsafe fn execute_in_context(
         });
         let first_f32 = (resource.element_type == DataType::f32() && snapshot.len() >= 4)
             .then(|| f32::from_le_bytes(snapshot[0..4].try_into().unwrap()));
+        let first_u32 = (resource.element_type == DataType::u32() && snapshot.len() >= 4)
+            .then(|| u32::from_le_bytes(snapshot[0..4].try_into().unwrap()));
         Some(CudaInspection {
             stream: name.clone(),
             bytes,
             fnv1a64: format!("{hash:016x}"),
             first_f32,
+            first_u32,
         })
     } else {
         None

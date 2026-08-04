@@ -25,6 +25,34 @@ stream field.temperature: f32 {
   cap=1000000 len=1000000 buffers=1 access=rw storage=device
 }
 
+// Leaf clusters are 4³ cells. These compact shared-presentation streams are
+// the first level of the GPU world hierarchy consumed by future indirect draw.
+stream hierarchy.cluster_population: u32 {
+  cap=15625 len=15625 buffers=1 access=rw storage=device domain=shared_presentation
+}
+
+stream hierarchy.cluster_lod: u32 {
+  cap=15625 len=15625 buffers=1 access=rw storage=device domain=shared_presentation
+}
+
+stream hierarchy.cluster_visible: u32 {
+  cap=15625 len=15625 buffers=1 access=rw storage=device domain=shared_presentation
+}
+
+stream hierarchy.active_lod_counts: u32 {
+  cap=4 len=4 buffers=1 access=rw storage=device domain=shared_presentation
+}
+
+kernel crystal_clear_hierarchy(
+  cluster_population: rw stream<u32>,
+  cluster_lod: rw stream<u32>,
+  cluster_visible: rw stream<u32>,
+  active_lod_counts: rw all stream<u32>
+) extern cuda {
+  source="kernels/crystal-cuda.cu"
+  entry="crystal_clear_hierarchy"
+}
+
 kernel crystal_step(
   phase: rw stream<f32>,
   solute: rw stream<f32>,
@@ -35,6 +63,24 @@ kernel crystal_step(
   entry="crystal_step"
 }
 
+kernel crystal_finalize_hierarchy(
+  cluster_population: rw stream<u32>,
+  cluster_lod: rw stream<u32>,
+  cluster_visible: rw stream<u32>,
+  active_lod_counts: atomic all stream<u32>,
+  tick: in all stream<u32>
+) extern cuda {
+  source="kernels/crystal-cuda.cu"
+  entry="crystal_finalize_hierarchy"
+}
+
+pass clear_hierarchy = crystal_clear_hierarchy(
+  cluster_population=hierarchy.cluster_population
+  cluster_lod=hierarchy.cluster_lod
+  cluster_visible=hierarchy.cluster_visible
+  active_lod_counts=hierarchy.active_lod_counts
+) over hierarchy.cluster_population
+
 pass evolve = crystal_step(
   phase=field.phase
   solute=field.solute
@@ -42,6 +88,16 @@ pass evolve = crystal_step(
   tick=simulation.tick
 ) over field.phase
 
+pass finalize_hierarchy = crystal_finalize_hierarchy(
+  cluster_population=hierarchy.cluster_population
+  cluster_lod=hierarchy.cluster_lod
+  cluster_visible=hierarchy.cluster_visible
+  active_lod_counts=hierarchy.active_lod_counts
+  tick=simulation.tick
+) over hierarchy.cluster_population
+
 flow simulation rate=30hz {
-  evolve
+  clear_hierarchy
+    -> evolve
+    -> finalize_hierarchy
 }

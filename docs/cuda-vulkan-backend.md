@@ -26,6 +26,8 @@ an evidence record, not a claim that all renderer gates are complete.
   selection, swapchain, synchronization2 barriers, and dynamic-rendering frame
   submission. `pqo run --target cuda-vulkan` now uses this path and does not
   launch the Tauri/WebGL panel.
+- Reusable cubic world-hierarchy planning plus CUDA leaf-cluster occupancy,
+  visibility, LOD classification, and active-LOD counters for the crystal.
 
 ## Not complete yet
 

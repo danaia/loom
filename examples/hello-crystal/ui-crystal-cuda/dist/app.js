@@ -11,6 +11,8 @@ const controls = {
   yaw: { value: -.55, digits: 2 },
   pitch: { value: -.35, digits: 2 },
   zoom: { value: 1, digits: 2 },
+  smart_lod: { value: 1 },
+  lod_bias: { value: 0, digits: 1 },
 }
 
 function renderValue(name, value) {
@@ -27,13 +29,13 @@ function send(name, value) {
   invoke('set_control', { name: `crystal.${name}`, value })
 }
 
-for (const name of ['growth', 'anisotropy', 'temperature', 'damage', 'particle_count']) {
+for (const name of ['growth', 'anisotropy', 'temperature', 'damage', 'particle_count', 'lod_bias']) {
   document.querySelector(`#${name}`).addEventListener('input', event => {
     send(name, Number(event.target.value))
   })
 }
 
-for (const name of ['show_field', 'show_particles']) {
+for (const name of ['show_field', 'show_particles', 'smart_lod']) {
   document.querySelector(`#${name}`).addEventListener('change', event => {
     send(name, event.target.checked ? 1 : 0)
   })
@@ -63,6 +65,8 @@ document.querySelector('#reset').addEventListener('click', () => {
     yaw: -.55,
     pitch: -.35,
     zoom: 1,
+    smart_lod: 1,
+    lod_bias: 0,
   })) {
     const element = document.querySelector(`#${name}`)
     if (element?.type === 'checkbox') element.checked = value === 1

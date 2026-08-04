@@ -22,6 +22,11 @@ input { grid-column:1 / -1; width:100%; accent-color:#54c8f4; }
 .camera__zoom { display:grid; grid-template-columns:1fr 1fr; gap:7px; margin-top:7px; }
 .camera button { min-width:0; border:1px solid #315567; border-radius:7px; padding:7px 5px; color:#d8f5ff; background:#102732; cursor:pointer; }
 .camera button:hover { background:#153440; }
+.lod { margin:-3px 0 23px; padding:12px 13px; border-left:2px solid #315567; background:#0b1419; }
+.lod > label:first-child { display:flex; align-items:center; gap:7px; margin-bottom:12px; color:#d7eaf2; font-size:12px; }
+.lod > label:first-child input { width:auto; margin:0; }
+.lod > label:last-child { display:grid; grid-template-columns:1fr auto; gap:7px; color:#b8cbd5; font-size:12px; }
+.lod > label:last-child input { grid-column:1 / -1; }
 .telemetry { margin:30px 0 22px; padding:16px; border:1px solid #243943; border-radius:12px; background:#0c151a; display:grid; gap:11px; }
 .telemetry div { display:flex; justify-content:space-between; gap:16px; font-size:12px; }
 .telemetry span { color:#708a98; }

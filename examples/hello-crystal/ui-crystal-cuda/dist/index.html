@@ -35,9 +35,15 @@
         </div>
       </section>
       <label>Particle display count <output id="particle_countOut">1,000,000</output><input id="particle_count" type="range" min="10000" max="1000000" step="10000" value="1000000" /></label>
+      <section class="lod" aria-label="Level of detail controls">
+        <label><input id="smart_lod" type="checkbox" checked /> Smart distance LOD</label>
+        <label>Detail bias <output id="lod_biasOut">0.0</output><input id="lod_bias" type="range" min="-2" max="2" step="0.5" value="0" /></label>
+      </section>
       <section class="telemetry">
         <div><span>Compute</span><strong>CUDA sm_120</strong></div>
         <div><span>Simulation</span><strong>100³ cells</strong></div>
+        <div><span>World hierarchy</span><strong>6 levels</strong></div>
+        <div><span>Leaf clusters</span><strong>15,625</strong></div>
         <div><span>3D renderer</span><strong>Native Vulkan</strong></div>
         <div><span>Control bridge</span><strong id="status">Connecting</strong></div>
       </section>

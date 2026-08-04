@@ -922,6 +922,8 @@ fn serve_linux_panel(
         ("crystal.yaw".to_owned(), -0.55_f32),
         ("crystal.pitch".to_owned(), -0.35_f32),
         ("crystal.zoom".to_owned(), 1.0_f32),
+        ("crystal.smart_lod".to_owned(), 1.0_f32),
+        ("crystal.lod_bias".to_owned(), 0.0_f32),
     ]);
     write_linux_snapshot(&mut stream, &values)?;
     for line in lines {
