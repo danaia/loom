@@ -7,6 +7,10 @@ no browser or WebGL compositor. A separate Tauri control window sends growth,
 anisotropy, temperature, damage, field/particle visibility, and particle-count
 updates to the native Vulkan render loop.
 
+The Crystal instances stress-test slider expands the specimen into an exact
+1–1,000-instance evenly spaced square grid. Vulkan evaluates compact grid
+blocks in the scene shader rather than issuing a separate draw call per copy.
+
 Left-drag directly in the Vulkan window to orbit the crystal. Use the mouse
 wheel or a trackpad scroll gesture to zoom. The Tauri panel also provides orbit,
 zoom, and reset-view buttons for precise camera adjustments.

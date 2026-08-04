@@ -4,6 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Pqo Vulkan Crystal Controls</title>
+    <link rel="icon" href="data:," />
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
@@ -35,6 +36,11 @@
         </div>
       </section>
       <label>Particle display count <output id="particle_countOut">1,000,000</output><input id="particle_count" type="range" min="10000" max="1000000" step="10000" value="1000000" /></label>
+      <section class="stress" aria-label="Crystal instance stress test">
+        <div><span>Crystal instances</span><output id="instance_countOut">1</output></div>
+        <input id="instance_count" type="range" min="1" max="1000" step="1" value="1" />
+        <small>GPU stress test · evenly spaced square grid</small>
+      </section>
       <section class="lod" aria-label="Level of detail controls">
         <label><input id="smart_lod" type="checkbox" checked /> Smart distance LOD</label>
         <label>Detail bias <output id="lod_biasOut">0.0</output><input id="lod_bias" type="range" min="-2" max="2" step="0.5" value="0" /></label>

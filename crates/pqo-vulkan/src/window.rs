@@ -189,6 +189,7 @@ struct CrystalControls {
     zoom: f32,
     smart_lod: f32,
     lod_bias: f32,
+    instance_count: f32,
 }
 
 impl Default for CrystalControls {
@@ -207,6 +208,7 @@ impl Default for CrystalControls {
             zoom: 1.0,
             smart_lod: 1.0,
             lod_bias: 0.0,
+            instance_count: 1.0,
         }
     }
 }
@@ -232,6 +234,7 @@ impl CrystalControls {
             "crystal.zoom_delta" => self.zoom(value),
             "crystal.smart_lod" => self.smart_lod = if value >= 0.5 { 1.0 } else { 0.0 },
             "crystal.lod_bias" => self.lod_bias = value.clamp(-2.0, 2.0),
+            "crystal.instance_count" => self.instance_count = value.round().clamp(1.0, 1_000.0),
             _ => {}
         }
     }
@@ -818,6 +821,7 @@ mod tests {
         controls.set("crystal.zoom", 0.1);
         controls.set("crystal.smart_lod", 0.0);
         controls.set("crystal.lod_bias", 3.0);
+        controls.set("crystal.instance_count", 537.4);
         assert_eq!(controls.growth, 0.41);
         assert_eq!(controls.anisotropy, 1.0);
         assert_eq!(controls.temperature, 0.0);
@@ -830,6 +834,7 @@ mod tests {
         assert_eq!(controls.zoom, 0.55);
         assert_eq!(controls.smart_lod, 0.0);
         assert_eq!(controls.lod_bias, 2.0);
+        assert_eq!(controls.instance_count, 537.0);
         controls.set("crystal.orbit_delta_yaw", 0.25);
         controls.set("crystal.orbit_delta_pitch", -4.0);
         controls.set("crystal.zoom_delta", 4.0);

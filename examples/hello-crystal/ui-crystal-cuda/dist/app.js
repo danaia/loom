@@ -13,12 +13,13 @@ const controls = {
   zoom: { value: 1, digits: 2 },
   smart_lod: { value: 1 },
   lod_bias: { value: 0, digits: 1 },
+  instance_count: { value: 1, digits: 0 },
 }
 
 function renderValue(name, value) {
   const output = document.querySelector(`#${name}Out`)
   if (!output) return
-  output.value = name === 'particle_count'
+  output.value = name === 'particle_count' || name === 'instance_count'
     ? Math.round(value).toLocaleString()
     : Number(value).toFixed(controls[name].digits)
 }
@@ -29,7 +30,7 @@ function send(name, value) {
   invoke('set_control', { name: `crystal.${name}`, value })
 }
 
-for (const name of ['growth', 'anisotropy', 'temperature', 'damage', 'particle_count', 'lod_bias']) {
+for (const name of ['growth', 'anisotropy', 'temperature', 'damage', 'particle_count', 'instance_count', 'lod_bias']) {
   document.querySelector(`#${name}`).addEventListener('input', event => {
     send(name, Number(event.target.value))
   })
@@ -67,6 +68,7 @@ document.querySelector('#reset').addEventListener('click', () => {
     zoom: 1,
     smart_lod: 1,
     lod_bias: 0,
+    instance_count: 1,
   })) {
     const element = document.querySelector(`#${name}`)
     if (element?.type === 'checkbox') element.checked = value === 1
