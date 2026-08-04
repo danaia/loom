@@ -17,6 +17,7 @@ pub enum DiagnosticCode {
     InvalidLiteral,
     InvalidInitialData,
     AccessViolation,
+    InvalidResourceDomain,
     MissingWriteAuthority,
     InvalidMembershipAuthority,
     InvalidIntervention,

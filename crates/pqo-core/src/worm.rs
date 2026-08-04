@@ -79,7 +79,7 @@ pub fn hello_worm_builder() -> ModuleBuilder {
         .collect::<Vec<_>>();
 
     let mut builder = ModuleBuilder::new("hello_worm")
-        .target(Target::Metal)
+        .target(Target::metal())
         .value(ValueDraft::constant(
             "interaction.drop_x",
             f32t.clone(),

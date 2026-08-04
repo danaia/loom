@@ -86,7 +86,7 @@ pub fn hello_particle_builder(config: HelloParticleConfig) -> ModuleBuilder {
     let color_scale = 1.0 / particle_count.max(1) as f32;
 
     ModuleBuilder::new(config.module_name)
-        .target(Target::Metal)
+        .target(Target::metal())
         .value(ValueDraft::constant(
             "world.gravity",
             vec3.clone(),
@@ -400,7 +400,7 @@ kernel void population_reset_age(
 "#;
 
     ModuleBuilder::new("hello_population")
-        .target(Target::Metal)
+        .target(Target::metal())
         .value(ValueDraft::constant(
             "population.reset_age",
             DataType::u32(),
@@ -569,7 +569,7 @@ kernel void commit_field(
 "#;
 
     let mut builder = ModuleBuilder::new("hello_field")
-        .target(Target::Metal)
+        .target(Target::metal())
         .value(ValueDraft::constant(
             "field.alpha",
             DataType::f32(),

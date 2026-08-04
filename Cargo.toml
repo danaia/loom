@@ -2,6 +2,8 @@
 members = [
     "crates/pqo-cli",
     "crates/pqo-core",
+    "crates/pqo-cuda",
+    "crates/pqo-vulkan",
     "crates/pqo-metal",
     "crates/pqo-ui-panel",
     "crates/pqo-syntax",

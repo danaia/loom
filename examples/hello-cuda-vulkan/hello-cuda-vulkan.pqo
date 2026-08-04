@@ -1,0 +1,42 @@
+pqo 0.1
+module hello_cuda_vulkan
+targets [cuda-vulkan, cuda-headless]
+
+const acceleration: f32<m/s^2> = 9.81
+
+stream velocity: f32<m/s> {
+  cap=1024
+  len=1024
+  buffers=2
+  access=rw
+  storage=device
+  domain=compute_private
+}
+
+kernel accelerate(
+  velocity: rw stream<f32,m/s>,
+  acceleration: in value<f32,m/s^2>,
+  dt: in value<f32,s>
+) each i {
+  velocity[i] += acceleration * dt;
+}
+
+pass step = accelerate(
+  velocity=velocity
+  acceleration=acceleration
+  dt=simulation.fixed_dt
+) over velocity
+
+view viewport(velocity=velocity) implementations {
+  extern glsl {
+    vertex_source="shaders/triangle.vert"
+    vertex_entry="main"
+    fragment_source="shaders/triangle.frag"
+    fragment_entry="main"
+  }
+}
+
+flow simulation rate=120hz {
+  step
+  draw viewport after step
+}

@@ -7,7 +7,7 @@ use crate::ids::*;
 pub struct ModuleGraph {
     pub schema_version: u32,
     pub name: String,
-    pub target: Target,
+    pub target: TargetPolicy,
     pub resources: ResourceGraph,
     pub kernels: KernelGraph,
     pub passes: PassGraph,
@@ -46,8 +46,106 @@ impl ModuleGraph {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Target {
+pub enum TargetPolicy {
+    Portable,
+    Profiles(Vec<TargetProfile>),
+}
+
+/// Backwards-compatible name for the source-level target policy.
+pub type Target = TargetPolicy;
+
+impl TargetPolicy {
+    pub fn single(profile: TargetProfile) -> Self {
+        Self::Profiles(vec![profile])
+    }
+
+    pub fn supports(&self, profile: &TargetProfile) -> bool {
+        match self {
+            Self::Portable => true,
+            Self::Profiles(profiles) => profiles.contains(profile),
+        }
+    }
+}
+
+impl TargetPolicy {
+    pub fn metal() -> Self {
+        Self::single(TargetProfile::metal())
+    }
+
+    pub fn cuda_vulkan() -> Self {
+        Self::single(TargetProfile::cuda_vulkan())
+    }
+
+    pub fn cuda_headless() -> Self {
+        Self::single(TargetProfile::cuda_headless())
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct TargetProfile {
+    pub platform: PlatformTarget,
+    pub compute: ComputeBackend,
+    pub view: ViewBackend,
+}
+
+impl TargetProfile {
+    pub const fn metal() -> Self {
+        Self {
+            platform: PlatformTarget::MacOsArm64,
+            compute: ComputeBackend::Metal,
+            view: ViewBackend::Metal,
+        }
+    }
+
+    pub const fn cuda_vulkan() -> Self {
+        Self {
+            platform: PlatformTarget::LinuxX86_64,
+            compute: ComputeBackend::Cuda,
+            view: ViewBackend::Vulkan,
+        }
+    }
+
+    pub const fn cuda_headless() -> Self {
+        Self {
+            platform: PlatformTarget::LinuxX86_64,
+            compute: ComputeBackend::Cuda,
+            view: ViewBackend::Headless,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum PlatformTarget {
+    MacOsArm64,
+    LinuxX86_64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum ComputeBackend {
     Metal,
+    Cuda,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum ViewBackend {
+    Metal,
+    Vulkan,
+    Headless,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum BackendRequirements {
+    Metal {
+        minimum_gpu_family: Option<u16>,
+    },
+    Cuda {
+        minimum_compute_capability: Option<(u16, u16)>,
+    },
+    Vulkan {
+        minimum_api_version: (u16, u16),
+        required_extensions: Vec<String>,
+        required_features: Vec<String>,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -251,6 +349,7 @@ pub struct StreamNode {
     pub length: StreamLength,
     pub buffering: u32,
     pub storage: StorageClass,
+    pub domain: ResourceDomain,
     pub access: ResourceAccess,
     pub write_authority: Option<CapabilityId>,
     pub initial: Option<StreamInitializer>,
@@ -287,6 +386,13 @@ pub enum StreamLength {
 pub enum StorageClass {
     DevicePrivate,
     HostShared,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ResourceDomain {
+    ComputePrivate,
+    SharedPresentation,
+    HostVisibleControl,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -391,14 +497,66 @@ pub enum AliasingRule {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BackendImplementation {
     pub backend: Backend,
+    pub source_format: SourceFormat,
+    pub artifact_format: ArtifactFormat,
+    pub stage: Option<ShaderStage>,
     pub source: String,
     pub entry: String,
+    pub entry_points: Vec<String>,
     pub source_text: Option<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum Backend {
     Metal,
+    Cuda,
+    Vulkan,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum SourceFormat {
+    NativePqo,
+    MetalSl,
+    CudaCpp,
+    Glsl,
+    SpirV,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum ArtifactFormat {
+    Source,
+    MetalLibrary,
+    Cubin,
+    Ptx,
+    SpirV,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum ShaderStage {
+    Vertex,
+    Fragment,
+}
+
+impl BackendImplementation {
+    pub fn normalize_entry_points(mut self) -> Self {
+        if self.entry_points.is_empty() && !self.entry.is_empty() {
+            self.entry_points.push(self.entry.clone());
+        }
+        self
+    }
+
+    pub fn is_complete(&self) -> bool {
+        !self.source.trim().is_empty()
+            && !self.entry_points.is_empty()
+            && self
+                .entry_points
+                .iter()
+                .all(|entry| !entry.trim().is_empty())
+            && self
+                .source_text
+                .as_ref()
+                .is_none_or(|source| !source.trim().is_empty())
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -436,7 +594,7 @@ pub struct ViewNode {
     pub name: String,
     pub reads: Vec<ViewRead>,
     pub state: ViewState,
-    pub implementation: BackendImplementation,
+    pub implementations: Vec<BackendImplementation>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

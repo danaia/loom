@@ -7,16 +7,20 @@ DIST_DIR="${PQO_DIST_DIR:-${REPO_ROOT}/target/dist}"
 HOST_OS="$(uname -s)"
 HOST_ARCH="$(uname -m)"
 
-if [[ "${HOST_OS}" != "Darwin" ]]; then
-  echo "error: Pqo runtime packages currently require macOS and Metal" >&2
-  exit 1
-fi
-
-if [[ "${HOST_ARCH}" != "arm64" ]]; then
-  echo "error: Pqo release packages require Apple Silicon (arm64)" >&2
-  exit 1
-fi
-PACKAGE_ARCH="arm64"
+case "${HOST_OS}:${HOST_ARCH}" in
+  Darwin:arm64)
+    PACKAGE_PLATFORM="darwin"
+    PACKAGE_ARCH="arm64"
+    ;;
+  Linux:x86_64)
+    PACKAGE_PLATFORM="linux"
+    PACKAGE_ARCH="x86_64"
+    ;;
+  *)
+    echo "error: Pqo runtime packages support macOS/Apple Silicon or Linux/x86_64 with NVIDIA CUDA" >&2
+    exit 1
+    ;;
+esac
 
 VERSION="$(
   sed -n '/^\[workspace\.package\]/,/^\[/s/^version = "\([^"]*\)"/\1/p' \
@@ -27,7 +31,7 @@ if [[ -z "${VERSION}" ]]; then
   exit 1
 fi
 
-ASSET_NAME="pqo-darwin-${PACKAGE_ARCH}"
+ASSET_NAME="pqo-${PACKAGE_PLATFORM}-${PACKAGE_ARCH}"
 ARCHIVE_PATH="${DIST_DIR}/${ASSET_NAME}.tar.gz"
 STAGING_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/pqo-package.XXXXXX")"
 PACKAGE_ROOT="${STAGING_ROOT}/pqo"
@@ -44,6 +48,8 @@ mkdir -p \
   "${PACKAGE_ROOT}/bin" \
   "${PACKAGE_ROOT}/baseline" \
   "${PACKAGE_ROOT}/examples" \
+  "${PACKAGE_ROOT}/examples/kernels" \
+  "${PACKAGE_ROOT}/examples/ui-crystal-cuda/dist" \
   "${PACKAGE_ROOT}/share/pqo/docs/releases"
 
 install -m 0755 "${REPO_ROOT}/target/release/pqo" "${PACKAGE_ROOT}/bin/pqo"
@@ -64,6 +70,27 @@ install -m 0644 \
   "${REPO_ROOT}/examples/hello-crystal/crystal.pqo" \
   "${PACKAGE_ROOT}/examples/crystal.pqo"
 install -m 0644 \
+  "${REPO_ROOT}/examples/hello-crystal/crystal-cuda.pqo" \
+  "${PACKAGE_ROOT}/examples/crystal-cuda.pqo"
+install -m 0644 \
+  "${REPO_ROOT}/examples/hello-crystal/kernels/crystal-cuda.cu" \
+  "${PACKAGE_ROOT}/examples/kernels/crystal-cuda.cu"
+install -m 0644 \
+  "${REPO_ROOT}/examples/hello-crystal/ui-crystal-cuda/pqo-ui.json" \
+  "${PACKAGE_ROOT}/examples/ui-crystal-cuda/pqo-ui.json"
+install -m 0644 \
+  "${REPO_ROOT}/examples/hello-crystal/ui-crystal-cuda/dist/index.html" \
+  "${PACKAGE_ROOT}/examples/ui-crystal-cuda/dist/index.html"
+install -m 0644 \
+  "${REPO_ROOT}/examples/hello-crystal/ui-crystal-cuda/dist/styles.css" \
+  "${PACKAGE_ROOT}/examples/ui-crystal-cuda/dist/styles.css"
+install -m 0644 \
+  "${REPO_ROOT}/examples/hello-crystal/ui-crystal-cuda/dist/app.js" \
+  "${PACKAGE_ROOT}/examples/ui-crystal-cuda/dist/app.js"
+install -m 0644 \
+  "${REPO_ROOT}/examples/hello-cuda/hello-cuda.pqo" \
+  "${PACKAGE_ROOT}/examples/hello-cuda.pqo"
+install -m 0644 \
   "${REPO_ROOT}/examples/neon-flock/neon-flock.pqo" \
   "${PACKAGE_ROOT}/examples/neon-flock.pqo"
 install -m 0644 \
@@ -78,6 +105,9 @@ install -m 0644 \
 install -m 0644 \
   "${REPO_ROOT}/examples/hello-crystal/README.md" \
   "${PACKAGE_ROOT}/examples/crystal.README.md"
+install -m 0644 \
+  "${REPO_ROOT}/examples/hello-crystal/README-cuda.md" \
+  "${PACKAGE_ROOT}/examples/crystal-cuda.README.md"
 install -m 0644 \
   "${REPO_ROOT}/examples/neon-flock/README.md" \
   "${PACKAGE_ROOT}/examples/neon-flock.README.md"
@@ -103,7 +133,7 @@ printf '%s\n' "${VERSION}" > "${PACKAGE_ROOT}/VERSION"
 {
   printf '%s\n' "pqo-install-layout=1"
   printf '%s\n' "version=${VERSION}"
-  printf '%s\n' "platform=darwin"
+  printf '%s\n' "platform=${PACKAGE_PLATFORM}"
   printf '%s\n' "architecture=${PACKAGE_ARCH}"
 } > "${PACKAGE_ROOT}/install-manifest"
 

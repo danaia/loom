@@ -6,12 +6,13 @@ use std::{
 };
 
 use pqo_core::{
-    AliasingRule, Backend, CanonicalGraph, ContractClause, DataType, DeterminismScope,
-    DeterminismTier, Diagnostic, DiagnosticCode, DispatchDomain, GraphEdit, KernelNode, Literal,
-    ModuleGraph, ObservationPoint, Predicate, PresentationLifetimePolicy, QueueModel,
-    RenderOverloadPolicy, ReplayOverloadPolicy, ResourceId, ScenarioDuration, ScenarioTimePolicy,
-    ScheduleId, ScheduleItemId, SemanticPath, SlotAccess, SlotResourceType, StreamId, StreamLength,
-    TickOverlapPolicy, Unit, ValueKind, ViewState, canonicalize,
+    AliasingRule, Backend, CanonicalGraph, ComputeBackend, ContractClause, DataType,
+    DeterminismScope, DeterminismTier, Diagnostic, DiagnosticCode, DispatchDomain, GraphEdit,
+    KernelNode, Literal, ModuleGraph, ObservationPoint, Predicate, PresentationLifetimePolicy,
+    QueueModel, RenderOverloadPolicy, ReplayOverloadPolicy, ResourceId, ScenarioDuration,
+    ScenarioTimePolicy, ScheduleId, ScheduleItemId, SemanticPath, SlotAccess, SlotResourceType,
+    StreamId, StreamLength, TargetPolicy, TargetProfile, TickOverlapPolicy, Unit, ValueKind,
+    ViewBackend, ViewState, canonicalize,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -69,8 +70,43 @@ pub enum PresentationConcurrencyBasis {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExecutionPlan {
     pub schema_version: u32,
+    pub target_profile: TargetProfile,
     pub schedules: Vec<ExecutionSchedule>,
     pub intervention_passes: Vec<PlannedPass>,
+    pub logical_ticks: Vec<LogicalTickPlan>,
+    pub projections: Vec<ProjectionPlan>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LogicalTickPlan {
+    pub schedule: ScheduleId,
+    pub segments: Vec<ExecutionSegment>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExecutionSegment {
+    pub kind: ExecutionSegmentKind,
+    pub passes: Vec<pqo_core::PassId>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ExecutionSegmentKind {
+    MetalCommandBuffer,
+    CudaGraph,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProjectionPlan {
+    pub schedule: ScheduleId,
+    pub views: Vec<pqo_core::ViewId>,
+    pub leases: Vec<PublishedStateLease>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PublishedStateLease {
+    pub view: pqo_core::ViewId,
+    pub stream: StreamId,
+    pub state: ViewState,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -115,6 +151,7 @@ pub struct PlannedView {
     pub reads: Vec<pqo_core::ViewRead>,
     pub state: ViewState,
     pub implementation: pqo_core::BackendImplementation,
+    pub stage_implementations: Vec<pqo_core::BackendImplementation>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -154,6 +191,7 @@ pub struct ValidatedModuleGraph {
     graph: ModuleGraph,
     execution_plan: ExecutionPlan,
     artifact_fingerprint: String,
+    target_profile: TargetProfile,
 }
 
 impl ValidatedModuleGraph {
@@ -167,6 +205,10 @@ impl ValidatedModuleGraph {
 
     pub fn artifact_fingerprint(&self) -> &str {
         &self.artifact_fingerprint
+    }
+
+    pub fn target_profile(&self) -> TargetProfile {
+        self.target_profile
     }
 }
 
@@ -275,6 +317,14 @@ pub struct Validator;
 
 impl Validator {
     pub fn validate(graph: &ModuleGraph) -> ValidationReport {
+        let profile = match &graph.target {
+            TargetPolicy::Profiles(profiles) if profiles.len() == 1 => profiles[0],
+            _ => TargetProfile::metal(),
+        };
+        Self::validate_for(graph, profile)
+    }
+
+    pub fn validate_for(graph: &ModuleGraph, profile: TargetProfile) -> ValidationReport {
         let source_graph = canonicalize(graph);
         let mut diagnostics = Vec::new();
         let mut completed_passes = Vec::new();
@@ -297,6 +347,14 @@ impl Validator {
 
         let graph = CheckedGraph(graph);
 
+        if !graph.target.supports(&profile) {
+            diagnostics.push(Diagnostic::error(
+                DiagnosticCode::MissingBackendImplementation,
+                "source target policy does not support the selected build target",
+                SemanticPath::new("target"),
+            ));
+        }
+
         validate_types_shapes_units(graph, &mut diagnostics);
         completed_passes.push(ValidationPass::TypesShapesAndUnits);
 
@@ -318,7 +376,7 @@ impl Validator {
         let effective_concurrency = validate_buffer_versions(graph, &accesses, &mut diagnostics);
         completed_passes.push(ValidationPass::BufferVersionsAndInFlight);
 
-        validate_backend_abi(graph, &mut diagnostics);
+        validate_backend_abi(graph, profile, &mut diagnostics);
         completed_passes.push(ValidationPass::BackendAbi);
 
         validate_observation_points(graph, &mut diagnostics);
@@ -332,6 +390,7 @@ impl Validator {
             &topological_orders,
             &effective_concurrency,
             &accesses,
+            profile,
         );
         let validated = if has_errors(&diagnostics) {
             None
@@ -341,6 +400,7 @@ impl Validator {
                 graph: graph.0.clone(),
                 execution_plan,
                 artifact_fingerprint,
+                target_profile: profile,
             })
         };
         completed_passes.push(ValidationPass::ValidatedArtifactFingerprint);
@@ -1345,6 +1405,32 @@ fn mismatch(
 }
 
 fn validate_resource_access(graph: CheckedGraph<'_>, diagnostics: &mut Vec<Diagnostic>) {
+    for stream in &graph.resources.streams {
+        let valid = match stream.domain {
+            pqo_core::ResourceDomain::ComputePrivate => {
+                stream.storage == pqo_core::StorageClass::DevicePrivate
+                    && stream.access != pqo_core::ResourceAccess::HostReadWrite
+            }
+            pqo_core::ResourceDomain::SharedPresentation => {
+                stream.storage == pqo_core::StorageClass::DevicePrivate
+                    && stream.access != pqo_core::ResourceAccess::HostReadWrite
+            }
+            pqo_core::ResourceDomain::HostVisibleControl => {
+                stream.storage == pqo_core::StorageClass::HostShared
+                    && stream.access == pqo_core::ResourceAccess::HostReadWrite
+            }
+        };
+        if !valid {
+            diagnostics.push(Diagnostic::error(
+                DiagnosticCode::InvalidResourceDomain,
+                format!(
+                    "stream `{}` has storage/access incompatible with resource domain {:?}",
+                    stream.name, stream.domain
+                ),
+                path("streams", &stream.name).child("domain"),
+            ));
+        }
+    }
     for pass in &graph.passes {
         let kernel = graph.kernel(pass.kernel);
         for binding in &pass.bindings {
@@ -2073,7 +2159,11 @@ fn validate_buffer_versions(
     results
 }
 
-fn validate_backend_abi(graph: CheckedGraph<'_>, diagnostics: &mut Vec<Diagnostic>) {
+fn validate_backend_abi(
+    graph: CheckedGraph<'_>,
+    profile: TargetProfile,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
     for kernel in &graph.kernels {
         for slot in &kernel.slots {
             if matches!(slot.resource_type, SlotResourceType::Value { .. })
@@ -2113,17 +2203,13 @@ fn validate_backend_abi(graph: CheckedGraph<'_>, diagnostics: &mut Vec<Diagnosti
                 path("kernels", &kernel.name).child("abi.threadgroup"),
             ));
         }
-        let has_backend = match graph.target {
-            pqo_core::Target::Metal => kernel.implementations.iter().any(|implementation| {
-                implementation.backend == Backend::Metal
-                    && !implementation.source.is_empty()
-                    && !implementation.entry.is_empty()
-                    && implementation
-                        .source_text
-                        .as_ref()
-                        .is_none_or(|source| !source.trim().is_empty())
-            }),
+        let expected_backend = match profile.compute {
+            ComputeBackend::Metal => Backend::Metal,
+            ComputeBackend::Cuda => Backend::Cuda,
         };
+        let has_backend = kernel.implementations.iter().any(|implementation| {
+            implementation.backend == expected_backend && implementation.is_complete()
+        });
         if !has_backend {
             diagnostics.push(Diagnostic::error(
                 DiagnosticCode::MissingBackendImplementation,
@@ -2132,18 +2218,31 @@ fn validate_backend_abi(graph: CheckedGraph<'_>, diagnostics: &mut Vec<Diagnosti
             ));
         }
     }
+    if profile.view == ViewBackend::Headless {
+        return;
+    }
+    let expected_backend = match profile.view {
+        ViewBackend::Metal => Backend::Metal,
+        ViewBackend::Vulkan => Backend::Vulkan,
+        ViewBackend::Headless => unreachable!(),
+    };
     for view in &graph.views {
-        let implementation = &view.implementation;
-        let complete = match graph.target {
-            pqo_core::Target::Metal => {
-                implementation.backend == Backend::Metal
-                    && !implementation.source.trim().is_empty()
-                    && !implementation.entry.trim().is_empty()
-                    && implementation
-                        .source_text
-                        .as_ref()
-                        .is_none_or(|source| !source.trim().is_empty())
-            }
+        let selected = view
+            .implementations
+            .iter()
+            .filter(|implementation| {
+                implementation.backend == expected_backend && implementation.is_complete()
+            })
+            .collect::<Vec<_>>();
+        let complete = if profile.view == ViewBackend::Vulkan {
+            selected
+                .iter()
+                .any(|implementation| implementation.stage == Some(pqo_core::ShaderStage::Vertex))
+                && selected.iter().any(|implementation| {
+                    implementation.stage == Some(pqo_core::ShaderStage::Fragment)
+                })
+        } else {
+            !selected.is_empty()
         };
         if !complete {
             diagnostics.push(Diagnostic::error(
@@ -2312,8 +2411,9 @@ fn build_execution_plan(
     orders: &[ScheduleOrder],
     concurrency: &[EffectiveConcurrency],
     accesses: &BTreeMap<ScheduleId, Vec<Access>>,
+    profile: TargetProfile,
 ) -> ExecutionPlan {
-    let schedules = orders
+    let schedules: Vec<ExecutionSchedule> = orders
         .iter()
         .filter_map(|order| {
             let concurrency = concurrency
@@ -2325,24 +2425,27 @@ fn build_execution_plan(
             pass_ids.dedup();
             let passes = pass_ids
                 .iter()
-                .map(|pass_id| plan_pass(graph, *pass_id))
+                .map(|pass_id| plan_pass(graph, *pass_id, profile.compute))
                 .collect::<Vec<_>>();
             let mut view_ids = schedule.presentation_views.clone();
             view_ids.sort();
             view_ids.dedup();
             let views = view_ids
                 .iter()
+                .filter(|_| profile.view != ViewBackend::Headless)
                 .map(|view_id| {
                     let view = graph.view(*view_id);
                     let mut reads = view.reads.clone();
                     reads.sort_by(|left, right| {
                         (&left.name, left.stream).cmp(&(&right.name, right.stream))
                     });
+                    let stage_implementations = select_view_implementations(view, profile.view);
                     PlannedView {
                         view: view.id,
                         reads,
                         state: view.state.clone(),
-                        implementation: view.implementation.clone(),
+                        implementation: stage_implementations[0].clone(),
+                        stage_implementations,
                     }
                 })
                 .collect::<Vec<_>>();
@@ -2491,24 +2594,69 @@ fn build_execution_plan(
     intervention_ids.dedup();
     let intervention_passes = intervention_ids
         .into_iter()
-        .map(|pass| plan_pass(graph, pass))
+        .map(|pass| plan_pass(graph, pass, profile.compute))
+        .collect();
+    let logical_ticks = schedules
+        .iter()
+        .map(|schedule| LogicalTickPlan {
+            schedule: schedule.schedule,
+            segments: vec![ExecutionSegment {
+                kind: match profile.compute {
+                    ComputeBackend::Metal => ExecutionSegmentKind::MetalCommandBuffer,
+                    ComputeBackend::Cuda => ExecutionSegmentKind::CudaGraph,
+                },
+                passes: schedule.passes.iter().map(|pass| pass.pass).collect(),
+            }],
+        })
+        .collect();
+    let projections = schedules
+        .iter()
+        .filter(|schedule| !schedule.views.is_empty())
+        .map(|schedule| ProjectionPlan {
+            schedule: schedule.schedule,
+            views: schedule.views.iter().map(|view| view.view).collect(),
+            leases: schedule
+                .views
+                .iter()
+                .flat_map(|view| {
+                    view.reads.iter().map(|read| PublishedStateLease {
+                        view: view.view,
+                        stream: read.stream,
+                        state: view.state.clone(),
+                    })
+                })
+                .collect(),
+        })
         .collect();
     ExecutionPlan {
-        schema_version: 5,
+        schema_version: 6,
+        target_profile: profile,
         schedules,
         intervention_passes,
+        logical_ticks,
+        projections,
     }
 }
 
-fn plan_pass(graph: CheckedGraph<'_>, pass_id: pqo_core::PassId) -> PlannedPass {
+fn plan_pass(
+    graph: CheckedGraph<'_>,
+    pass_id: pqo_core::PassId,
+    compute: ComputeBackend,
+) -> PlannedPass {
     let pass = graph.pass(pass_id);
     let kernel = graph.kernel(pass.kernel);
     let implementation = kernel
         .implementations
         .iter()
-        .filter(|implementation| implementation.backend == Backend::Metal)
+        .filter(|implementation| {
+            implementation.backend
+                == match compute {
+                    ComputeBackend::Metal => Backend::Metal,
+                    ComputeBackend::Cuda => Backend::Cuda,
+                }
+        })
         .min_by(|left, right| (&left.source, &left.entry).cmp(&(&right.source, &right.entry)))
-        .expect("validated Metal kernel implementation")
+        .expect("validated target kernel implementation")
         .clone();
     let mut bindings = pass.bindings.clone();
     bindings.sort_by_key(|binding| binding.slot);
@@ -2521,6 +2669,31 @@ fn plan_pass(graph: CheckedGraph<'_>, pass_id: pqo_core::PassId) -> PlannedPass 
         abi: kernel.abi.clone(),
         implementation,
     }
+}
+
+fn select_view_implementations(
+    view: &pqo_core::ViewNode,
+    backend: ViewBackend,
+) -> Vec<pqo_core::BackendImplementation> {
+    let expected = match backend {
+        ViewBackend::Metal => Backend::Metal,
+        ViewBackend::Vulkan => Backend::Vulkan,
+        ViewBackend::Headless => unreachable!("headless plans omit views"),
+    };
+    let mut implementations = view
+        .implementations
+        .iter()
+        .filter(|implementation| implementation.backend == expected)
+        .cloned()
+        .collect::<Vec<_>>();
+    implementations.sort_by(|left, right| {
+        (&left.stage, &left.source, &left.entry).cmp(&(&right.stage, &right.source, &right.entry))
+    });
+    assert!(
+        !implementations.is_empty(),
+        "validated target view implementation"
+    );
+    implementations
 }
 
 fn artifact_fingerprint(graph: &ModuleGraph, plan: &ExecutionPlan) -> String {

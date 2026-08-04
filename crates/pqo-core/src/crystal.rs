@@ -116,7 +116,7 @@ pub fn hello_crystal_builder_with_config(config: HelloCrystalConfig) -> ModuleBu
     };
 
     let mut builder = ModuleBuilder::new("hello_crystal")
-        .target(Target::Metal)
+        .target(Target::metal())
         .value(ValueDraft::constant(
             "field.width",
             u32t.clone(),

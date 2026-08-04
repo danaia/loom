@@ -12,6 +12,11 @@ pub struct CanonicalGraph {
 pub fn canonicalize(graph: &ModuleGraph) -> CanonicalGraph {
     let mut normalized = graph.clone();
 
+    if let crate::model::TargetPolicy::Profiles(profiles) = &mut normalized.target {
+        profiles.sort();
+        profiles.dedup();
+    }
+
     for kernel in &mut normalized.kernels.nodes {
         sort_serializable(&mut kernel.implementations);
         if let AliasingRule::AllowPairs(pairs) = &mut kernel.abi.aliasing {
@@ -32,6 +37,7 @@ pub fn canonicalize(graph: &ModuleGraph) -> CanonicalGraph {
     for view in &mut normalized.views {
         view.reads
             .sort_by(|left, right| (&left.name, left.stream).cmp(&(&right.name, right.stream)));
+        sort_serializable(&mut view.implementations);
     }
     for schedule in &mut normalized.schedules.nodes {
         schedule.execution_passes.sort();

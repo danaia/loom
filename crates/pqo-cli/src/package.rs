@@ -6,7 +6,10 @@ use std::{
     process::Command,
 };
 
-use pqo_core::ModuleGraph;
+use pqo_core::{
+    Backend, BackendRequirements, ComputeBackend, ModuleGraph, ShaderStage, SourceFormat,
+    TargetProfile, ViewBackend,
+};
 use pqo_windowing::{PROJECT_CONFIG_PATH, WindowLayoutConfig};
 use serde::{Deserialize, Serialize};
 use tempfile::TempDir;
@@ -14,7 +17,7 @@ use zip::{CompressionMethod, ZipArchive, ZipWriter, write::SimpleFileOptions};
 
 const MANIFEST_NAME: &str = "pqo-package.json";
 const FORMAT_NAME: &str = "pqo-package";
-const FORMAT_VERSION: u32 = 1;
+const FORMAT_VERSION: u32 = 2;
 const PROJECT_ABI_VERSION: u32 = 1;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -24,9 +27,33 @@ struct PackageManifest {
     module: String,
     entry: String,
     files: Vec<String>,
+    #[serde(default)]
+    target_profile: Option<TargetProfile>,
+    #[serde(default)]
+    artifacts: Vec<PackageArtifact>,
+    #[serde(default)]
+    requirements: Vec<BackendRequirements>,
     extension: Option<PackageExtension>,
     #[serde(default)]
     ui: Option<PackageUi>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct PackageArtifact {
+    kind: String,
+    backend: String,
+    source: String,
+    entries: Vec<String>,
+    path: String,
+    architecture: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct TargetArtifactManifest {
+    format: &'static str,
+    version: u32,
+    backend: &'static str,
+    artifacts: Vec<PackageArtifact>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -62,6 +89,7 @@ struct UiSourceConfig {
 }
 
 #[derive(Clone)]
+#[cfg_attr(target_os = "linux", allow(dead_code))]
 pub(crate) struct LoadedUi {
     pub(crate) asset_root: PathBuf,
     pub(crate) entry: String,
@@ -75,6 +103,7 @@ pub(crate) struct LoadedProgram {
     project_root: PathBuf,
     extension_path: Option<PathBuf>,
     ui: Option<LoadedUi>,
+    target_profile: Option<TargetProfile>,
     _extracted: Option<TempDir>,
 }
 
@@ -93,6 +122,10 @@ impl LoadedProgram {
 
     pub(crate) fn ui(&self) -> Option<&LoadedUi> {
         self.ui.as_ref()
+    }
+
+    pub(crate) fn target_profile(&self) -> Option<TargetProfile> {
+        self.target_profile
     }
 }
 
@@ -122,12 +155,17 @@ pub(crate) fn load(path: &str, prepare_source_project: bool) -> Result<LoadedPro
             project_root,
             extension_path,
             ui,
+            target_profile: None,
             _extracted: None,
         })
     }
 }
 
-pub(crate) fn build(path: &str, graph: &ModuleGraph) -> Result<String, String> {
+pub(crate) fn build(
+    path: &str,
+    graph: &ModuleGraph,
+    target_profile: TargetProfile,
+) -> Result<String, String> {
     let source_path = Path::new(path);
     if source_path.extension().and_then(|value| value.to_str()) != Some("pqo") {
         return Err("`pqo build` expects a primary .pqo source file".to_owned());
@@ -147,14 +185,19 @@ pub(crate) fn build(path: &str, graph: &ModuleGraph) -> Result<String, String> {
         .kernels
         .iter()
         .flat_map(|kernel| kernel.implementations.iter())
-        .chain(graph.views.iter().map(|view| &view.implementation))
+        .chain(
+            graph
+                .views
+                .iter()
+                .flat_map(|view| view.implementations.iter()),
+        )
     {
         if implementation.source_text.is_none() && !implementation.source.starts_with("pqo://") {
             validate_relative_path(&implementation.source)?;
             let source = root.join(&implementation.source);
             if !source.is_file() {
                 return Err(format!(
-                    "project Metal source `{}` must live beside the primary .pqo file",
+                    "project GPU source `{}` must live beside the primary .pqo file",
                     implementation.source
                 ));
             }
@@ -163,8 +206,14 @@ pub(crate) fn build(path: &str, graph: &ModuleGraph) -> Result<String, String> {
     }
 
     let target = host_target()?;
-    let extension_archive_path = format!("runtime/{target}/libpqo_project.dylib");
+    let library_extension = if cfg!(target_os = "macos") {
+        "dylib"
+    } else {
+        "so"
+    };
+    let extension_archive_path = format!("runtime/{target}/libpqo_project.{library_extension}");
     let extension_disk_path = compile_project_extension(&root)?;
+    let (artifacts, generated_artifacts) = build_target_artifacts(&root, graph, target_profile)?;
     let extension = if extension_disk_path.is_some() {
         source_files.insert("src/runtime.rs".to_owned());
         Some(PackageExtension {
@@ -190,6 +239,7 @@ pub(crate) fn build(path: &str, graph: &ModuleGraph) -> Result<String, String> {
     if extension.is_some() {
         packaged_files.push(extension_archive_path.clone());
     }
+    packaged_files.extend(generated_artifacts.iter().map(|(path, _)| path.clone()));
     packaged_files.sort();
     let manifest = PackageManifest {
         format: FORMAT_NAME.to_owned(),
@@ -197,6 +247,9 @@ pub(crate) fn build(path: &str, graph: &ModuleGraph) -> Result<String, String> {
         module: graph.name.clone(),
         entry: entry_name,
         files: packaged_files,
+        target_profile: Some(target_profile),
+        artifacts,
+        requirements: target_requirements(target_profile),
         extension,
         ui,
     };
@@ -235,6 +288,9 @@ pub(crate) fn build(path: &str, graph: &ModuleGraph) -> Result<String, String> {
             options.unix_permissions(0o755),
         )?;
     }
+    for (archive_path, disk_path) in &generated_artifacts {
+        add_file(&mut archive, disk_path, archive_path, options)?;
+    }
     archive.finish().map_err(|error| error.to_string())?;
     Ok(output_path.display().to_string())
 }
@@ -254,9 +310,9 @@ fn load_package(path: &Path) -> Result<LoadedProgram, String> {
         serde_json::from_str::<PackageManifest>(&json)
             .map_err(|error| format!("invalid {MANIFEST_NAME}: {error}"))?
     };
-    if manifest.format != FORMAT_NAME || manifest.version != FORMAT_VERSION {
+    if manifest.format != FORMAT_NAME || !(1..=FORMAT_VERSION).contains(&manifest.version) {
         return Err(format!(
-            "unsupported .lmp format `{}` version {}; expected {FORMAT_NAME} version {FORMAT_VERSION}",
+            "unsupported .lmp format `{}` version {}; expected {FORMAT_NAME} version 1..={FORMAT_VERSION}",
             manifest.format, manifest.version
         ));
     }
@@ -343,6 +399,7 @@ fn load_package(path: &Path) -> Result<LoadedProgram, String> {
         project_root: extracted.path().to_owned(),
         extension_path,
         ui,
+        target_profile: manifest.target_profile,
         _extracted: Some(extracted),
     })
 }
@@ -380,7 +437,12 @@ fn build_ui(
 }
 
 fn load_source_ui(root: &Path, module: &str) -> Result<Option<LoadedUi>, String> {
-    let ui_root = root.join("ui");
+    let platform_ui_root = root.join(format!("ui-{module}"));
+    let ui_root = if platform_ui_root.join("pqo-ui.json").is_file() {
+        platform_ui_root
+    } else {
+        root.join("ui")
+    };
     let Some(config) = read_ui_config(&ui_root)? else {
         return Ok(None);
     };
@@ -455,7 +517,12 @@ fn compile_project_extension(root: &Path) -> Result<Option<PathBuf>, String> {
     let build_directory = root.join(".pqo/build");
     fs::create_dir_all(&build_directory)
         .map_err(|error| format!("could not create project build directory: {error}"))?;
-    let output_path = build_directory.join("libpqo_project.dylib");
+    let extension = if cfg!(target_os = "macos") {
+        "dylib"
+    } else {
+        "so"
+    };
+    let output_path = build_directory.join(format!("libpqo_project.{extension}"));
     let output = Command::new("rustc")
         .args(["--crate-type", "cdylib", "--edition", "2021"])
         .arg("-C")
@@ -472,6 +539,241 @@ fn compile_project_extension(root: &Path) -> Result<Option<PathBuf>, String> {
         ));
     }
     Ok(Some(output_path))
+}
+
+fn build_target_artifacts(
+    root: &Path,
+    graph: &ModuleGraph,
+    target: TargetProfile,
+) -> Result<(Vec<PackageArtifact>, Vec<(String, PathBuf)>), String> {
+    if target.compute != pqo_core::ComputeBackend::Cuda {
+        return Ok((Vec::new(), Vec::new()));
+    }
+    let build_root = root.join(".pqo/build/cuda");
+    fs::create_dir_all(&build_root)
+        .map_err(|error| format!("could not create CUDA build directory: {error}"))?;
+    let mut artifacts = Vec::new();
+    let mut generated = Vec::new();
+    let mut seen_sources = BTreeSet::new();
+    for kernel in &graph.kernels {
+        let implementation = kernel
+            .implementations
+            .iter()
+            .find(|implementation| implementation.backend == Backend::Cuda)
+            .ok_or_else(|| format!("kernel `{}` has no CUDA implementation", kernel.name))?;
+        if !seen_sources.insert(implementation.source.clone()) {
+            continue;
+        }
+        let stem = sanitize_artifact_name(&kernel.name);
+        let input = if let Some(source) = &implementation.source_text {
+            let path = build_root.join(format!("{stem}.cu"));
+            fs::write(&path, source)
+                .map_err(|error| format!("could not write generated CUDA source: {error}"))?;
+            path
+        } else {
+            root.join(&implementation.source)
+        };
+        let cubin_disk = build_root.join(format!("{stem}.sm_120.cubin"));
+        let ptx_disk = build_root.join(format!("{stem}.compute_120.ptx"));
+        run_nvcc(&input, &cubin_disk, &["-cubin", "-arch=sm_120"])?;
+        run_nvcc(&input, &ptx_disk, &["-ptx", "-arch=compute_120"])?;
+        let cubin_archive = format!("targets/linux-x86_64-nvidia/compute/{stem}.sm_120.cubin");
+        let ptx_archive = format!("targets/linux-x86_64-nvidia/compute/{stem}.compute_120.ptx");
+        let entries = implementation.entry_points.clone();
+        artifacts.push(PackageArtifact {
+            kind: "cubin".to_owned(),
+            backend: "cuda".to_owned(),
+            source: implementation.source.clone(),
+            entries: entries.clone(),
+            path: cubin_archive.clone(),
+            architecture: Some("sm_120".to_owned()),
+        });
+        artifacts.push(PackageArtifact {
+            kind: "ptx".to_owned(),
+            backend: "cuda".to_owned(),
+            source: implementation.source.clone(),
+            entries,
+            path: ptx_archive.clone(),
+            architecture: Some("compute_120".to_owned()),
+        });
+        generated.push((cubin_archive, cubin_disk));
+        generated.push((ptx_archive, ptx_disk));
+    }
+    if target.view == ViewBackend::Vulkan {
+        let view_build_root = root.join(".pqo/build/vulkan");
+        fs::create_dir_all(&view_build_root)
+            .map_err(|error| format!("could not create Vulkan build directory: {error}"))?;
+        for view in &graph.views {
+            for implementation in view
+                .implementations
+                .iter()
+                .filter(|implementation| implementation.backend == Backend::Vulkan)
+            {
+                let stage = implementation.stage.ok_or_else(|| {
+                    format!(
+                        "Vulkan view `{}` implementation has no shader stage",
+                        view.name
+                    )
+                })?;
+                let suffix = match stage {
+                    ShaderStage::Vertex => "vert",
+                    ShaderStage::Fragment => "frag",
+                };
+                let stem = format!("{}_{}", sanitize_artifact_name(&view.name), suffix);
+                let disk = view_build_root.join(format!("{stem}.spv"));
+                match implementation.source_format {
+                    SourceFormat::Glsl => {
+                        let input = root.join(&implementation.source);
+                        let glslc = std::env::var_os("PQO_GLSLC").unwrap_or_else(|| "glslc".into());
+                        let output = Command::new(glslc)
+                            .args(["-O", "--target-env=vulkan1.3"])
+                            .arg(format!("-fshader-stage={suffix}"))
+                            .arg(&input)
+                            .arg("-o")
+                            .arg(&disk)
+                            .output()
+                            .map_err(|error| format!("could not invoke glslc: {error}"))?;
+                        if !output.status.success() {
+                            return Err(format!(
+                                "Vulkan shader compilation failed for `{}`:\n{}",
+                                input.display(),
+                                String::from_utf8_lossy(&output.stderr).trim()
+                            ));
+                        }
+                    }
+                    SourceFormat::SpirV => {
+                        fs::copy(root.join(&implementation.source), &disk).map_err(|error| {
+                            format!(
+                                "could not stage SPIR-V `{}`: {error}",
+                                implementation.source
+                            )
+                        })?;
+                    }
+                    _ => {
+                        return Err(format!(
+                            "Vulkan view `{}` requires GLSL or SPIR-V, found {:?}",
+                            view.name, implementation.source_format
+                        ));
+                    }
+                }
+                let archive_path = format!("targets/linux-x86_64-nvidia/view/{stem}.spv");
+                artifacts.push(PackageArtifact {
+                    kind: "spirv".to_owned(),
+                    backend: "vulkan".to_owned(),
+                    source: implementation.source.clone(),
+                    entries: implementation.entry_points.clone(),
+                    path: archive_path.clone(),
+                    architecture: None,
+                });
+                generated.push((archive_path, disk));
+            }
+        }
+    }
+    let compute_artifacts = artifacts
+        .iter()
+        .filter(|artifact| artifact.backend == "cuda")
+        .cloned()
+        .collect::<Vec<_>>();
+    if !compute_artifacts.is_empty() {
+        let path = build_root.join("manifest.json");
+        write_target_manifest(&path, "cuda", compute_artifacts)?;
+        generated.push((
+            "targets/linux-x86_64-nvidia/compute/manifest.json".to_owned(),
+            path,
+        ));
+    }
+    let view_artifacts = artifacts
+        .iter()
+        .filter(|artifact| artifact.backend == "vulkan")
+        .cloned()
+        .collect::<Vec<_>>();
+    if !view_artifacts.is_empty() {
+        let path = root.join(".pqo/build/vulkan/pipeline.json");
+        write_target_manifest(&path, "vulkan", view_artifacts)?;
+        generated.push((
+            "targets/linux-x86_64-nvidia/view/pipeline.json".to_owned(),
+            path,
+        ));
+    }
+    Ok((artifacts, generated))
+}
+
+fn write_target_manifest(
+    path: &Path,
+    backend: &'static str,
+    artifacts: Vec<PackageArtifact>,
+) -> Result<(), String> {
+    let manifest = TargetArtifactManifest {
+        format: "pqo-target-artifacts",
+        version: 1,
+        backend,
+        artifacts,
+    };
+    fs::write(
+        path,
+        serde_json::to_vec_pretty(&manifest).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| format!("could not write `{}`: {error}", path.display()))
+}
+
+fn run_nvcc(input: &Path, output: &Path, mode: &[&str]) -> Result<(), String> {
+    let nvcc = std::env::var_os("PQO_NVCC").unwrap_or_else(|| "nvcc".into());
+    let result = Command::new(nvcc)
+        .args(["-O3", "--std=c++17"])
+        .args(mode)
+        .arg(input)
+        .arg("-o")
+        .arg(output)
+        .output()
+        .map_err(|error| format!("could not invoke nvcc: {error}"))?;
+    if !result.status.success() {
+        return Err(format!(
+            "CUDA compilation failed for `{}`:\n{}",
+            input.display(),
+            String::from_utf8_lossy(&result.stderr).trim()
+        ));
+    }
+    Ok(())
+}
+
+fn sanitize_artifact_name(name: &str) -> String {
+    name.chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || character == '_' {
+                character
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
+fn target_requirements(target: TargetProfile) -> Vec<BackendRequirements> {
+    let mut requirements = Vec::new();
+    match target.compute {
+        ComputeBackend::Metal => requirements.push(BackendRequirements::Metal {
+            minimum_gpu_family: None,
+        }),
+        ComputeBackend::Cuda => requirements.push(BackendRequirements::Cuda {
+            minimum_compute_capability: Some((12, 0)),
+        }),
+    }
+    if target.view == ViewBackend::Vulkan {
+        requirements.push(BackendRequirements::Vulkan {
+            minimum_api_version: (1, 3),
+            required_extensions: vec![
+                "VK_KHR_swapchain".to_owned(),
+                "VK_KHR_external_memory_fd".to_owned(),
+                "VK_KHR_external_semaphore_fd".to_owned(),
+            ],
+            required_features: vec![
+                "timelineSemaphore".to_owned(),
+                "synchronization2".to_owned(),
+                "dynamicRendering".to_owned(),
+            ],
+        });
+    }
+    requirements
 }
 
 fn collect_ui_files(
@@ -637,5 +939,54 @@ mod tests {
         assert_eq!(ui.width, 360.0);
         assert_eq!(ui.height, 650.0);
         assert!(ui.asset_root.join(&ui.entry).is_file());
+    }
+
+    #[test]
+    fn source_run_prefers_file_specific_ui() {
+        let project = tempfile::tempdir().expect("temporary project");
+        fs::write(
+            project.path().join("crystal-cuda.pqo"),
+            "pqo 0.1\nmodule crystal_cuda\ntarget cuda-headless\n",
+        )
+        .expect("source");
+        for (directory, title) in [
+            ("ui", "Generic Controls"),
+            ("ui-crystal-cuda", "CUDA Crystal Controls"),
+        ] {
+            fs::create_dir_all(project.path().join(directory).join("dist"))
+                .expect("UI directories");
+            fs::write(
+                project.path().join(directory).join("pqo-ui.json"),
+                format!(
+                    r#"{{
+                      "framework": "vue3",
+                      "dist": "dist",
+                      "entry": "index.html",
+                      "title": "{title}",
+                      "width": 900,
+                      "height": 700
+                    }}"#
+                ),
+            )
+            .expect("UI config");
+            fs::write(
+                project.path().join(directory).join("dist/index.html"),
+                "<!doctype html><title>Demo</title>",
+            )
+            .expect("UI entry");
+        }
+
+        let program = load(
+            project
+                .path()
+                .join("crystal-cuda.pqo")
+                .to_str()
+                .expect("UTF-8 path"),
+            true,
+        )
+        .expect("source project loads");
+        let ui = program.ui().expect("source UI");
+        assert_eq!(ui.title, "CUDA Crystal Controls");
+        assert!(ui.asset_root.ends_with("ui-crystal-cuda/dist"));
     }
 }

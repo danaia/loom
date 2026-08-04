@@ -17,6 +17,9 @@ zip = { version = "2.2", default-features = false, features = ["deflate"] }
 [target.'cfg(target_os = "macos")'.dependencies]
 pqo-metal = { path = "../pqo-metal" }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+pqo-cuda = { path = "../pqo-cuda" }
+
 [[bin]]
 name = "pqo"
 path = "src/main.rs"

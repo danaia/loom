@@ -1,0 +1,47 @@
+// Linux/NVIDIA CUDA counterpart of crystal.pqo.
+//
+// This preserves the one-million-cell crystal growth simulation for the
+// CUDA runtime. On Linux, Pqo launches the adjacent Tauri/WebGL 3D environment
+// and controls after initializing the GPU field.
+
+pqo 0.1
+module hello_crystal_cuda
+target cuda-headless
+
+stream simulation.tick: u32 {
+  cap=1 len=1 buffers=1 access=rw storage=device
+  init=[0]
+}
+
+stream field.phase: f32 {
+  cap=1000000 len=1000000 buffers=1 access=rw storage=device
+}
+
+stream field.solute: f32 {
+  cap=1000000 len=1000000 buffers=1 access=rw storage=device
+}
+
+stream field.temperature: f32 {
+  cap=1000000 len=1000000 buffers=1 access=rw storage=device
+}
+
+kernel crystal_step(
+  phase: rw stream<f32>,
+  solute: rw stream<f32>,
+  temperature: rw stream<f32>,
+  tick: rw all stream<u32>
+) extern cuda {
+  source="kernels/crystal-cuda.cu"
+  entry="crystal_step"
+}
+
+pass evolve = crystal_step(
+  phase=field.phase
+  solute=field.solute
+  temperature=field.temperature
+  tick=simulation.tick
+) over field.phase
+
+flow simulation rate=30hz {
+  evolve
+}

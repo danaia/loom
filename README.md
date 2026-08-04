@@ -1,6 +1,6 @@
 # Pqo
 
-Install Pqo on an Apple Silicon Mac:
+Install Pqo on an Apple Silicon Mac, or a Linux/x86_64 host with an NVIDIA CUDA driver:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/danaia/pqo/main/install.sh | sh
@@ -15,13 +15,16 @@ same verified installer flow:
 
 Both commands install under `~/.pqo` and expose `pqo` through
 `~/.local/bin/pqo`. Override `PQO_HOME` or `PQO_BIN_DIR` when a different
-user-local location is needed.
+user-local location is needed. Linux executes CUDA workloads with
+`--target cuda-headless`; interactive Metal rendering is macOS-only.
 
 ## The cool part
 
-Pqo is an agent-native, low-level GPU language for Apple Silicon. It lets AI
-agents author, validate, inspect, repair, and run Metal applications from one
-`.pqo` source.
+Pqo is an agent-native, low-level GPU language with Metal and CUDA compilation
+paths. It lets AI agents author, validate, inspect, repair, and run GPU programs
+from one portable `.pqo` source. Metal remains the interactive macOS runtime;
+CUDA headless execution and CUDA/Vulkan interoperability are available on
+Linux/NVIDIA, while the Vulkan swapchain renderer is still under construction.
 
 In other words: you describe a world once, and Pqo turns it into validated,
 native GPU code that can evolve millions of particles, cells, robots, or agents
@@ -87,9 +90,9 @@ This combination is unusual. Pqo is not a prompt wrapper, a shader toy, or a
 finished simulation engine. It is an attempt to make agent-authored autonomous
 systems a first-class GPU programming model.
 
-You write a `.pqo` program. Pqo validates it, generates Metal for supported
-kernels, connects declared Metal kernels, schedules the GPU work, and opens a
-native window.
+You write a `.pqo` program. Pqo validates it, selects a concrete build target,
+generates Metal or CUDA for supported kernels, connects declared external
+implementations, and constructs a target-specific execution plan.
 
 
 ## Get started
@@ -108,7 +111,22 @@ pqo ~/.pqo/examples/crystal.pqo
 
 You do not need Rust or Cargo to use the installed release.
 
-## Portable `.lmp` projects
+## Portable source and target artifacts
+
+Portable source is the default policy. Select the execution profile when
+building, checking, explaining, or running:
+
+```sh
+pqo build program.pqo --target metal
+pqo build program.pqo --target cuda-vulkan
+pqo build program.pqo --target cuda-headless
+```
+
+On Linux, CUDA builds produce native `sm_120` cubins plus an explicitly tracked
+`compute_120` PTX fallback. Vulkan GLSL is compiled to SPIR-V. Headless CUDA can
+execute the packaged cubin through the Driver API and CUDA Graphs.
+
+## `.lmp` projects
 
 A Pqo project keeps its primary `.pqo` file, referenced Metal sources, and
 optional `src/runtime.rs` extension in one directory. Build that directory into
@@ -119,9 +137,10 @@ pqo build examples/marble-water/marble-water.pqo
 pqo examples/marble-water/marble-water.lmp
 ```
 
-The `.lmp` contains the graph, every referenced Metal file, the Rust extension
-source, and its compiled target library. Running the package requires only the
-global `pqo` runtime. Building a project with `src/runtime.rs` requires `rustc`.
+The `.lmp` contains the graph, selected target profile, hardware requirements,
+referenced sources, compiled target artifacts, the Rust extension source, and
+its compiled target library. Running the package requires the matching global
+Pqo runtime. Building a project with `src/runtime.rs` requires `rustc`.
 
 `.lmp` is ZIP-compatible, so a package can be reopened for editing:
 
@@ -148,8 +167,9 @@ Pqo then:
 parses the .pqo source
 → checks types, units, memory, and access
 → builds a validated execution graph
-→ generates or loads Metal kernels
-→ runs the program on the Apple GPU
+→ selects Metal or CUDA/Vulkan implementations
+→ generates and loads native target artifacts
+→ runs the validated target execution plan
 ```
 
 ## How Pqo is different technically
@@ -160,13 +180,15 @@ GPU program.
 - It exposes low-level GPU concepts such as streams, capacities, access modes,
   kernels, passes, and flows.
 - Its compact syntax is designed for AI coding agents.
-- Supported Pqo kernels compile into inspectable Metal source.
-- Unsupported work stays visible as `extern metal`.
+- Supported Pqo kernels compile into inspectable Metal or CUDA source.
+- Unsupported work stays visible as `extern metal`, `extern cuda`, or explicit
+  GLSL/SPIR-V view implementations.
 - `pqo check` rejects invalid programs before they run.
 - `pqo explain` shows the graph, execution plan, and generated Metal.
 
-The goal is a CUDA-like authoring language for Metal, designed for agents and
-GPU systems with many independent elements.
+The goal is one portable semantic language with deliberately low-level Metal
+and CUDA/Vulkan execution paths, designed for agents and GPU systems with many
+independent elements.
 
 ## Why it is useful for organisms
 
@@ -204,7 +226,8 @@ kernel integrate(
 }
 ```
 
-Pqo checks the types and units, then generates the Metal implementation.
+Pqo checks the types and units, then generates the selected Metal or CUDA
+implementation.
 
 The program schedules it at 120 Hz:
 
@@ -277,6 +300,7 @@ pqo --version             # Print the version
 ```
 
 `pqo program.pqo` and `pqo run program.pqo` are equivalent.
+All four source commands accept `--target metal|cuda-vulkan|cuda-headless`.
 
 ## Ask an AI agent to build something
 
@@ -307,10 +331,12 @@ arithmetic kernel class.
 
 Conditionals, fields, stencils, atomics, reductions, neighborhood access, scans,
 compaction, component relaxation, and native render stages are being added as
-measured compiler gates. Until a gate is complete, that work remains explicit
-Metal.
+measured compiler gates. Until a gate is complete, that work remains an
+explicit target implementation.
 
 See the [native compiler roadmap](docs/native-compiler-gates.md).
+See the [CUDA/Vulkan backend status](docs/cuda-vulkan-backend.md) for supported
+Linux paths, evidence commands, and unfinished gates.
 
 ## Update or remove
 

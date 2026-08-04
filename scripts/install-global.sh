@@ -5,7 +5,15 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 DIST_DIR="${PQO_DIST_DIR:-${REPO_ROOT}/target/dist}"
 HOST_ARCH="$(uname -m)"
-ASSET_NAME="pqo-darwin-${HOST_ARCH}"
+case "$(uname -s)" in
+  Darwin) PLATFORM="darwin" ;;
+  Linux) PLATFORM="linux" ;;
+  *)
+    echo "error: Pqo runtime packages support macOS/Apple Silicon or Linux/x86_64 with NVIDIA CUDA" >&2
+    exit 1
+    ;;
+esac
+ASSET_NAME="pqo-${PLATFORM}-${HOST_ARCH}"
 ARCHIVE_PATH="${DIST_DIR}/${ASSET_NAME}.tar.gz"
 CHECKSUM_PATH="${DIST_DIR}/${ASSET_NAME}.sha256"
 
@@ -20,7 +28,7 @@ CHECKSUM_PATH="${DIST_DIR}/${ASSET_NAME}.sha256"
   exit 1
 }
 
-echo "Installing the local Pqo build with the release installer..."
+echo "Installing the Pqo build from this repository..."
 PQO_ARCHIVE_URL="file://${ARCHIVE_PATH}" \
 PQO_CHECKSUM_URL="file://${CHECKSUM_PATH}" \
   /bin/sh "${REPO_ROOT}/install.sh"

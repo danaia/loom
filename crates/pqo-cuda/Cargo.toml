@@ -1,0 +1,19 @@
+[package]
+name = "pqo-cuda"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+pqo-core = { path = "../pqo-core" }
+pqo-validator = { path = "../pqo-validator" }
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tempfile = "3"
+
+[build-dependencies]
+cc = "1"
+
+[lib]
+path = "src/lib.rs"

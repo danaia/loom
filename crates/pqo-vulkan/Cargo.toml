@@ -1,0 +1,18 @@
+[package]
+name = "pqo-vulkan"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+ash = "0.38"
+pqo-cuda = { path = "../pqo-cuda" }
+serde.workspace = true
+serde_json.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[[example]]
+name = "probe"
+path = "examples/probe.rs"

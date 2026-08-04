@@ -73,7 +73,7 @@ fn dynamic_population_uses_a_mutable_count_stream_and_explicit_authority() {
         "unexpected diagnostics: {:#?}",
         report.diagnostics
     );
-    assert_eq!(graph.schema_version, 3);
+    assert_eq!(graph.schema_version, 4);
     assert!(matches!(
         graph.resources.streams[1].length,
         pqo_core::StreamLength::Dynamic(_)

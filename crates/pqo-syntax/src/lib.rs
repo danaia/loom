@@ -6,8 +6,10 @@
 
 use pqo_core::{
     DataType, KernelAbiDraft, KernelDraft, Literal, ModuleBuilder, ModuleGraph, PassDraft,
-    ResourceAccess, ScalarType, ScheduleDraft, SlotAccess, SlotDraft, StorageClass, StreamDraft,
-    Target, Unit, ValueDraft, ViewDraft, metal_implementation, packaged_metal_implementation,
+    ResourceAccess, ResourceDomain, ScalarType, ScheduleDraft, ShaderStage, SlotAccess, SlotDraft,
+    StorageClass, StreamDraft, Target, TargetProfile, Unit, ValueDraft, ViewDraft,
+    cuda_implementation, glsl_shader_implementation, metal_implementation,
+    packaged_cuda_implementation, packaged_metal_implementation,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -266,7 +268,7 @@ const fn span(start: SourcePosition, end: SourcePosition) -> SourceSpan {
 #[derive(Clone, Debug)]
 struct ModuleAst {
     name: String,
-    target: String,
+    target: Target,
     constants: Vec<ConstantAst>,
     streams: Vec<StreamAst>,
     kernels: Vec<KernelAst>,
@@ -299,6 +301,7 @@ struct StreamAst {
     buffering: u32,
     access: ResourceAccess,
     storage: StorageClass,
+    domain: ResourceDomain,
     initial: Option<RawLiteral>,
     span: SourceSpan,
 }
@@ -323,6 +326,10 @@ struct ParameterAst {
 #[derive(Clone, Debug)]
 enum KernelImplementationAst {
     ExternalMetal {
+        source: String,
+        entry: String,
+    },
+    ExternalCuda {
         source: String,
         entry: String,
     },
@@ -405,8 +412,21 @@ struct PassAst {
 struct ViewAst {
     name: String,
     reads: Vec<(String, String)>,
-    source: String,
-    entry: String,
+    implementations: Vec<ViewImplementationAst>,
+}
+
+#[derive(Clone, Debug)]
+enum ViewImplementationAst {
+    Metal {
+        source: String,
+        entry: String,
+    },
+    Glsl {
+        vertex_source: String,
+        vertex_entry: String,
+        fragment_source: String,
+        fragment_entry: String,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -429,6 +449,18 @@ struct Parser {
     cursor: usize,
 }
 
+fn target_policy(name: &str) -> Result<Target, String> {
+    match name {
+        "portable" => Ok(Target::Portable),
+        "metal" => Ok(Target::metal()),
+        "cuda-vulkan" | "cuda_vulkan" => Ok(Target::cuda_vulkan()),
+        "cuda-headless" | "cuda_headless" => Ok(Target::cuda_headless()),
+        other => Err(format!(
+            "unknown target `{other}`; expected portable, metal, cuda-vulkan, or cuda-headless"
+        )),
+    }
+}
+
 impl Parser {
     fn new(tokens: Vec<Token>) -> Self {
         Self { tokens, cursor: 0 }
@@ -446,8 +478,37 @@ impl Parser {
         }
         self.expect_word("module")?;
         let name = self.expect_any_word()?;
-        self.expect_word("target")?;
-        let target = self.expect_any_word()?;
+        let target = if self.peek_word() == Some("target") {
+            self.expect_word("target")?;
+            let name = self.parse_target_name()?;
+            target_policy(&name).map_err(|message| self.error("P0005", message))?
+        } else if self.peek_word() == Some("targets") {
+            self.expect_word("targets")?;
+            self.expect_symbol('[')?;
+            let mut profiles = Vec::new();
+            while !self.eat_symbol(']') {
+                let name = self.parse_target_name()?;
+                let policy =
+                    target_policy(&name).map_err(|message| self.error("P0005", message))?;
+                match policy {
+                    Target::Portable => {
+                        return Err(self.error(
+                            "P0005",
+                            "`portable` cannot be mixed into an explicit target set",
+                        ));
+                    }
+                    Target::Profiles(items) => profiles.extend(items),
+                }
+                if !self.eat_symbol(',') && !self.check_symbol(']') {
+                    return Err(self.error("P0005", "expected `,` or `]` in target set"));
+                }
+            }
+            profiles.sort();
+            profiles.dedup();
+            Target::Profiles(profiles)
+        } else {
+            Target::Portable
+        };
 
         let mut module = ModuleAst {
             name,
@@ -490,6 +551,15 @@ impl Parser {
         Ok(module)
     }
 
+    fn parse_target_name(&mut self) -> Result<String, SourceDiagnostic> {
+        let mut name = self.expect_any_word()?;
+        while self.eat_symbol('-') {
+            name.push('-');
+            name.push_str(&self.expect_any_word()?);
+        }
+        Ok(name)
+    }
+
     fn parse_constant(&mut self) -> Result<ConstantAst, SourceDiagnostic> {
         let start = self.current().span.start;
         self.expect_word("const")?;
@@ -520,6 +590,7 @@ impl Parser {
         let mut buffering = 1;
         let mut access = ResourceAccess::DeviceReadWrite;
         let mut storage = StorageClass::DevicePrivate;
+        let mut domain = ResourceDomain::ComputePrivate;
         let mut initial = None;
 
         while !self.eat_symbol('}') {
@@ -552,6 +623,18 @@ impl Parser {
                         }
                     }
                 }
+                "domain" => {
+                    domain = match self.expect_any_word()?.as_str() {
+                        "compute_private" => ResourceDomain::ComputePrivate,
+                        "shared_presentation" => ResourceDomain::SharedPresentation,
+                        "host_visible_control" => ResourceDomain::HostVisibleControl,
+                        other => {
+                            return Err(
+                                self.error("P0013", format!("unknown resource domain `{other}`"))
+                            );
+                        }
+                    }
+                }
                 "init" => initial = Some(self.parse_literal()?),
                 other => {
                     return Err(self.error("P0012", format!("unknown stream property `{other}`")));
@@ -570,6 +653,7 @@ impl Parser {
             buffering,
             access,
             storage,
+            domain,
             initial,
             span: span(start, self.previous().span.end),
         })
@@ -636,7 +720,7 @@ impl Parser {
 
         let implementation = if self.peek_word() == Some("extern") {
             self.expect_word("extern")?;
-            self.expect_word("metal")?;
+            let backend = self.expect_any_word()?;
             self.expect_symbol('{')?;
             let mut source = None;
             let mut entry = None;
@@ -650,18 +734,26 @@ impl Parser {
                     other => {
                         return Err(self.error(
                             "P0024",
-                            format!("unknown Metal implementation property `{other}`"),
+                            format!("unknown {backend} implementation property `{other}`"),
                         ));
                     }
                 }
                 self.eat_symbol(',');
                 self.eat_symbol(';');
             }
-            KernelImplementationAst::ExternalMetal {
-                source: source
-                    .ok_or_else(|| self.error("P0025", "Metal implementation requires `source`"))?,
-                entry: entry
-                    .ok_or_else(|| self.error("P0026", "Metal implementation requires `entry`"))?,
+            let source = source
+                .ok_or_else(|| self.error("P0025", "external implementation requires `source`"))?;
+            let entry = entry
+                .ok_or_else(|| self.error("P0026", "external implementation requires `entry`"))?;
+            match backend.as_str() {
+                "metal" => KernelImplementationAst::ExternalMetal { source, entry },
+                "cuda" => KernelImplementationAst::ExternalCuda { source, entry },
+                other => {
+                    return Err(self.error(
+                        "P0029",
+                        format!("unknown compute implementation backend `{other}`"),
+                    ));
+                }
             }
         } else {
             self.expect_word("each")?;
@@ -884,33 +976,76 @@ impl Parser {
             reads.push((binding, stream));
             self.eat_symbol(',');
         }
+        let implementations = if self.peek_word() == Some("implementations") {
+            self.expect_word("implementations")?;
+            self.expect_symbol('{')?;
+            let mut implementations = Vec::new();
+            while !self.eat_symbol('}') {
+                implementations.push(self.parse_view_implementation()?);
+            }
+            implementations
+        } else {
+            vec![self.parse_view_implementation()?]
+        };
+        Ok(ViewAst {
+            name,
+            reads,
+            implementations,
+        })
+    }
+
+    fn parse_view_implementation(&mut self) -> Result<ViewImplementationAst, SourceDiagnostic> {
         self.expect_word("extern")?;
-        self.expect_word("metal")?;
+        let backend = self.expect_any_word()?;
         self.expect_symbol('{')?;
-        let mut source = None;
-        let mut entry = None;
+        let mut properties = BTreeMap::new();
         while !self.eat_symbol('}') {
             let property = self.expect_any_word()?;
             self.expect_symbol('=')?;
             let value = self.expect_text()?;
-            match property.as_str() {
-                "source" => source = Some(value),
-                "entry" => entry = Some(value),
-                other => {
-                    return Err(
-                        self.error("P0060", format!("unknown Metal view property `{other}`"))
-                    );
-                }
+            if properties.insert(property.clone(), value).is_some() {
+                return Err(self.error(
+                    "P0060",
+                    format!("duplicate {backend} view property `{property}`"),
+                ));
             }
             self.eat_symbol(',');
             self.eat_symbol(';');
         }
-        Ok(ViewAst {
-            name,
-            reads,
-            source: source.ok_or_else(|| self.error("P0061", "view requires `source`"))?,
-            entry: entry.ok_or_else(|| self.error("P0062", "view requires `entry`"))?,
-        })
+        let take = |properties: &mut BTreeMap<String, String>, key: &str| {
+            properties
+                .remove(key)
+                .ok_or_else(|| self.error("P0061", format!("{backend} view requires `{key}`")))
+        };
+        let implementation = match backend.as_str() {
+            "metal" => ViewImplementationAst::Metal {
+                source: take(&mut properties, "source")?,
+                entry: take(&mut properties, "entry")?,
+            },
+            "glsl" => ViewImplementationAst::Glsl {
+                vertex_source: take(&mut properties, "vertex_source")?,
+                vertex_entry: properties
+                    .remove("vertex_entry")
+                    .unwrap_or_else(|| "main".to_owned()),
+                fragment_source: take(&mut properties, "fragment_source")?,
+                fragment_entry: properties
+                    .remove("fragment_entry")
+                    .unwrap_or_else(|| "main".to_owned()),
+            },
+            other => {
+                return Err(self.error(
+                    "P0063",
+                    format!("unknown view implementation format `{other}`"),
+                ));
+            }
+        };
+        if let Some(property) = properties.keys().next() {
+            return Err(self.error(
+                "P0060",
+                format!("unknown {backend} view property `{property}`"),
+            ));
+        }
+        Ok(implementation)
     }
 
     fn parse_typed(&mut self) -> Result<TypedAst, SourceDiagnostic> {
@@ -1159,16 +1294,9 @@ fn parse_unit(text: &str) -> Result<Unit, String> {
 }
 
 fn lower(module: ModuleAst) -> Result<ModuleGraph, SourceDiagnostic> {
-    if module.target != "metal" {
-        return Err(SourceDiagnostic::new(
-            "S0001",
-            format!("unsupported target `{}`; expected `metal`", module.target),
-            module.span,
-        ));
-    }
-
     let module_name = module.name.clone();
-    let mut builder = ModuleBuilder::new(module.name).target(Target::Metal);
+    let module_target = module.target.clone();
+    let mut builder = ModuleBuilder::new(module.name).target(module.target);
     for constant in module.constants {
         let value = lower_value(&constant.value, &constant.typed.data_type)
             .map_err(|message| SourceDiagnostic::new("S0010", message, constant.span))?;
@@ -1189,7 +1317,8 @@ fn lower(module: ModuleAst) -> Result<ModuleGraph, SourceDiagnostic> {
         .length(stream.length)
         .buffering(stream.buffering)
         .access(stream.access)
-        .storage(stream.storage);
+        .storage(stream.storage)
+        .domain(stream.domain);
         if let Some(initial) = stream.initial {
             let value = lower_stream_initial(&initial, &stream.typed.data_type)
                 .map_err(|message| SourceDiagnostic::new("S0011", message, stream.span))?;
@@ -1198,7 +1327,7 @@ fn lower(module: ModuleAst) -> Result<ModuleGraph, SourceDiagnostic> {
         builder = builder.stream(draft);
     }
     for kernel in module.kernels {
-        let implementation = lower_kernel_implementation(&module_name, &kernel)?;
+        let implementations = lower_kernel_implementations(&module_name, &module_target, &kernel)?;
         let binding_order = kernel
             .parameters
             .iter()
@@ -1224,9 +1353,10 @@ fn lower(module: ModuleAst) -> Result<ModuleGraph, SourceDiagnostic> {
             }
             draft = draft.slot(slot);
         }
-        draft = draft
-            .abi(KernelAbiDraft::new(binding_order))
-            .implementation(implementation);
+        draft = draft.abi(KernelAbiDraft::new(binding_order));
+        for implementation in implementations {
+            draft = draft.implementation(implementation);
+        }
         builder = builder.kernel(draft);
     }
     for pass in module.passes {
@@ -1237,7 +1367,38 @@ fn lower(module: ModuleAst) -> Result<ModuleGraph, SourceDiagnostic> {
         builder = builder.pass(draft);
     }
     for view in module.views {
-        let mut draft = ViewDraft::render(view.name, metal_implementation(view.source, view.entry));
+        let mut implementations = Vec::new();
+        for implementation in view.implementations {
+            match implementation {
+                ViewImplementationAst::Metal { source, entry } => {
+                    implementations.push(metal_implementation(source, entry));
+                }
+                ViewImplementationAst::Glsl {
+                    vertex_source,
+                    vertex_entry,
+                    fragment_source,
+                    fragment_entry,
+                } => {
+                    implementations.push(glsl_shader_implementation(
+                        vertex_source,
+                        vertex_entry,
+                        ShaderStage::Vertex,
+                    ));
+                    implementations.push(glsl_shader_implementation(
+                        fragment_source,
+                        fragment_entry,
+                        ShaderStage::Fragment,
+                    ));
+                }
+            }
+        }
+        let first = implementations.first().cloned().ok_or_else(|| {
+            SourceDiagnostic::new("S0030", "view has no implementation", module.span)
+        })?;
+        let mut draft = ViewDraft::render(view.name, first);
+        for implementation in implementations.into_iter().skip(1) {
+            draft = draft.implementation(implementation);
+        }
         for (binding, stream) in view.reads {
             draft = draft.read(binding, stream);
         }
@@ -1277,16 +1438,29 @@ fn lower(module: ModuleAst) -> Result<ModuleGraph, SourceDiagnostic> {
     })
 }
 
-fn lower_kernel_implementation(
+fn lower_kernel_implementations(
     module_name: &str,
+    target: &Target,
     kernel: &KernelAst,
-) -> Result<pqo_core::BackendImplementation, SourceDiagnostic> {
+) -> Result<Vec<pqo_core::BackendImplementation>, SourceDiagnostic> {
     match &kernel.implementation {
         KernelImplementationAst::ExternalMetal { source, entry } => {
-            Ok(metal_implementation(source, entry))
+            Ok(vec![metal_implementation(source, entry)])
+        }
+        KernelImplementationAst::ExternalCuda { source, entry } => {
+            Ok(vec![cuda_implementation(source, entry)])
         }
         KernelImplementationAst::Native { index, statements } => {
-            generate_metal(module_name, kernel, index, statements)
+            let mut implementations = Vec::new();
+            if target.supports(&TargetProfile::metal()) {
+                implementations.push(generate_metal(module_name, kernel, index, statements)?);
+            }
+            if target.supports(&TargetProfile::cuda_vulkan())
+                || target.supports(&TargetProfile::cuda_headless())
+            {
+                implementations.push(generate_cuda(module_name, kernel, index, statements)?);
+            }
+            Ok(implementations)
         }
     }
 }
@@ -1424,6 +1598,149 @@ fn generate_metal(
         entry,
         source,
     ))
+}
+
+fn generate_cuda(
+    module_name: &str,
+    kernel: &KernelAst,
+    index: &str,
+    statements: &[StatementAst],
+) -> Result<pqo_core::BackendImplementation, SourceDiagnostic> {
+    // Reuse the native type/unit/effect checker until the native IR is split
+    // from backend emission. This deliberately validates semantics before any
+    // CUDA source is produced.
+    let _ = generate_metal(module_name, kernel, index, statements)?;
+    let parameters = kernel
+        .parameters
+        .iter()
+        .map(|parameter| (parameter.name.clone(), parameter))
+        .collect::<BTreeMap<_, _>>();
+    let entry = format!("{}_main", kernel.name);
+    let mut source = String::from(
+        "#include <cuda_runtime.h>\n\n\
+#ifndef PQO_CUDA_TYPES\n#define PQO_CUDA_TYPES\n\
+struct pqo_float2 { float x, y; };\n\
+struct pqo_float3 { float x, y, z; };\n\
+struct pqo_float4 { float x, y, z, w; };\n\
+#define PQO_VEC_OPS(T, BODY) BODY\n\
+__device__ inline pqo_float2 operator+(pqo_float2 a,pqo_float2 b){return {a.x+b.x,a.y+b.y};}\n\
+__device__ inline pqo_float2 operator-(pqo_float2 a,pqo_float2 b){return {a.x-b.x,a.y-b.y};}\n\
+__device__ inline pqo_float2 operator*(pqo_float2 a,float b){return {a.x*b,a.y*b};}\n\
+__device__ inline pqo_float2 operator*(float a,pqo_float2 b){return b*a;}\n\
+__device__ inline pqo_float2 operator*(pqo_float2 a,pqo_float2 b){return {a.x*b.x,a.y*b.y};}\n\
+__device__ inline pqo_float2 operator/(pqo_float2 a,float b){return {a.x/b,a.y/b};}\n\
+__device__ inline pqo_float2 operator/(pqo_float2 a,pqo_float2 b){return {a.x/b.x,a.y/b.y};}\n\
+__device__ inline pqo_float3 operator+(pqo_float3 a,pqo_float3 b){return {a.x+b.x,a.y+b.y,a.z+b.z};}\n\
+__device__ inline pqo_float3 operator-(pqo_float3 a,pqo_float3 b){return {a.x-b.x,a.y-b.y,a.z-b.z};}\n\
+__device__ inline pqo_float3 operator*(pqo_float3 a,float b){return {a.x*b,a.y*b,a.z*b};}\n\
+__device__ inline pqo_float3 operator*(float a,pqo_float3 b){return b*a;}\n\
+__device__ inline pqo_float3 operator*(pqo_float3 a,pqo_float3 b){return {a.x*b.x,a.y*b.y,a.z*b.z};}\n\
+__device__ inline pqo_float3 operator/(pqo_float3 a,float b){return {a.x/b,a.y/b,a.z/b};}\n\
+__device__ inline pqo_float3 operator/(pqo_float3 a,pqo_float3 b){return {a.x/b.x,a.y/b.y,a.z/b.z};}\n\
+__device__ inline pqo_float4 operator+(pqo_float4 a,pqo_float4 b){return {a.x+b.x,a.y+b.y,a.z+b.z,a.w+b.w};}\n\
+__device__ inline pqo_float4 operator-(pqo_float4 a,pqo_float4 b){return {a.x-b.x,a.y-b.y,a.z-b.z,a.w-b.w};}\n\
+__device__ inline pqo_float4 operator*(pqo_float4 a,float b){return {a.x*b,a.y*b,a.z*b,a.w*b};}\n\
+__device__ inline pqo_float4 operator*(float a,pqo_float4 b){return b*a;}\n\
+__device__ inline pqo_float4 operator*(pqo_float4 a,pqo_float4 b){return {a.x*b.x,a.y*b.y,a.z*b.z,a.w*b.w};}\n\
+__device__ inline pqo_float4 operator/(pqo_float4 a,float b){return {a.x/b,a.y/b,a.z/b,a.w/b};}\n\
+__device__ inline pqo_float4 operator/(pqo_float4 a,pqo_float4 b){return {a.x/b.x,a.y/b.y,a.z/b.z,a.w/b.w};}\n\
+#endif\n\n",
+    );
+    source.push_str(&format!("extern \"C\" __global__ void {entry}(\n"));
+    for parameter in &kernel.parameters {
+        let storage_type = cuda_storage_type(&parameter.typed.data_type)
+            .map_err(|message| SourceDiagnostic::new("C0003", message, kernel.span))?;
+        let qualifier = if parameter.access == SlotAccess::Read {
+            "const "
+        } else {
+            ""
+        };
+        source.push_str(&format!(
+            "    {qualifier}{storage_type} *{},\n",
+            parameter.name
+        ));
+    }
+    source.push_str(
+        "    const unsigned int *pqo_dynamic_count,\n    unsigned int pqo_max_count)\n{\n",
+    );
+    source.push_str(&format!(
+        "    unsigned int {index} = blockIdx.x * blockDim.x + threadIdx.x;\n    unsigned int pqo_count = pqo_dynamic_count ? min(*pqo_dynamic_count, pqo_max_count) : pqo_max_count;\n    if ({index} >= pqo_count) return;\n"
+    ));
+    for statement in statements {
+        let compiled = compile_expression(&statement.value, &parameters, index)?;
+        let value = render_cuda_expression(&statement.value, &parameters, index)?;
+        let parameter = parameters[&statement.target];
+        if compiled.typed.data_type != parameter.typed.data_type
+            || compiled.typed.unit != parameter.typed.unit
+        {
+            return Err(SourceDiagnostic::new(
+                "T0005",
+                format!(
+                    "assignment to `{}` has an incompatible expression",
+                    statement.target
+                ),
+                statement.span,
+            ));
+        }
+        source.push_str(&format!(
+            "    {}[{}] = {};\n",
+            statement.target, statement.index, value
+        ));
+    }
+    source.push_str("}\n");
+    Ok(packaged_cuda_implementation(
+        format!("pqo://generated/{module_name}/{}.cu", kernel.name),
+        entry,
+        source,
+    ))
+}
+
+fn render_cuda_expression(
+    expression: &ExprAst,
+    parameters: &BTreeMap<String, &ParameterAst>,
+    kernel_index: &str,
+) -> Result<String, SourceDiagnostic> {
+    match &expression.kind {
+        ExprKind::Name(name) if name == kernel_index => Ok(name.clone()),
+        ExprKind::Name(name) => {
+            let parameter = parameters.get(name).ok_or_else(|| {
+                SourceDiagnostic::new("T0010", format!("unknown name `{name}`"), expression.span)
+            })?;
+            if matches!(parameter.resource, ResourceKind::Stream) {
+                return Err(SourceDiagnostic::new(
+                    "T0011",
+                    format!("stream `{name}` must be indexed"),
+                    expression.span,
+                ));
+            }
+            Ok(format!("(*{name})"))
+        }
+        ExprKind::Index { resource, index } => Ok(format!("{resource}[{index}]")),
+        ExprKind::Number(number) => Ok(number.clone()),
+        ExprKind::Binary {
+            operator,
+            left,
+            right,
+        } => Ok(format!(
+            "({} {} {})",
+            render_cuda_expression(left, parameters, kernel_index)?,
+            operator.metal(),
+            render_cuda_expression(right, parameters, kernel_index)?
+        )),
+    }
+}
+
+fn cuda_storage_type(data_type: &DataType) -> Result<String, String> {
+    match data_type {
+        DataType::Scalar(ScalarType::F32) => Ok("float".to_owned()),
+        DataType::Vector {
+            scalar: ScalarType::F32,
+            lanes,
+        } if (2..=4).contains(lanes) => Ok(format!("pqo_float{lanes}")),
+        _ => Err(format!(
+            "native CUDA generation currently supports only f32 scalars and vectors, found {data_type:?}"
+        )),
+    }
 }
 
 fn compile_expression(
@@ -1737,12 +2054,46 @@ fn lower_value(raw: &RawLiteral, data_type: &DataType) -> Result<Literal, String
 #[cfg(test)]
 mod tests {
     use super::parse;
-    use pqo_core::StreamIndexing;
+    use pqo_core::{Backend, StreamIndexing, TargetPolicy, TargetProfile};
     use pqo_validator::Validator;
 
     const SOURCE: &str = include_str!("../../../examples/hello-particle/hello-particle.agent.pqo");
     const CRYSTAL_SOURCE: &str = include_str!("../../../examples/hello-crystal/crystal.pqo");
     const AGENT_REFERENCE: &str = include_str!("../../../docs/agent-coding-reference.md");
+    const CUDA_SOURCE: &str = include_str!("../../../examples/hello-cuda/hello-cuda.pqo");
+
+    #[test]
+    fn portable_native_kernel_emits_metal_and_cuda() {
+        let graph = parse(CUDA_SOURCE).expect("portable source should parse");
+        assert_eq!(graph.target, TargetPolicy::Portable);
+        let backends = graph.kernels[0]
+            .implementations
+            .iter()
+            .map(|implementation| implementation.backend.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(backends, [Backend::Metal, Backend::Cuda]);
+        assert!(
+            graph.kernels[0].implementations[1]
+                .source_text
+                .as_deref()
+                .unwrap()
+                .contains("__global__ void accelerate_main")
+        );
+        assert!(Validator::validate_for(&graph, TargetProfile::cuda_headless()).is_valid());
+    }
+
+    #[test]
+    fn explicit_cuda_target_set_is_normalized() {
+        let source = CUDA_SOURCE.replace("target portable", "targets [cuda-vulkan, cuda-headless]");
+        let graph = parse(&source).expect("target set should parse");
+        let TargetPolicy::Profiles(profiles) = graph.target else {
+            panic!("expected restricted profiles");
+        };
+        assert_eq!(
+            profiles,
+            [TargetProfile::cuda_vulkan(), TargetProfile::cuda_headless()]
+        );
+    }
 
     #[test]
     fn agent_source_lowers_to_a_valid_graph() {

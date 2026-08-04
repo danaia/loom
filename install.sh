@@ -20,29 +20,39 @@ safe_pqo_home() {
 
 safe_pqo_home "${PQO_HOME}" || fail "refusing unsafe PQO_HOME: ${PQO_HOME}"
 
-[ "$(uname -s)" = "Darwin" ] ||
-  fail "Pqo execution currently requires macOS and Metal"
-
-[ "$(uname -m)" = "arm64" ] ||
-  fail "Pqo currently requires an Apple Silicon Mac (arm64)"
-PQO_ARCH="arm64"
+case "$(uname -s):$(uname -m)" in
+  Darwin:arm64)
+    PQO_PLATFORM="darwin"
+    PQO_ARCH="arm64"
+    ;;
+  Linux:x86_64)
+    PQO_PLATFORM="linux"
+    PQO_ARCH="x86_64"
+    ;;
+  *)
+    fail "Pqo requires macOS/Apple Silicon or Linux/x86_64 with an NVIDIA CUDA driver"
+    ;;
+esac
 
 command -v curl >/dev/null 2>&1 || fail "curl is required"
 command -v tar >/dev/null 2>&1 || fail "tar is required"
 
-ASSET_NAME="pqo-darwin-${PQO_ARCH}"
+ASSET_NAME="pqo-${PQO_PLATFORM}-${PQO_ARCH}"
 if [ -n "${PQO_ARCHIVE_URL:-}" ]; then
   ARCHIVE_URL="${PQO_ARCHIVE_URL}"
   CHECKSUM_URL="${PQO_CHECKSUM_URL:-${PQO_ARCHIVE_URL}.sha256}"
+  INSTALL_SOURCE="local archive"
 elif [ -n "${PQO_VERSION}" ]; then
   RELEASE_ROOT="https://github.com/${PQO_REPOSITORY}/releases/download/${PQO_VERSION}"
   ARCHIVE_URL="${RELEASE_ROOT}/${ASSET_NAME}.tar.gz"
   CHECKSUM_URL="${RELEASE_ROOT}/${ASSET_NAME}.sha256"
+  INSTALL_SOURCE="Pqo ${PQO_VERSION} release"
 else
   RELEASE_ROOT="https://github.com/${PQO_REPOSITORY}/releases/latest/download"
   RELEASE_CACHE_KEY="$(date +%s)"
   ARCHIVE_URL="${RELEASE_ROOT}/${ASSET_NAME}.tar.gz?pqo_release=${RELEASE_CACHE_KEY}"
   CHECKSUM_URL="${RELEASE_ROOT}/${ASSET_NAME}.sha256?pqo_release=${RELEASE_CACHE_KEY}"
+  INSTALL_SOURCE="latest Pqo release"
 fi
 
 TEMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/pqo-install.XXXXXX")"
@@ -54,7 +64,7 @@ cleanup() {
 }
 trap cleanup EXIT HUP INT TERM
 
-echo "Downloading Pqo for macOS ${PQO_ARCH}..."
+echo "Installing Pqo for ${PQO_PLATFORM} ${PQO_ARCH} from ${INSTALL_SOURCE}..."
 curl -fL --retry 3 --proto '=https,file' --tlsv1.2 \
   "${ARCHIVE_URL}" -o "${ARCHIVE_FILE}"
 curl -fL --retry 3 --proto '=https,file' --tlsv1.2 \
@@ -120,6 +130,10 @@ echo "Pqo $("${PQO_HOME}/bin/pqo" --version | awk '{ print $2 }') installed."
 echo "  home: ${PQO_HOME}"
 echo "  command: ${PQO_LINK}"
 echo "  particle: pqo ${PQO_HOME}/examples/hello-particle.pqo"
+if [ "${PQO_PLATFORM}" = "linux" ]; then
+  echo "  CUDA headless: PQO_HEADLESS_TICKS=120 pqo run ${PQO_HOME}/examples/hello-cuda.pqo --target cuda-headless"
+  echo "  CUDA crystal: PQO_HEADLESS_TICKS=240 pqo run ${PQO_HOME}/examples/crystal-cuda.pqo --target cuda-headless"
+fi
 echo "  neon flock: pqo ${PQO_HOME}/examples/neon-flock.pqo"
 echo "  crystal: pqo ${PQO_HOME}/examples/crystal.pqo"
 echo "  marble water package: pqo ${PQO_HOME}/examples/marble-water.lmp"

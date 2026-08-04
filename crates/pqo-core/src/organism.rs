@@ -178,7 +178,7 @@ pub fn hello_organism_builder_with_config(config: HelloOrganismConfig) -> Module
     ];
 
     let mut builder = ModuleBuilder::new("hello_organism")
-        .target(Target::Metal)
+        .target(Target::metal())
         .value(ValueDraft::constant(
             "organism.capacity",
             u32_type.clone(),

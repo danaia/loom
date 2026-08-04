@@ -10,14 +10,26 @@ permissions:
 
 jobs:
   package:
-    name: Package Apple Silicon
-    runs-on: macos-15
+    name: Package ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        include:
+          - name: Apple Silicon
+            runner: macos-15
+            asset: pqo-darwin-arm64
+          - name: Linux x86_64
+            runner: ubuntu-24.04
+            asset: pqo-linux-x86_64
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: pqo-macos-release
+      - name: Install CUDA build dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install --yes nvidia-cuda-toolkit
       - name: Test language and validation
         run: >-
           cargo test --locked
@@ -29,10 +41,10 @@ jobs:
         run: ./scripts/package-pqo.sh
       - uses: actions/upload-artifact@v4
         with:
-          name: pqo-darwin-arm64
+          name: ${{ matrix.asset }}
           path: |
-            target/dist/pqo-darwin-arm64.tar.gz
-            target/dist/pqo-darwin-arm64.sha256
+            target/dist/${{ matrix.asset }}.tar.gz
+            target/dist/${{ matrix.asset }}.sha256
           if-no-files-found: error
 
   publish:

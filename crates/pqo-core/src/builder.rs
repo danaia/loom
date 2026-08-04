@@ -26,7 +26,7 @@ impl ModuleBuilder {
     pub fn new(name: impl Into<String>) -> Self {
         Self {
             name: name.into(),
-            target: Target::Metal,
+            target: Target::metal(),
             values: Vec::new(),
             streams: Vec::new(),
             kernels: Vec::new(),
@@ -224,6 +224,7 @@ impl ModuleBuilder {
                     length,
                     buffering: draft.buffering,
                     storage: draft.storage.clone(),
+                    domain: draft.domain.clone(),
                     access: draft.access.clone(),
                     write_authority: draft.write_authority.as_ref().and_then(|name| {
                         resolve(&capability_ids, name, "capabilities", &mut diagnostics)
@@ -300,7 +301,11 @@ impl ModuleBuilder {
                 slot_maps.insert(kernel_id, slot_ids);
                 let mut implementations = draft.implementations.clone();
                 implementations.sort_by(|left, right| {
-                    (&left.source, &left.entry).cmp(&(&right.source, &right.entry))
+                    (&left.backend, &left.source, &left.entry).cmp(&(
+                        &right.backend,
+                        &right.source,
+                        &right.entry,
+                    ))
                 });
                 KernelNode {
                     id: kernel_id,
@@ -390,12 +395,20 @@ impl ModuleBuilder {
                         })
                     })
                     .collect();
+                let mut implementations = draft.implementations.clone();
+                implementations.sort_by(|left, right| {
+                    (&left.backend, &left.source, &left.entry).cmp(&(
+                        &right.backend,
+                        &right.source,
+                        &right.entry,
+                    ))
+                });
                 ViewNode {
                     id: view_ids[&draft.name],
                     name: draft.name.clone(),
                     reads,
                     state: draft.state.clone(),
-                    implementation: draft.implementation.clone(),
+                    implementations,
                 }
             })
             .collect::<Vec<_>>();
@@ -690,7 +703,7 @@ impl ModuleBuilder {
         }
 
         Ok(ModuleGraph {
-            schema_version: 3,
+            schema_version: 4,
             name: self.name,
             target: self.target,
             resources: ResourceGraph {
@@ -748,6 +761,7 @@ pub struct StreamDraft {
     pub length: StreamLengthDraft,
     pub buffering: u32,
     pub storage: StorageClass,
+    pub domain: ResourceDomain,
     pub access: ResourceAccess,
     pub write_authority: Option<String>,
     pub initial: Option<StreamInitializer>,
@@ -763,6 +777,7 @@ impl StreamDraft {
             length: StreamLengthDraft::Fixed(1),
             buffering: 1,
             storage: StorageClass::DevicePrivate,
+            domain: ResourceDomain::ComputePrivate,
             access: ResourceAccess::DeviceReadWrite,
             write_authority: None,
             initial: None,
@@ -790,7 +805,15 @@ impl StreamDraft {
     }
 
     pub fn storage(mut self, storage: StorageClass) -> Self {
+        if storage == StorageClass::HostShared && self.domain == ResourceDomain::ComputePrivate {
+            self.domain = ResourceDomain::HostVisibleControl;
+        }
         self.storage = storage;
+        self
+    }
+
+    pub fn domain(mut self, domain: ResourceDomain) -> Self {
+        self.domain = domain;
         self
     }
 
@@ -966,10 +989,15 @@ pub fn metal_implementation(
 ) -> BackendImplementation {
     BackendImplementation {
         backend: Backend::Metal,
+        source_format: SourceFormat::MetalSl,
+        artifact_format: ArtifactFormat::Source,
+        stage: None,
         source: source.into(),
         entry: entry.into(),
+        entry_points: Vec::new(),
         source_text: None,
     }
+    .normalize_entry_points()
 }
 
 pub fn packaged_metal_implementation(
@@ -979,10 +1007,86 @@ pub fn packaged_metal_implementation(
 ) -> BackendImplementation {
     BackendImplementation {
         backend: Backend::Metal,
+        source_format: SourceFormat::MetalSl,
+        artifact_format: ArtifactFormat::Source,
+        stage: None,
         source: source.into(),
         entry: entry.into(),
+        entry_points: Vec::new(),
         source_text: Some(source_text.into()),
     }
+    .normalize_entry_points()
+}
+
+pub fn cuda_implementation(
+    source: impl Into<String>,
+    entry: impl Into<String>,
+) -> BackendImplementation {
+    BackendImplementation {
+        backend: Backend::Cuda,
+        source_format: SourceFormat::CudaCpp,
+        artifact_format: ArtifactFormat::Source,
+        stage: None,
+        source: source.into(),
+        entry: entry.into(),
+        entry_points: Vec::new(),
+        source_text: None,
+    }
+    .normalize_entry_points()
+}
+
+pub fn packaged_cuda_implementation(
+    source: impl Into<String>,
+    entry: impl Into<String>,
+    source_text: impl Into<String>,
+) -> BackendImplementation {
+    BackendImplementation {
+        backend: Backend::Cuda,
+        source_format: SourceFormat::CudaCpp,
+        artifact_format: ArtifactFormat::Source,
+        stage: None,
+        source: source.into(),
+        entry: entry.into(),
+        entry_points: Vec::new(),
+        source_text: Some(source_text.into()),
+    }
+    .normalize_entry_points()
+}
+
+pub fn spirv_implementation(
+    source: impl Into<String>,
+    entry_points: impl IntoIterator<Item = impl Into<String>>,
+    stage: ShaderStage,
+) -> BackendImplementation {
+    let entry_points = entry_points.into_iter().map(Into::into).collect::<Vec<_>>();
+    BackendImplementation {
+        backend: Backend::Vulkan,
+        source_format: SourceFormat::SpirV,
+        artifact_format: ArtifactFormat::SpirV,
+        stage: Some(stage),
+        source: source.into(),
+        entry: entry_points.first().cloned().unwrap_or_default(),
+        entry_points,
+        source_text: None,
+    }
+}
+
+pub fn glsl_shader_implementation(
+    source: impl Into<String>,
+    entry: impl Into<String>,
+    stage: ShaderStage,
+) -> BackendImplementation {
+    BackendImplementation {
+        backend: Backend::Vulkan,
+        source_format: SourceFormat::Glsl,
+        artifact_format: ArtifactFormat::Source,
+        stage: Some(stage),
+        source: source.into(),
+        entry: entry.into(),
+        entry_points: Vec::new(),
+        source_text: None,
+    }
+    .normalize_entry_points()
 }
 
 #[derive(Clone, Debug)]
@@ -1053,7 +1157,7 @@ pub struct ViewDraft {
     pub name: String,
     pub reads: Vec<ViewReadDraft>,
     pub state: ViewState,
-    pub implementation: BackendImplementation,
+    pub implementations: Vec<BackendImplementation>,
 }
 
 impl ViewDraft {
@@ -1062,8 +1166,13 @@ impl ViewDraft {
             name: name.into(),
             reads: Vec::new(),
             state: ViewState::CurrentCompletedTick,
-            implementation,
+            implementations: vec![implementation],
         }
+    }
+
+    pub fn implementation(mut self, implementation: BackendImplementation) -> Self {
+        self.implementations.push(implementation);
+        self
     }
 
     pub fn read(mut self, name: impl Into<String>, stream: impl Into<String>) -> Self {

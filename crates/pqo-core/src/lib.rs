@@ -9,6 +9,8 @@ pub mod model;
 pub mod organism;
 pub mod worm;
 
+pub use abi::*;
+
 pub use builder::*;
 pub use canonical::*;
 pub use crystal::*;
@@ -18,3 +20,4 @@ pub use ids::*;
 pub use model::*;
 pub use organism::*;
 pub use worm::*;
+pub mod abi;

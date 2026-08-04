@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Pqo CUDA Crystal</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main>
+      <section class="viewport">
+        <canvas id="crystal"></canvas>
+        <div class="brand"><span>PQO / CUDA</span><strong>CRYSTAL FIELD</strong></div>
+        <div class="hint">Drag to orbit · Scroll to zoom</div>
+      </section>
+      <aside>
+        <header><small>LIVE GPU ENVIRONMENT</small><h1>Crystal controls</h1></header>
+        <label>Growth front <output id="growthOut">0.72</output><input id="growth" type="range" min="0.08" max="1" step="0.01" value="0.72" /></label>
+        <label>Anisotropy <output id="anisotropyOut">0.68</output><input id="anisotropy" type="range" min="0" max="1" step="0.01" value="0.68" /></label>
+        <label>Temperature <output id="temperatureOut">0.18</output><input id="temperature" type="range" min="0" max="1" step="0.01" value="0.18" /></label>
+        <label>Damage <output id="damageOut">0.00</output><input id="damage" type="range" min="0" max="1" step="0.01" value="0" /></label>
+        <section class="telemetry">
+          <div><span>Backend</span><strong>CUDA sm_120</strong></div>
+          <div><span>Field</span><strong>100³ cells</strong></div>
+          <div><span>Renderer</span><strong>Tauri / WebGL</strong></div>
+          <div><span>Status</span><strong id="status">Connecting</strong></div>
+        </section>
+        <button id="reset">Reset crystal</button>
+      </aside>
+    </main>
+    <script src="app.js"></script>
+  </body>
+</html>

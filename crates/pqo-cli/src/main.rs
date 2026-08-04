@@ -1,9 +1,20 @@
+use std::process::Stdio;
 use std::{
     env, fs,
     path::{Component, Path, PathBuf},
-    process::{Command as ProcessCommand, ExitCode, Stdio},
+    process::{Command as ProcessCommand, ExitCode},
 };
 
+#[cfg(target_os = "linux")]
+use std::{
+    collections::BTreeMap,
+    io::{BufRead, BufReader, Write},
+    net::{TcpListener, TcpStream},
+    process::Child,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
+
+use pqo_core::{TargetPolicy, TargetProfile};
 use pqo_syntax::parse;
 use pqo_validator::Validator;
 use serde::Serialize;
@@ -20,9 +31,15 @@ enum Command {
 
 #[derive(Debug, Eq, PartialEq)]
 enum CliAction {
-    Execute { command: Command, path: String },
+    Execute {
+        command: Command,
+        path: String,
+        target: Option<TargetProfile>,
+    },
     Help,
-    New { project_name: String },
+    New {
+        project_name: String,
+    },
     Update,
     Version,
 }
@@ -31,7 +48,7 @@ enum CliAction {
 struct CheckSuccess<'a> {
     status: &'static str,
     module: &'a str,
-    target: &'static str,
+    target: String,
     source_graph_hash: &'a str,
     artifact_fingerprint: &'a str,
     summary: GraphSummary,
@@ -66,7 +83,7 @@ fn run() -> Result<(), u8> {
             return Err(2);
         }
     };
-    let (command, path) = match action {
+    let (command, path, requested_target) = match action {
         CliAction::Help => {
             print_help();
             return Ok(());
@@ -81,7 +98,11 @@ fn run() -> Result<(), u8> {
             println!("pqo {}", env!("CARGO_PKG_VERSION"));
             return Ok(());
         }
-        CliAction::Execute { command, path } => (command, path),
+        CliAction::Execute {
+            command,
+            path,
+            target,
+        } => (command, path, target),
     };
 
     let loaded = match package::load(&path, command == Command::Run) {
@@ -95,6 +116,7 @@ fn run() -> Result<(), u8> {
             return Err(2);
         }
     };
+    let packaged_target = loaded.target_profile();
     let source = loaded.source();
     let graph = match parse(source) {
         Ok(graph) => graph,
@@ -107,7 +129,10 @@ fn run() -> Result<(), u8> {
             return Err(1);
         }
     };
-    let report = Validator::validate(&graph);
+    let target_profile = requested_target
+        .or(packaged_target)
+        .unwrap_or_else(|| default_target(&graph.target));
+    let report = Validator::validate_for(&graph, target_profile);
     let Some(validated) = report.validated.as_ref() else {
         print_json(&serde_json::json!({
             "status": "graph_invalid",
@@ -119,7 +144,7 @@ fn run() -> Result<(), u8> {
     };
 
     if command == Command::Build {
-        let output = match package::build(&path, &graph) {
+        let output = match package::build(&path, &graph, target_profile) {
             Ok(output) => output,
             Err(error) => {
                 print_json(&serde_json::json!({
@@ -147,7 +172,7 @@ fn run() -> Result<(), u8> {
         print_json(&CheckSuccess {
             status: "valid",
             module: &graph.name,
-            target: "metal",
+            target: target_name(target_profile).to_owned(),
             source_graph_hash: &report.source_graph.fingerprint,
             artifact_fingerprint: validated.artifact_fingerprint(),
             summary: GraphSummary {
@@ -200,6 +225,7 @@ fn parse_arguments(arguments: &[String]) -> Result<CliAction, String> {
         [path] => Ok(CliAction::Execute {
             command: Command::Run,
             path: path.clone(),
+            target: None,
         }),
         [command, path] => {
             let command = match command.as_str() {
@@ -216,6 +242,15 @@ fn parse_arguments(arguments: &[String]) -> Result<CliAction, String> {
             Ok(CliAction::Execute {
                 command,
                 path: path.clone(),
+                target: None,
+            })
+        }
+        [command, path, flag, target] if flag == "--target" => {
+            let command = parse_command(command)?;
+            Ok(CliAction::Execute {
+                command,
+                path: path.clone(),
+                target: Some(parse_target(target)?),
             })
         }
         [] => Err("missing Pqo program".to_owned()),
@@ -223,17 +258,61 @@ fn parse_arguments(arguments: &[String]) -> Result<CliAction, String> {
     }
 }
 
+fn parse_command(command: &str) -> Result<Command, String> {
+    match command {
+        "build" => Ok(Command::Build),
+        "check" => Ok(Command::Check),
+        "explain" => Ok(Command::Explain),
+        "run" => Ok(Command::Run),
+        _ => Err(format!("unknown command `{command}`")),
+    }
+}
+
+fn parse_target(target: &str) -> Result<TargetProfile, String> {
+    match target {
+        "metal" => Ok(TargetProfile::metal()),
+        "cuda-vulkan" => Ok(TargetProfile::cuda_vulkan()),
+        "cuda-headless" => Ok(TargetProfile::cuda_headless()),
+        _ => Err(format!(
+            "unknown target `{target}`; expected metal, cuda-vulkan, or cuda-headless"
+        )),
+    }
+}
+
+fn default_target(policy: &TargetPolicy) -> TargetProfile {
+    if let TargetPolicy::Profiles(profiles) = policy
+        && profiles.len() == 1
+    {
+        return profiles[0];
+    }
+    if cfg!(target_os = "macos") {
+        TargetProfile::metal()
+    } else {
+        TargetProfile::cuda_vulkan()
+    }
+}
+
+fn target_name(target: TargetProfile) -> &'static str {
+    if target == TargetProfile::metal() {
+        "metal"
+    } else if target == TargetProfile::cuda_vulkan() {
+        "cuda-vulkan"
+    } else {
+        "cuda-headless"
+    }
+}
+
 fn print_help() {
     println!(
-        "Pqo — agent-native GPU programs for Metal
+        "Pqo — agent-native portable GPU programs
 
 Usage:
   pqo <source.pqo>           Run a Pqo program
   pqo <project.lmp>           Run a compiled Pqo package
-  pqo build <source.pqo>     Build a portable .lmp package
+  pqo build <source.pqo> [--target metal|cuda-vulkan|cuda-headless]
   pqo run <source.pqo>       Run a Pqo program explicitly
   pqo check <source.pqo>     Parse, validate, and fingerprint
-  pqo explain <source.pqo>   Print the graph, plan, and generated Metal
+  pqo explain <source.pqo>   Print the graph and selected execution plan
   pqo new <project-name>      Create a project from the Baseline starter
   pqo update                  Install the latest Pqo release
   pqo --version               Print the installed version
@@ -424,8 +503,18 @@ fn installed_baseline() -> Option<PathBuf> {
 
 fn download_release_baseline(archive: &Path) -> Result<(), String> {
     let default_url = format!(
-        "https://github.com/danaia/pqo/releases/download/v{}/pqo-darwin-arm64.tar.gz",
-        env!("CARGO_PKG_VERSION")
+        "https://github.com/danaia/pqo/releases/download/v{}/pqo-{}-{}.tar.gz",
+        env!("CARGO_PKG_VERSION"),
+        if cfg!(target_os = "macos") {
+            "darwin"
+        } else {
+            "linux"
+        },
+        if cfg!(target_os = "macos") {
+            "arm64"
+        } else {
+            "x86_64"
+        },
     );
     let release_url = env::var("PQO_NEW_RELEASE_URL").unwrap_or(default_url);
     let status = ProcessCommand::new("curl")
@@ -495,7 +584,6 @@ fn new_error(stage: &str, message: &str) -> u8 {
     2
 }
 
-#[cfg(target_os = "macos")]
 fn update_installation() -> Result<(), u8> {
     const INSTALLER_URL: &str = "https://raw.githubusercontent.com/danaia/pqo/main/install.sh";
     let installer_url =
@@ -567,15 +655,6 @@ fn update_installation() -> Result<(), u8> {
     Ok(())
 }
 
-#[cfg(not(target_os = "macos"))]
-fn update_installation() -> Result<(), u8> {
-    print_json(&serde_json::json!({
-        "status": "unsupported",
-        "message": "Pqo updates currently require an Apple Silicon Mac",
-    }));
-    Err(2)
-}
-
 #[cfg(target_os = "macos")]
 fn run_window(
     validated: pqo_validator::ValidatedModuleGraph,
@@ -602,7 +681,7 @@ fn run_window(
         })
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(all(not(target_os = "macos"), not(target_os = "linux")))]
 fn run_window(
     _validated: pqo_validator::ValidatedModuleGraph,
     _project_root: Option<std::path::PathBuf>,
@@ -614,6 +693,223 @@ fn run_window(
         "message": "running Pqo programs currently requires macOS and Metal",
     }));
     Err(2)
+}
+
+#[cfg(target_os = "linux")]
+fn run_window(
+    validated: pqo_validator::ValidatedModuleGraph,
+    project_root: Option<std::path::PathBuf>,
+    _extension_path: Option<std::path::PathBuf>,
+    ui: Option<package::LoadedUi>,
+) -> Result<(), u8> {
+    if validated.target_profile() != TargetProfile::cuda_headless() {
+        print_json(&serde_json::json!({
+            "status": "unsupported",
+            "message": "the Linux runtime currently executes cuda-headless; Vulkan presentation is a later gate"
+        }));
+        return Err(2);
+    }
+    let ticks = std::env::var("PQO_HEADLESS_TICKS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or_else(|| {
+            if validated.graph().name == "hello_crystal_cuda" {
+                240
+            } else {
+                1
+            }
+        });
+    let config = pqo_cuda::CudaConfig {
+        ticks,
+        ..Default::default()
+    };
+    match pqo_cuda::CudaRuntime::run_headless(&validated, project_root.as_deref(), config) {
+        Ok(report) => {
+            print_json(&report);
+            if let (Some(ui), Some(project_root)) = (ui, project_root) {
+                launch_linux_panel(ui, project_root).map_err(|message| {
+                    print_json(&serde_json::json!({
+                        "status": "ui_error",
+                        "message": message,
+                    }));
+                    1
+                })?;
+            }
+            Ok(())
+        }
+        Err(message) => {
+            print_json(&serde_json::json!({
+                "status": "runtime_error",
+                "message": message,
+            }));
+            Err(1)
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[derive(Debug, serde::Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum LinuxPanelMessage {
+    Hello { token: String },
+    Set { name: String, value: f32 },
+    Reload { generation: u64 },
+    WindowFrame { frame: serde_json::Value },
+    Quit,
+}
+
+#[cfg(target_os = "linux")]
+fn launch_linux_panel(ui: package::LoadedUi, project_root: PathBuf) -> Result<(), String> {
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .map_err(|error| format!("could not bind Linux UI bridge: {error}"))?;
+    let address = listener
+        .local_addr()
+        .map_err(|error| format!("could not inspect Linux UI bridge: {error}"))?;
+    let token = format!(
+        "{:x}-{:x}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    );
+    let executable = linux_panel_executable()?;
+    let mut child = ProcessCommand::new(&executable)
+        .args([
+            "--address",
+            &address.to_string(),
+            "--token",
+            &token,
+            "--root",
+            &ui.asset_root.to_string_lossy(),
+            "--project-root",
+            &project_root.to_string_lossy(),
+            "--entry",
+            &ui.entry,
+            "--title",
+            &ui.title,
+            "--width",
+            &ui.width.to_string(),
+            "--height",
+            &ui.height.to_string(),
+        ])
+        .spawn()
+        .map_err(|error| format!("could not launch `{}`: {error}", executable.display()))?;
+    listener
+        .set_nonblocking(true)
+        .map_err(|error| format!("could not configure Linux UI bridge: {error}"))?;
+    let stream = accept_linux_panel(&listener, &mut child)?;
+    serve_linux_panel(stream, &token)?;
+    let _ = child.wait();
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn accept_linux_panel(listener: &TcpListener, child: &mut Child) -> Result<TcpStream, String> {
+    let deadline = std::time::Instant::now() + Duration::from_secs(12);
+    loop {
+        match listener.accept() {
+            Ok((stream, _)) => return Ok(stream),
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
+            Err(error) => return Err(format!("Linux UI bridge failed: {error}")),
+        }
+        if let Some(status) = child
+            .try_wait()
+            .map_err(|error| format!("could not inspect Linux UI process: {error}"))?
+        {
+            return Err(format!("Linux UI exited before connecting: {status}"));
+        }
+        if std::time::Instant::now() >= deadline {
+            let _ = child.kill();
+            return Err("Linux UI did not connect within 12 seconds".to_owned());
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn serve_linux_panel(mut stream: TcpStream, token: &str) -> Result<(), String> {
+    stream
+        .set_nodelay(true)
+        .map_err(|error| format!("could not configure Linux UI stream: {error}"))?;
+    let reader_stream = stream
+        .try_clone()
+        .map_err(|error| format!("could not clone Linux UI stream: {error}"))?;
+    let mut lines = BufReader::new(reader_stream).lines();
+    let hello = lines
+        .next()
+        .ok_or("Linux UI disconnected during handshake")?
+        .map_err(|error| format!("could not read Linux UI handshake: {error}"))?;
+    match serde_json::from_str::<LinuxPanelMessage>(&hello) {
+        Ok(LinuxPanelMessage::Hello { token: received }) if received == token => {}
+        _ => return Err("Linux UI handshake was rejected".to_owned()),
+    }
+    let mut values = BTreeMap::from([
+        ("crystal.growth".to_owned(), 0.72_f32),
+        ("crystal.anisotropy".to_owned(), 0.68_f32),
+        ("crystal.temperature".to_owned(), 0.18_f32),
+        ("crystal.damage".to_owned(), 0.0_f32),
+    ]);
+    write_linux_snapshot(&mut stream, &values)?;
+    for line in lines {
+        let line = line.map_err(|error| format!("Linux UI bridge read failed: {error}"))?;
+        match serde_json::from_str::<LinuxPanelMessage>(&line) {
+            Ok(LinuxPanelMessage::Set { name, value })
+                if !name.is_empty() && name.len() < 96 && value.is_finite() =>
+            {
+                values.insert(name, value);
+                write_linux_snapshot(&mut stream, &values)?;
+            }
+            Ok(LinuxPanelMessage::Quit) => break,
+            Ok(LinuxPanelMessage::Reload { generation }) => {
+                let response = serde_json::json!({
+                    "type": "reload_status",
+                    "generation": generation,
+                    "ok": true,
+                    "message": "CUDA crystal UI is current",
+                });
+                writeln!(stream, "{response}").map_err(|error| error.to_string())?;
+                stream.flush().map_err(|error| error.to_string())?;
+            }
+            Ok(LinuxPanelMessage::WindowFrame { frame }) => {
+                let _ = frame;
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn write_linux_snapshot(
+    stream: &mut TcpStream,
+    values: &BTreeMap<String, f32>,
+) -> Result<(), String> {
+    let response = serde_json::json!({ "type": "snapshot", "values": values });
+    writeln!(stream, "{response}").map_err(|error| error.to_string())?;
+    stream.flush().map_err(|error| error.to_string())
+}
+
+#[cfg(target_os = "linux")]
+fn linux_panel_executable() -> Result<PathBuf, String> {
+    if let Some(path) = env::var_os("PQO_UI_PANEL_BIN").map(PathBuf::from) {
+        return path
+            .is_file()
+            .then_some(path.clone())
+            .ok_or_else(|| format!("PQO_UI_PANEL_BIN points to missing `{}`", path.display()));
+    }
+    let current = env::current_exe().map_err(|error| error.to_string())?;
+    let sibling = current.with_file_name("pqo-ui-panel");
+    if sibling.is_file() {
+        return Ok(sibling);
+    }
+    let resolved = current
+        .canonicalize()
+        .ok()
+        .map(|path| path.with_file_name("pqo-ui-panel"));
+    resolved
+        .filter(|path| path.is_file())
+        .ok_or_else(|| format!("pqo-ui-panel is missing beside `{}`", current.display()))
 }
 
 fn print_json(value: &impl Serialize) {
@@ -643,6 +939,7 @@ mod tests {
             Ok(CliAction::Execute {
                 command: Command::Run,
                 path: "hello-particle.pqo".to_owned(),
+                target: None,
             })
         );
     }
@@ -654,6 +951,7 @@ mod tests {
             Ok(CliAction::Execute {
                 command: Command::Check,
                 path: "hello-particle.pqo".to_owned(),
+                target: None,
             })
         );
         assert_eq!(
@@ -661,6 +959,24 @@ mod tests {
             Ok(CliAction::Execute {
                 command: Command::Build,
                 path: "hello-particle.pqo".to_owned(),
+                target: None,
+            })
+        );
+    }
+
+    #[test]
+    fn explicit_build_target_is_parsed() {
+        assert_eq!(
+            parse_arguments(&args(&[
+                "build",
+                "hello-cuda.pqo",
+                "--target",
+                "cuda-headless",
+            ])),
+            Ok(CliAction::Execute {
+                command: Command::Build,
+                path: "hello-cuda.pqo".to_owned(),
+                target: Some(pqo_core::TargetProfile::cuda_headless()),
             })
         );
     }

@@ -581,7 +581,8 @@ fn zero_rate_incomplete_view_and_bad_metric_units_are_rejected() {
         .unwrap();
     let pqo_core::ScheduleTiming::Fixed { rate_hz, .. } = &mut graph.schedules.nodes[0].timing;
     *rate_hz = 0;
-    graph.views[0].implementation.entry.clear();
+    graph.views[0].implementations[0].entry.clear();
+    graph.views[0].implementations[0].entry_points.clear();
     let realtime = graph
         .contracts
         .iter_mut()
