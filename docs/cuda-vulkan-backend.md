@@ -22,15 +22,19 @@ an evidence record, not a claim that all renderer gates are complete.
   signaling.
 - A validated two-to-four-slot presentation ring model with monotonic timeline
   generations.
+- A standalone native X11/Wayland Vulkan 1.3 window, CUDA-UUID device
+  selection, swapchain, synchronization2 barriers, and dynamic-rendering frame
+  submission. `pqo run --target cuda-vulkan` now uses this path and does not
+  launch the Tauri/WebGL panel.
 
 ## Not complete yet
 
-The standalone Vulkan swapchain renderer, CUDA-generated indirect draw path,
-full presentation-ring scheduler, swapchain recovery, and end-to-end device-loss
-recovery have not been implemented. Consequently, `pqo run --target
-cuda-vulkan` is rejected instead of pretending that the interactive backend is
-ready. CUDA headless execution is the production-usable Linux path in this
-revision.
+The live CUDA-backed crystal draw pipeline, CUDA-generated indirect draw path,
+full presentation-ring scheduler, swapchain recovery, and end-to-end
+device-loss recovery have not been implemented. The native swapchain currently
+uses an embedded procedural crystal shader and is therefore a backend bring-up
+surface, not yet the production shared-field renderer. CUDA headless execution
+remains the production-usable Linux compute path in this revision.
 
 The ABI module currently computes and records layouts; emitting Rust, CUDA, and
 GLSL declarations from every schema is a later gate. The headless runtime also
@@ -105,7 +109,7 @@ Inspection is an explicit post-run operation.
 | 4. CUDA artifact generation | Complete for native and external CUDA C++ |
 | 5. Headless CUDA correctness | Complete for explicit-initializer element kernels |
 | 6. Headless performance/logical plans | Initial graph runtime and telemetry complete |
-| 7. Standalone Vulkan renderer | Pending |
+| 7. Standalone Vulkan renderer | Native swapchain and procedural crystal pipeline complete; graph-driven pipelines pending |
 | 8. External memory and UUID matching | Probe complete |
 | 9. Timelines and state leases | Models/probe complete; integrated scheduler pending |
 | 10. Indirect Hello Particle presentation | Pending |

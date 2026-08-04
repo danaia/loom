@@ -19,6 +19,7 @@ pqo-metal = { path = "../pqo-metal" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 pqo-cuda = { path = "../pqo-cuda" }
+pqo-vulkan = { path = "../pqo-vulkan" }
 
 [[bin]]
 name = "pqo"

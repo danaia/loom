@@ -6,6 +6,11 @@ use ash::{Entry, vk};
 use pqo_cuda::{CudaDeviceIdentity, CudaRuntime};
 use serde::{Deserialize, Serialize};
 
+mod window;
+pub use window::{
+    NativeWindowConfig, VulkanControl, run_native_window, run_native_window_with_controls,
+};
+
 const REQUIRED_DEVICE_EXTENSIONS: [&str; 3] = [
     "VK_KHR_swapchain",
     "VK_KHR_external_memory_fd",

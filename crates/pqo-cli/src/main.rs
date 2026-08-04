@@ -11,6 +11,7 @@ use std::{
     io::{BufRead, BufReader, Write},
     net::{TcpListener, TcpStream},
     process::Child,
+    sync::mpsc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -702,10 +703,63 @@ fn run_window(
     _extension_path: Option<std::path::PathBuf>,
     ui: Option<package::LoadedUi>,
 ) -> Result<(), u8> {
+    if validated.target_profile() == TargetProfile::cuda_vulkan() {
+        let title = format!("Pqo — {} — CUDA / Vulkan", validated.graph().name);
+        let config = pqo_cuda::CudaConfig {
+            ticks: std::env::var("PQO_HEADLESS_TICKS")
+                .ok()
+                .and_then(|value| value.parse::<u64>().ok())
+                .unwrap_or_else(|| {
+                    if validated.graph().name == "hello_crystal_cuda" {
+                        240
+                    } else {
+                        1
+                    }
+                }),
+            ..Default::default()
+        };
+        let report =
+            pqo_cuda::CudaRuntime::run_headless(&validated, project_root.as_deref(), config)
+                .map_err(|message| {
+                    print_json(&serde_json::json!({
+                        "status": "runtime_error",
+                        "message": message,
+                    }));
+                    1
+                })?;
+        print_json(&report);
+        let controls = if let (Some(ui), Some(project_root)) = (ui, project_root) {
+            let (sender, receiver) = mpsc::channel();
+            std::thread::spawn(move || {
+                if let Err(message) =
+                    launch_linux_panel_with_controls(ui, project_root, Some(sender))
+                {
+                    eprintln!("Pqo controls window closed: {message}");
+                }
+            });
+            Some(receiver)
+        } else {
+            None
+        };
+        return pqo_vulkan::run_native_window_with_controls(
+            pqo_vulkan::NativeWindowConfig {
+                title,
+                ..Default::default()
+            },
+            controls,
+        )
+        .map_err(|message| {
+            print_json(&serde_json::json!({
+                "status": "vulkan_error",
+                "message": message,
+            }));
+            1
+        });
+    }
     if validated.target_profile() != TargetProfile::cuda_headless() {
         print_json(&serde_json::json!({
             "status": "unsupported",
-            "message": "the Linux runtime currently executes cuda-headless; Vulkan presentation is a later gate"
+            "message": "the Linux runtime requires cuda-vulkan or cuda-headless"
         }));
         return Err(2);
     }
@@ -760,6 +814,15 @@ enum LinuxPanelMessage {
 
 #[cfg(target_os = "linux")]
 fn launch_linux_panel(ui: package::LoadedUi, project_root: PathBuf) -> Result<(), String> {
+    launch_linux_panel_with_controls(ui, project_root, None)
+}
+
+#[cfg(target_os = "linux")]
+fn launch_linux_panel_with_controls(
+    ui: package::LoadedUi,
+    project_root: PathBuf,
+    controls: Option<mpsc::Sender<pqo_vulkan::VulkanControl>>,
+) -> Result<(), String> {
     let listener = TcpListener::bind("127.0.0.1:0")
         .map_err(|error| format!("could not bind Linux UI bridge: {error}"))?;
     let address = listener
@@ -799,7 +862,7 @@ fn launch_linux_panel(ui: package::LoadedUi, project_root: PathBuf) -> Result<()
         .set_nonblocking(true)
         .map_err(|error| format!("could not configure Linux UI bridge: {error}"))?;
     let stream = accept_linux_panel(&listener, &mut child)?;
-    serve_linux_panel(stream, &token)?;
+    serve_linux_panel(stream, &token, controls.as_ref())?;
     let _ = child.wait();
     Ok(())
 }
@@ -828,7 +891,11 @@ fn accept_linux_panel(listener: &TcpListener, child: &mut Child) -> Result<TcpSt
 }
 
 #[cfg(target_os = "linux")]
-fn serve_linux_panel(mut stream: TcpStream, token: &str) -> Result<(), String> {
+fn serve_linux_panel(
+    mut stream: TcpStream,
+    token: &str,
+    controls: Option<&mpsc::Sender<pqo_vulkan::VulkanControl>>,
+) -> Result<(), String> {
     stream
         .set_nodelay(true)
         .map_err(|error| format!("could not configure Linux UI stream: {error}"))?;
@@ -849,6 +916,9 @@ fn serve_linux_panel(mut stream: TcpStream, token: &str) -> Result<(), String> {
         ("crystal.anisotropy".to_owned(), 0.68_f32),
         ("crystal.temperature".to_owned(), 0.18_f32),
         ("crystal.damage".to_owned(), 0.0_f32),
+        ("crystal.show_field".to_owned(), 1.0_f32),
+        ("crystal.show_particles".to_owned(), 0.0_f32),
+        ("crystal.particle_count".to_owned(), 1_000_000.0_f32),
     ]);
     write_linux_snapshot(&mut stream, &values)?;
     for line in lines {
@@ -857,7 +927,10 @@ fn serve_linux_panel(mut stream: TcpStream, token: &str) -> Result<(), String> {
             Ok(LinuxPanelMessage::Set { name, value })
                 if !name.is_empty() && name.len() < 96 && value.is_finite() =>
             {
-                values.insert(name, value);
+                values.insert(name.clone(), value);
+                if let Some(controls) = controls {
+                    let _ = controls.send(pqo_vulkan::VulkanControl { name, value });
+                }
                 write_linux_snapshot(&mut stream, &values)?;
             }
             Ok(LinuxPanelMessage::Quit) => break,

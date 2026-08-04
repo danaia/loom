@@ -330,8 +330,10 @@ impl CudaRuntime {
         config: CudaConfig,
     ) -> Result<CudaRunReport, String> {
         let target = validated.target_profile();
-        if target.compute != ComputeBackend::Cuda || target.view != ViewBackend::Headless {
-            return Err("CUDA headless runtime requires the cuda-headless target".to_owned());
+        if target.compute != ComputeBackend::Cuda
+            || !matches!(target.view, ViewBackend::Headless | ViewBackend::Vulkan)
+        {
+            return Err("CUDA runtime requires a cuda-headless or cuda-vulkan target".to_owned());
         }
         let temporary = tempfile::tempdir().map_err(|error| error.to_string())?;
         let packaged = packaged_single_kernel_cubin(validated, project_root);

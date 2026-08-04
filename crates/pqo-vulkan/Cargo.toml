@@ -9,6 +9,8 @@ ash = "0.38"
 pqo-cuda = { path = "../pqo-cuda" }
 serde.workspace = true
 serde_json.workspace = true
+raw-window-handle = "0.5"
+winit = "0.28"
 
 [lib]
 path = "src/lib.rs"
@@ -16,3 +18,7 @@ path = "src/lib.rs"
 [[example]]
 name = "probe"
 path = "examples/probe.rs"
+
+[[example]]
+name = "window"
+path = "examples/window.rs"

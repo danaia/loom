@@ -2,7 +2,7 @@
   "framework": "vue3",
   "dist": "dist",
   "entry": "index.html",
-  "title": "Pqo CUDA Crystal — 3D Environment & Controls",
-  "width": 1180,
+  "title": "Pqo CUDA / Vulkan Crystal Controls",
+  "width": 380,
   "height": 760
 }

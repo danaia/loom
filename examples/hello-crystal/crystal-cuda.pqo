@@ -6,7 +6,7 @@
 
 pqo 0.1
 module hello_crystal_cuda
-target cuda-headless
+targets [cuda-vulkan, cuda-headless]
 
 stream simulation.tick: u32 {
   cap=1 len=1 buffers=1 access=rw storage=device

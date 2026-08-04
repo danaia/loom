@@ -2735,6 +2735,7 @@ dependencies = [
  "pqo-metal",
  "pqo-syntax",
  "pqo-validator",
+ "pqo-vulkan",
  "pqo-windowing",
  "serde",
  "serde_json",
@@ -2823,8 +2824,10 @@ version = "0.1.19"
 dependencies = [
  "ash",
  "pqo-cuda",
+ "raw-window-handle 0.5.2",
  "serde",
  "serde_json",
+ "winit",
 ]
 
 [[package]]
