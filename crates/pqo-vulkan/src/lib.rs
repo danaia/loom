@@ -8,7 +8,8 @@ use serde::{Deserialize, Serialize};
 
 mod window;
 pub use window::{
-    NativeWindowConfig, VulkanControl, run_native_window, run_native_window_with_controls,
+    NativeScene, NativeWindowConfig, VulkanControl, run_native_window,
+    run_native_window_with_controls,
 };
 
 const REQUIRED_DEVICE_EXTENSIONS: [&str; 3] = [

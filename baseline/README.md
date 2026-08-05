@@ -26,12 +26,14 @@ The project keeps the full application path ready for extension:
 - FPS, GPU memory, GPU frame-time, budget, and pressure telemetry
 - a portable `.lmp` build
 
-Linux/NVIDIA projects can start from `baseline-cuda.pqo`. It deliberately runs
-one particle while retaining GPU-resident simulation, visibility culling,
-four-level LOD classification, compact shared-presentation streams, and
-per-LOD counters. See `AI_AGENT_README.md` for the architecture and evidence
-loop an AI coding agent should follow when growing either starter into a
-high-performance 3D world.
+Linux/NVIDIA projects can start from `baseline-cuda.pqo`. It represents one
+neutral hydrogen atom as a point nucleus plus a normalized `1s` electron-density
+field sampled over `100^3` GPU cells. A `25^3` hierarchy provides density-aware
+culling, four detail levels, compact shared-presentation streams, and per-LOD
+counters. Its CUDA/Vulkan target opens a dedicated volumetric hydrogen `1s`
+probability-cloud view rather than the procedural crystal. See
+`AI_AGENT_README.md` for the mathematical limits, scaling route, and evidence
+loop an AI coding agent should follow.
 
 From the repository root:
 
@@ -45,7 +47,8 @@ CUDA headless validation and execution:
 
 ```sh
 pqo check baseline/baseline-cuda.pqo --target cuda-headless
-PQO_HEADLESS_TICKS=120 pqo run baseline/baseline-cuda.pqo --target cuda-headless
+PQO_HEADLESS_TICKS=1 PQO_INSPECT_STREAM=metrics.total_probability \
+  pqo run baseline/baseline-cuda.pqo --target cuda-headless
 ```
 
 `Space drag` defaults to zero. The viewer wraps particle positions at the

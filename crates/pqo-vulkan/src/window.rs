@@ -24,6 +24,14 @@ pub struct NativeWindowConfig {
     pub width: u32,
     pub height: u32,
     pub cuda_ordinal: i32,
+    pub scene: NativeScene,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum NativeScene {
+    #[default]
+    Crystal,
+    HydrogenAtom,
 }
 
 impl Default for NativeWindowConfig {
@@ -33,6 +41,7 @@ impl Default for NativeWindowConfig {
             width: 1180,
             height: 760,
             cuda_ordinal: 0,
+            scene: NativeScene::Crystal,
         }
     }
 }
@@ -61,7 +70,7 @@ pub fn run_native_window_with_controls(
         .with_resizable(false)
         .build(&event_loop)
         .map_err(|error| format!("could not create native Vulkan window: {error}"))?;
-    let mut renderer = unsafe { NativeRenderer::new(&window, config.cuda_ordinal)? };
+    let mut renderer = unsafe { NativeRenderer::new(&window, config.cuda_ordinal, config.scene)? };
     let mut runtime_error = None;
     let test_frames = std::env::var("PQO_VULKAN_TEST_FRAMES")
         .ok()
@@ -250,7 +259,11 @@ impl CrystalControls {
 }
 
 impl NativeRenderer {
-    unsafe fn new(window: &winit::window::Window, cuda_ordinal: i32) -> Result<Self, String> {
+    unsafe fn new(
+        window: &winit::window::Window,
+        cuda_ordinal: i32,
+        scene: NativeScene,
+    ) -> Result<Self, String> {
         let cuda = CudaRuntime::probe_device(cuda_ordinal)?;
         let entry =
             unsafe { Entry::load() }.map_err(|error| format!("could not load Vulkan: {error}"))?;
@@ -456,11 +469,14 @@ impl NativeRenderer {
             "/crystal.vert.spv"
         ))))
         .map_err(|error| format!("invalid embedded vertex SPIR-V: {error}"))?;
-        let fragment_code = ash::util::read_spv(&mut Cursor::new(include_bytes!(concat!(
-            env!("OUT_DIR"),
-            "/crystal.frag.spv"
-        ))))
-        .map_err(|error| format!("invalid embedded fragment SPIR-V: {error}"))?;
+        let fragment_bytes: &[u8] = match scene {
+            NativeScene::Crystal => include_bytes!(concat!(env!("OUT_DIR"), "/crystal.frag.spv")),
+            NativeScene::HydrogenAtom => {
+                include_bytes!(concat!(env!("OUT_DIR"), "/atom.frag.spv"))
+            }
+        };
+        let fragment_code = ash::util::read_spv(&mut Cursor::new(fragment_bytes))
+            .map_err(|error| format!("invalid embedded fragment SPIR-V: {error}"))?;
         let vertex_module = unsafe {
             device.create_shader_module(
                 &vk::ShaderModuleCreateInfo::default().code(&vertex_code),
@@ -524,10 +540,14 @@ impl NativeRenderer {
                 None,
             )
         }
-        .map_err(|(_, error)| format!("could not create crystal graphics pipeline: {error}"))?[0];
+        .map_err(|(_, error)| format!("could not create graphics pipeline: {error}"))?[0];
         unsafe {
             device.destroy_shader_module(fragment_module, None);
             device.destroy_shader_module(vertex_module, None);
+        }
+        let mut controls = CrystalControls::default();
+        if scene == NativeScene::HydrogenAtom {
+            controls.zoom = 2.0;
         }
         Ok(Self {
             entry,
@@ -550,7 +570,7 @@ impl NativeRenderer {
             pipeline,
             started: Instant::now(),
             previous_frame: Instant::now(),
-            controls: CrystalControls::default(),
+            controls,
         })
     }
 
@@ -805,6 +825,20 @@ fn transition(
 #[cfg(test)]
 mod tests {
     use super::CrystalControls;
+
+    #[test]
+    fn embedded_hydrogen_shader_preserves_the_baseline_orbital_contract() {
+        let embedded = include_str!("../shaders/atom.frag");
+        let baseline = include_str!("../../../baseline/shaders/atom.frag");
+        for required in [
+            "exp(-2.0 * length(position_bohr)) / 3.141592653589793",
+            "const int sample_count = 192",
+            "intersect_sphere(ray_origin, ray_direction, 0.075",
+        ] {
+            assert!(embedded.contains(required));
+            assert!(baseline.contains(required));
+        }
+    }
 
     #[test]
     fn panel_controls_map_to_bounded_vulkan_push_constants() {

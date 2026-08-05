@@ -705,6 +705,17 @@ fn run_window(
 ) -> Result<(), u8> {
     if validated.target_profile() == TargetProfile::cuda_vulkan() {
         let title = format!("Pqo — {} — CUDA / Vulkan", validated.graph().name);
+        let native_scene = if validated
+            .graph()
+            .resources
+            .streams
+            .iter()
+            .any(|stream| stream.name == "field.electron_density")
+        {
+            pqo_vulkan::NativeScene::HydrogenAtom
+        } else {
+            pqo_vulkan::NativeScene::Crystal
+        };
         let config = pqo_cuda::CudaConfig {
             ticks: std::env::var("PQO_HEADLESS_TICKS")
                 .ok()
@@ -744,6 +755,7 @@ fn run_window(
         return pqo_vulkan::run_native_window_with_controls(
             pqo_vulkan::NativeWindowConfig {
                 title,
+                scene: native_scene,
                 ..Default::default()
             },
             controls,

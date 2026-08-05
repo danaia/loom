@@ -1,44 +1,104 @@
-// Linux/NVIDIA single-particle starter with GPU-resident LOD metadata.
+// A neutral hydrogen atom represented by its point nucleus and normalized
+// nonrelativistic 1s electron probability density.
 //
-// The particle count is deliberately one. The streams and pass boundaries are
-// shaped so a new world can scale the population without moving simulation,
-// visibility, or detail selection through the CPU.
+// The authoritative atom is one structure-of-arrays element. A 100^3 GPU field
+// samples its continuous density, while a 25^3 hierarchy classifies 4^3 voxel
+// clusters for sparse downstream rendering and simulation.
 
 pqo 0.1
 module baseline_cuda
 targets [cuda-vulkan, cuda-headless]
 
-const world.gravity: f32x3<m/s^2> = [0, 0, 0]
-const world.velocity_retention: f32 = 0.9995
+const field.width: u32 = 100
+const field.half_extent: f32<m> = 4.233417684352e-10
+const field.lod0_density_ratio: f32 = 1e-2
+const field.lod1_density_ratio: f32 = 1e-4
+const field.lod2_density_ratio: f32 = 1e-6
+const field.visible_density_ratio: f32 = 1e-8
+const presentation.probability_radius_bohr: f32 = 4
 
-const camera.position: f32x3<m> = [0, 0, 3]
-const camera.cull_distance: f32<m> = 256
-const camera.lod0_distance: f32<m> = 8
-const camera.lod1_distance: f32<m> = 24
-const camera.lod2_distance: f32<m> = 64
-
-stream particle.position: f32x3<m> {
-  cap=1 len=1 buffers=1 access=rw storage=device domain=compute_private
+// Charge values are expressed in exact elementary-charge units because Pqo 0.1
+// currently has only m, kg, and s as physical unit bases.
+stream atom.position: f32x3<m> {
+  cap=1 len=1 buffers=1 access=r storage=device domain=compute_private
   init=[[0, 0, 0]]
 }
 
-stream particle.velocity: f32x3<m/s> {
-  cap=1 len=1 buffers=1 access=rw storage=device domain=compute_private
-  init=[[0.18, 0.07, 0]]
-}
-
-stream particle.radius: f32<m> {
+stream atom.atomic_number: u32 {
   cap=1 len=1 buffers=1 access=r storage=device domain=compute_private
-  init=[0.05]
+  init=[1]
 }
 
-stream particle.color: f32x4 {
+stream atom.mass: f32<kg> {
+  cap=1 len=1 buffers=1 access=r storage=device domain=compute_private
+  init=[1.67353284e-27]
+}
+
+stream atom.nuclear_charge_e: f32 {
+  cap=1 len=1 buffers=1 access=r storage=device domain=compute_private
+  init=[1]
+}
+
+stream atom.electron_count: f32 {
+  cap=1 len=1 buffers=1 access=r storage=device domain=compute_private
+  init=[1]
+}
+
+// 2022 CODATA Bohr radius. For hydrogen 1s,
+// rho(r) = electron_count / (pi*a0^3) * exp(-2r/a0).
+stream atom.bohr_radius: f32<m> {
+  cap=1 len=1 buffers=1 access=r storage=device domain=compute_private
+  init=[5.29177210544e-11]
+}
+
+stream atom.color: f32x4 {
   cap=1 len=1 buffers=1 access=r storage=device domain=compute_private
   init=[[0.18, 0.72, 1, 1]]
 }
 
-// Compact renderer-facing data. Two versions make the ownership boundary ready
-// for a CUDA/Vulkan presentation ring without duplicating authoritative state.
+// One million cell-centred samples. The field is electron number density, not a
+// hard atomic boundary and not a classical electron trajectory.
+stream field.electron_density: f32<m^-3> {
+  cap=1000000 len=1000000 buffers=1 access=rw storage=device domain=compute_private
+}
+
+// Numerical invariants accumulated with one atomic update per CUDA block.
+// Expected values for an adequately bounded hydrogen 1s field are approximately
+// total_probability=1 and radial_moment/total_probability=1.5*a0.
+stream metrics.total_probability: f32 {
+  cap=1 len=1 buffers=1 access=rw storage=device domain=compute_private
+  init=[0]
+}
+
+stream metrics.radial_moment: f32<m> {
+  cap=1 len=1 buffers=1 access=rw storage=device domain=compute_private
+  init=[0]
+}
+
+// A 4^3-voxel leaf hierarchy over the 100^3 field: 25^3 = 15,625 clusters.
+stream hierarchy.cluster_max_density: f32<m^-3> {
+  cap=15625 len=15625 buffers=2 access=rw storage=device domain=shared_presentation
+}
+
+stream hierarchy.cluster_probability: f32 {
+  cap=15625 len=15625 buffers=2 access=rw storage=device domain=shared_presentation
+}
+
+stream hierarchy.cluster_lod: u32 {
+  cap=15625 len=15625 buffers=2 access=rw storage=device domain=shared_presentation
+}
+
+stream hierarchy.cluster_visible: u32 {
+  cap=15625 len=15625 buffers=2 access=rw storage=device domain=shared_presentation
+}
+
+stream hierarchy.active_lod_counts: u32 {
+  cap=4 len=4 buffers=2 access=rw storage=device domain=shared_presentation
+  init=[0, 0, 0, 0]
+}
+
+// Compact one-instance proxy. Its radius is 4*a0, containing about 98.62% of
+// the ideal hydrogen 1s probability; the density field remains authoritative.
 stream presentation.position: f32x3<m> {
   cap=1 len=1 buffers=2 access=rw storage=device domain=shared_presentation
   init=[[0, 0, 0]]
@@ -56,90 +116,134 @@ stream presentation.color: f32x4 {
 
 stream presentation.lod: u32 {
   cap=1 len=1 buffers=2 access=rw storage=device domain=shared_presentation
-  init=[3]
+  init=[0]
 }
 
 stream presentation.visible: u32 {
   cap=1 len=1 buffers=2 access=rw storage=device domain=shared_presentation
-  init=[0]
+  init=[1]
 }
 
-// One counter per detail class: full, medium, coarse, and impostor.
-stream presentation.active_lod_counts: u32 {
-  cap=4 len=4 buffers=2 access=rw storage=device domain=shared_presentation
-  init=[0, 0, 0, 0]
-}
-
-// Same-index arithmetic stays native Pqo and is compiled to CUDA for both
-// declared targets. This keeps the physical rule target-neutral.
-kernel integrate(
-  position: rw stream<f32x3,m>,
-  velocity: rw stream<f32x3,m/s>,
-  gravity: in value<f32x3,m/s^2>,
-  velocity_retention: in value<f32>,
-  dt: in value<f32,s>
-) each i {
-  velocity[i] += gravity * dt;
-  velocity[i] *= velocity_retention;
-  position[i] += velocity[i] * dt;
-}
-
-kernel clear_lod_counts(
+kernel reset_observables(
+  total_probability: rw all stream<f32>,
+  radial_moment: rw all stream<f32,m>,
   active_lod_counts: rw stream<u32>
 ) extern cuda {
   source="kernels/baseline-cuda.cu"
-  entry="baseline_cuda_clear_lod_counts"
+  entry="baseline_cuda_reset_observables"
 }
 
-kernel classify_for_presentation(
-  particle_position: in stream<f32x3,m>,
-  particle_radius: in stream<f32,m>,
-  particle_color: in stream<f32x4>,
-  camera_position: in value<f32x3,m>,
-  cull_distance: in value<f32,m>,
-  lod0_distance: in value<f32,m>,
-  lod1_distance: in value<f32,m>,
-  lod2_distance: in value<f32,m>,
+kernel sample_hydrogen_1s(
+  atom_position: in all stream<f32x3,m>,
+  electron_count: in all stream<f32>,
+  bohr_radius: in all stream<f32,m>,
+  width: in value<u32>,
+  half_extent: in value<f32,m>,
+  electron_density: out stream<f32,m^-3>,
+  total_probability: atomic all stream<f32>,
+  radial_moment: atomic all stream<f32,m>
+) extern cuda {
+  source="kernels/baseline-cuda.cu"
+  entry="baseline_cuda_sample_hydrogen_1s"
+}
+
+kernel classify_density_clusters(
+  electron_density: in all stream<f32,m^-3>,
+  electron_count: in all stream<f32>,
+  bohr_radius: in all stream<f32,m>,
+  width: in value<u32>,
+  half_extent: in value<f32,m>,
+  lod0_density_ratio: in value<f32>,
+  lod1_density_ratio: in value<f32>,
+  lod2_density_ratio: in value<f32>,
+  visible_density_ratio: in value<f32>,
+  cluster_max_density: out stream<f32,m^-3>,
+  cluster_probability: out stream<f32>,
+  cluster_lod: out stream<u32>,
+  cluster_visible: out stream<u32>,
+  active_lod_counts: atomic all stream<u32>
+) extern cuda {
+  source="kernels/baseline-cuda.cu"
+  entry="baseline_cuda_classify_density_clusters"
+}
+
+kernel project_atom(
+  atom_position: in stream<f32x3,m>,
+  bohr_radius: in stream<f32,m>,
+  atom_color: in stream<f32x4>,
+  probability_radius_bohr: in value<f32>,
   presentation_position: out stream<f32x3,m>,
   presentation_radius: out stream<f32,m>,
   presentation_color: out stream<f32x4>,
   presentation_lod: out stream<u32>,
-  presentation_visible: out stream<u32>,
-  active_lod_counts: atomic all stream<u32>
+  presentation_visible: out stream<u32>
 ) extern cuda {
   source="kernels/baseline-cuda.cu"
-  entry="baseline_cuda_classify_for_presentation"
+  entry="baseline_cuda_project_atom"
 }
 
-pass clear_lod = clear_lod_counts(
-  active_lod_counts=presentation.active_lod_counts
-) over presentation.active_lod_counts
+pass reset = reset_observables(
+  total_probability=metrics.total_probability
+  radial_moment=metrics.radial_moment
+  active_lod_counts=hierarchy.active_lod_counts
+) over hierarchy.active_lod_counts
 
-pass move = integrate(
-  position=particle.position
-  velocity=particle.velocity
-  gravity=world.gravity
-  velocity_retention=world.velocity_retention
-  dt=simulation.fixed_dt
-) over particle.position
+pass sample = sample_hydrogen_1s(
+  atom_position=atom.position
+  electron_count=atom.electron_count
+  bohr_radius=atom.bohr_radius
+  width=field.width
+  half_extent=field.half_extent
+  electron_density=field.electron_density
+  total_probability=metrics.total_probability
+  radial_moment=metrics.radial_moment
+) over field.electron_density
 
-pass classify = classify_for_presentation(
-  particle_position=particle.position
-  particle_radius=particle.radius
-  particle_color=particle.color
-  camera_position=camera.position
-  cull_distance=camera.cull_distance
-  lod0_distance=camera.lod0_distance
-  lod1_distance=camera.lod1_distance
-  lod2_distance=camera.lod2_distance
+pass classify = classify_density_clusters(
+  electron_density=field.electron_density
+  electron_count=atom.electron_count
+  bohr_radius=atom.bohr_radius
+  width=field.width
+  half_extent=field.half_extent
+  lod0_density_ratio=field.lod0_density_ratio
+  lod1_density_ratio=field.lod1_density_ratio
+  lod2_density_ratio=field.lod2_density_ratio
+  visible_density_ratio=field.visible_density_ratio
+  cluster_max_density=hierarchy.cluster_max_density
+  cluster_probability=hierarchy.cluster_probability
+  cluster_lod=hierarchy.cluster_lod
+  cluster_visible=hierarchy.cluster_visible
+  active_lod_counts=hierarchy.active_lod_counts
+) over hierarchy.cluster_lod
+
+pass project = project_atom(
+  atom_position=atom.position
+  bohr_radius=atom.bohr_radius
+  atom_color=atom.color
+  probability_radius_bohr=presentation.probability_radius_bohr
   presentation_position=presentation.position
   presentation_radius=presentation.radius
   presentation_color=presentation.color
   presentation_lod=presentation.lod
   presentation_visible=presentation.visible
-  active_lod_counts=presentation.active_lod_counts
-) over particle.position
+) over atom.position
+
+// The current Vulkan runtime recognizes the hydrogen density contract and uses
+// this analytic orbital shader. The declared reads keep presentation intent in
+// the graph while CUDA/Vulkan shared-buffer consumption remains a later gate.
+view viewport(
+  atom_position=presentation.position
+  atom_radius=presentation.radius
+) implementations {
+  extern glsl {
+    vertex_source="shaders/atom.vert"
+    vertex_entry="main"
+    fragment_source="shaders/atom.frag"
+    fragment_entry="main"
+  }
+}
 
 flow simulation rate=120hz {
-  clear_lod -> move -> classify
+  reset -> sample -> classify -> project
+  draw viewport after project
 }

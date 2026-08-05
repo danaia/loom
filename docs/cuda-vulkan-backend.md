@@ -26,17 +26,19 @@ an evidence record, not a claim that all renderer gates are complete.
   selection, swapchain, synchronization2 barriers, and dynamic-rendering frame
   submission. `pqo run --target cuda-vulkan` now uses this path and does not
   launch the Tauri/WebGL panel.
+- A dedicated analytic hydrogen `1s` volume view selected by the Baseline Atom
+  density contract, separate from the procedural crystal bring-up scene.
 - Reusable cubic world-hierarchy planning plus CUDA leaf-cluster occupancy,
   visibility, LOD classification, and active-LOD counters for the crystal.
 
 ## Not complete yet
 
-The live CUDA-backed crystal draw pipeline, CUDA-generated indirect draw path,
-full presentation-ring scheduler, swapchain recovery, and end-to-end
-device-loss recovery have not been implemented. The native swapchain currently
-uses an embedded procedural crystal shader and is therefore a backend bring-up
-surface, not yet the production shared-field renderer. CUDA headless execution
-remains the production-usable Linux compute path in this revision.
+The live CUDA-field draw pipeline, CUDA-generated indirect draw path, full
+presentation-ring scheduler, swapchain recovery, and end-to-end device-loss
+recovery have not been implemented. The native swapchain currently selects an
+embedded procedural crystal shader or analytic hydrogen shader and is therefore
+not yet the production shared-field renderer. CUDA headless execution remains
+the production-usable Linux compute path in this revision.
 
 The ABI module currently computes and records layouts; emitting Rust, CUDA, and
 GLSL declarations from every schema is a later gate. The headless runtime also
