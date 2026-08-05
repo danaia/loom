@@ -1,0 +1,27 @@
+{
+  "format": "pqo-target-artifacts",
+  "version": 1,
+  "backend": "vulkan",
+  "artifacts": [
+    {
+      "kind": "spirv",
+      "backend": "vulkan",
+      "source": "shaders/water.frag",
+      "entries": [
+        "main"
+      ],
+      "path": "targets/linux-x86_64-nvidia/view/viewport_frag.spv",
+      "architecture": null
+    },
+    {
+      "kind": "spirv",
+      "backend": "vulkan",
+      "source": "shaders/water.vert",
+      "entries": [
+        "main"
+      ],
+      "path": "targets/linux-x86_64-nvidia/view/viewport_vert.spv",
+      "architecture": null
+    }
+  ]
+}

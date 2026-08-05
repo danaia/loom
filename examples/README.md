@@ -9,6 +9,7 @@ From the repository root:
 pqo examples/hello-particle/hello-particle.pqo
 pqo examples/neon-flock/neon-flock.pqo
 pqo examples/hello-crystal/crystal.pqo
+pqo examples/water-molecule/water-molecule.pqo --target cuda-vulkan
 pqo build examples/marble-water/marble-water.pqo
 pqo examples/marble-water/marble-water.lmp
 ```

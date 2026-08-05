@@ -1,0 +1,27 @@
+{
+  "format": "pqo-target-artifacts",
+  "version": 1,
+  "backend": "cuda",
+  "artifacts": [
+    {
+      "kind": "cubin",
+      "backend": "cuda",
+      "source": "kernels/water-molecule.cu",
+      "entries": [
+        "water_reconstruct_rigid_3site"
+      ],
+      "path": "targets/linux-x86_64-nvidia/compute/reconstruct_rigid_water.sm_120.cubin",
+      "architecture": "sm_120"
+    },
+    {
+      "kind": "ptx",
+      "backend": "cuda",
+      "source": "kernels/water-molecule.cu",
+      "entries": [
+        "water_reconstruct_rigid_3site"
+      ],
+      "path": "targets/linux-x86_64-nvidia/compute/reconstruct_rigid_water.compute_120.ptx",
+      "architecture": "compute_120"
+    }
+  ]
+}

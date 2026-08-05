@@ -716,21 +716,43 @@ fn run_window(
             .streams
             .iter()
             .any(|stream| stream.name == "field.electron_density");
-        let native_scene = match (has_orbital_model, has_electron_density) {
-            (true, true) => pqo_vulkan::NativeScene::HydrogenAtom,
-            (false, false) => pqo_vulkan::NativeScene::Crystal,
+        let has_water_model = validated
+            .graph()
+            .resources
+            .streams
+            .iter()
+            .any(|stream| stream.name == "water.model");
+        let has_atom_element = validated
+            .graph()
+            .resources
+            .streams
+            .iter()
+            .any(|stream| stream.name == "presentation.atom_element");
+        let native_scene = match (
+            has_orbital_model,
+            has_electron_density,
+            has_water_model,
+            has_atom_element,
+        ) {
+            (true, true, false, false) => pqo_vulkan::NativeScene::HydrogenAtom,
+            (false, false, true, true) => pqo_vulkan::NativeScene::WaterMolecule,
+            (false, false, false, false) => pqo_vulkan::NativeScene::Crystal,
             _ => {
                 print_json(&serde_json::json!({
                     "status": "runtime_error",
-                    "message": "the atom view requires both `orbital.model` and `field.electron_density`; refusing to fall back to the crystal scene"
+                    "message": "native scientific scenes require a complete, unambiguous contract: hydrogen needs `orbital.model` and `field.electron_density`; water needs `water.model` and `presentation.atom_element`"
                 }));
                 return Err(1);
             }
         };
-        let title = if native_scene == pqo_vulkan::NativeScene::HydrogenAtom {
-            "Pqo — Hydrogen 1s — CUDA / Vulkan".to_owned()
-        } else {
-            format!("Pqo — {} — CUDA / Vulkan", validated.graph().name)
+        let title = match native_scene {
+            pqo_vulkan::NativeScene::HydrogenAtom => "Pqo — Hydrogen 1s — CUDA / Vulkan".to_owned(),
+            pqo_vulkan::NativeScene::WaterMolecule => {
+                "Pqo — H₂O — Rigid three-site water".to_owned()
+            }
+            pqo_vulkan::NativeScene::Crystal => {
+                format!("Pqo — {} — CUDA / Vulkan", validated.graph().name)
+            }
         };
         let config = pqo_cuda::CudaConfig {
             ticks: std::env::var("PQO_HEADLESS_TICKS")
@@ -755,7 +777,10 @@ fn run_window(
                     1
                 })?;
         print_json(&report);
-        let controls = if native_scene == pqo_vulkan::NativeScene::HydrogenAtom {
+        let controls = if matches!(
+            native_scene,
+            pqo_vulkan::NativeScene::HydrogenAtom | pqo_vulkan::NativeScene::WaterMolecule
+        ) {
             None
         } else if let (Some(ui), Some(project_root)) = (ui, project_root) {
             let (sender, receiver) = mpsc::channel();

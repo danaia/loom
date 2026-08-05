@@ -32,6 +32,7 @@ pub enum NativeScene {
     #[default]
     Crystal,
     HydrogenAtom,
+    WaterMolecule,
 }
 
 impl Default for NativeWindowConfig {
@@ -474,6 +475,9 @@ impl NativeRenderer {
             NativeScene::HydrogenAtom => {
                 include_bytes!(concat!(env!("OUT_DIR"), "/atom.frag.spv"))
             }
+            NativeScene::WaterMolecule => {
+                include_bytes!(concat!(env!("OUT_DIR"), "/water.frag.spv"))
+            }
         };
         let fragment_code = ash::util::read_spv(&mut Cursor::new(fragment_bytes))
             .map_err(|error| format!("invalid embedded fragment SPIR-V: {error}"))?;
@@ -548,6 +552,10 @@ impl NativeRenderer {
         let mut controls = CrystalControls::default();
         if scene == NativeScene::HydrogenAtom {
             controls.zoom = 2.0;
+        } else if scene == NativeScene::WaterMolecule {
+            controls.yaw = -0.32;
+            controls.pitch = -1.15;
+            controls.zoom = 1.35;
         }
         Ok(Self {
             entry,
@@ -837,6 +845,22 @@ mod tests {
         ] {
             assert!(embedded.contains(required));
             assert!(baseline.contains(required));
+        }
+    }
+
+    #[test]
+    fn embedded_water_shader_preserves_the_rigid_three_site_contract() {
+        let embedded = include_str!("../shaders/water.frag");
+        let example = include_str!("../../../examples/water-molecule/shaders/water.frag");
+        for required in [
+            "const float OH_DISTANCE_ANGSTROM = 0.9572",
+            "const float HOH_ANGLE_DEGREES = 104.52",
+            "const float OXYGEN_CHARGE_E = -0.834",
+            "const float HYDROGEN_CHARGE_E = 0.417",
+            "water_geometry(oxygen, hydrogen_1, hydrogen_2)",
+        ] {
+            assert!(embedded.contains(required));
+            assert!(example.contains(required));
         }
     }
 

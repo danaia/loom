@@ -1,0 +1,208 @@
+// Gate 1 of the Pqo molecular-water progression: one rigid three-site H2O
+// molecule. The molecule center and quaternion are authoritative; CUDA derives
+// renderer-facing atoms, bonds, and geometry diagnostics every tick.
+
+pqo 0.1
+module water_molecule
+targets [cuda-vulkan, cuda-headless]
+
+const molecule.atom_count: u32 = 3
+const molecule.bond_count: u32 = 2
+const molecule.angle_count: u32 = 1
+
+const water_model.oh_distance: f32<m> = 9.572e-11
+const water_model.hoh_angle_degrees: f32 = 104.52
+const water_model.oxygen_mass: f32<kg> = 2.6566962e-26
+const water_model.hydrogen_mass: f32<kg> = 1.6735575e-27
+const water_model.oxygen_charge_e: f32 = -0.834
+const water_model.hydrogen_charge_e: f32 = 0.417
+const water_model.sigma_oxygen: f32<m> = 3.15075e-10
+const water_model.epsilon_oxygen: f32<kg*m^2/s^2> = 1.056e-21
+
+// Model 1 is rigid_water_3site. Quaternion storage is [x, y, z, w].
+stream water.model: u32 {
+  cap=1 len=1 buffers=1 access=r storage=device domain=compute_private
+  init=[1]
+}
+
+stream water.position: f32x3<m> {
+  cap=1 len=1 buffers=1 access=r storage=device domain=compute_private
+  init=[[0, 0, 0]]
+}
+
+stream water.orientation: f32x4 {
+  cap=1 len=1 buffers=1 access=r storage=device domain=compute_private
+  init=[[0, 0, 0, 1]]
+}
+
+stream water.linear_velocity: f32x3<m/s> {
+  cap=1 len=1 buffers=1 access=r storage=device domain=compute_private
+  init=[[0, 0, 0]]
+}
+
+stream water.angular_velocity: f32x3<s^-1> {
+  cap=1 len=1 buffers=1 access=r storage=device domain=compute_private
+  init=[[0, 0, 0]]
+}
+
+stream water.force: f32x3<kg*m/s^2> {
+  cap=1 len=1 buffers=1 access=rw storage=device domain=compute_private
+  init=[[0, 0, 0]]
+}
+
+stream water.torque: f32x3<kg*m^2/s^2> {
+  cap=1 len=1 buffers=1 access=rw storage=device domain=compute_private
+  init=[[0, 0, 0]]
+}
+
+stream water.mass: f32<kg> {
+  cap=1 len=1 buffers=1 access=r storage=device domain=compute_private
+  init=[2.9914077e-26]
+}
+
+stream water.temperature: f32 {
+  cap=1 len=1 buffers=1 access=r storage=device domain=compute_private
+  init=[298.15]
+}
+
+stream water.phase_hint: u32 {
+  cap=1 len=1 buffers=1 access=r storage=device domain=compute_private
+  init=[0]
+}
+
+stream water.neighbor_count: u32 {
+  cap=1 len=1 buffers=1 access=rw storage=device domain=compute_private
+  init=[0]
+}
+
+stream water.hbond_count: u32 {
+  cap=1 len=1 buffers=1 access=rw storage=device domain=compute_private
+  init=[0]
+}
+
+// Atomic presentation is derived output. Element values are atomic numbers.
+stream presentation.atom_position: f32x3<m> {
+  cap=3 len=3 buffers=2 access=rw storage=device domain=shared_presentation
+  init=[[0, 0, 0], [0, 0, 0], [0, 0, 0]]
+}
+
+stream presentation.atom_radius: f32<m> {
+  cap=3 len=3 buffers=2 access=rw storage=device domain=shared_presentation
+  init=[6.0e-11, 3.7e-11, 3.7e-11]
+}
+
+stream presentation.atom_element: u32 {
+  cap=3 len=3 buffers=2 access=rw storage=device domain=shared_presentation
+  init=[8, 1, 1]
+}
+
+stream presentation.atom_charge_e: f32 {
+  cap=3 len=3 buffers=2 access=rw storage=device domain=shared_presentation
+  init=[-0.834, 0.417, 0.417]
+}
+
+stream presentation.bond_start: f32x3<m> {
+  cap=2 len=2 buffers=2 access=rw storage=device domain=shared_presentation
+  init=[[0, 0, 0], [0, 0, 0]]
+}
+
+stream presentation.bond_end: f32x3<m> {
+  cap=2 len=2 buffers=2 access=rw storage=device domain=shared_presentation
+  init=[[0, 0, 0], [0, 0, 0]]
+}
+
+stream metrics.oh1_distance: f32<m> {
+  cap=1 len=1 buffers=1 access=rw storage=device domain=compute_private
+  init=[0]
+}
+
+stream metrics.oh2_distance: f32<m> {
+  cap=1 len=1 buffers=1 access=rw storage=device domain=compute_private
+  init=[0]
+}
+
+stream metrics.hoh_angle_degrees: f32 {
+  cap=1 len=1 buffers=1 access=rw storage=device domain=compute_private
+  init=[0]
+}
+
+stream metrics.geometry_error: f32 {
+  cap=1 len=1 buffers=1 access=rw storage=device domain=compute_private
+  init=[0]
+}
+
+stream metrics.net_charge_e: f32 {
+  cap=1 len=1 buffers=1 access=rw storage=device domain=compute_private
+  init=[0]
+}
+
+stream metrics.dipole_e_m: f32<m> {
+  cap=1 len=1 buffers=1 access=rw storage=device domain=compute_private
+  init=[0]
+}
+
+kernel reconstruct_rigid_water(
+  model: in all stream<u32>,
+  molecule_position: in all stream<f32x3,m>,
+  molecule_orientation: in all stream<f32x4>,
+  oh_distance: in value<f32,m>,
+  hoh_angle_degrees: in value<f32>,
+  oxygen_charge_e: in value<f32>,
+  hydrogen_charge_e: in value<f32>,
+  atom_position: out all stream<f32x3,m>,
+  atom_radius: out all stream<f32,m>,
+  atom_element: out all stream<u32>,
+  atom_charge_e: out all stream<f32>,
+  bond_start: out all stream<f32x3,m>,
+  bond_end: out all stream<f32x3,m>,
+  oh1_distance: out all stream<f32,m>,
+  oh2_distance: out all stream<f32,m>,
+  reconstructed_angle_degrees: out all stream<f32>,
+  geometry_error: out all stream<f32>,
+  net_charge_e: out all stream<f32>,
+  dipole_e_m: out all stream<f32,m>
+) extern cuda {
+  source="kernels/water-molecule.cu"
+  entry="water_reconstruct_rigid_3site"
+}
+
+pass reconstruct = reconstruct_rigid_water(
+  model=water.model
+  molecule_position=water.position
+  molecule_orientation=water.orientation
+  oh_distance=water_model.oh_distance
+  hoh_angle_degrees=water_model.hoh_angle_degrees
+  oxygen_charge_e=water_model.oxygen_charge_e
+  hydrogen_charge_e=water_model.hydrogen_charge_e
+  atom_position=presentation.atom_position
+  atom_radius=presentation.atom_radius
+  atom_element=presentation.atom_element
+  atom_charge_e=presentation.atom_charge_e
+  bond_start=presentation.bond_start
+  bond_end=presentation.bond_end
+  oh1_distance=metrics.oh1_distance
+  oh2_distance=metrics.oh2_distance
+  reconstructed_angle_degrees=metrics.hoh_angle_degrees
+  geometry_error=metrics.geometry_error
+  net_charge_e=metrics.net_charge_e
+  dipole_e_m=metrics.dipole_e_m
+) over water.position
+
+view viewport(
+  atom_position=presentation.atom_position
+  atom_radius=presentation.atom_radius
+  atom_element=presentation.atom_element
+  atom_charge_e=presentation.atom_charge_e
+) implementations {
+  extern glsl {
+    vertex_source="shaders/water.vert"
+    vertex_entry="main"
+    fragment_source="shaders/water.frag"
+    fragment_entry="main"
+  }
+}
+
+flow simulation rate=120hz {
+  reconstruct
+  draw viewport after reconstruct
+}
