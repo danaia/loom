@@ -4,380 +4,191 @@ import {
   Badge as ABadge,
   Button as AButton,
   ConfigProvider as AConfigProvider,
-  Input as AInput,
   Progress as AProgress,
   Select as ASelect,
   Slider as ASlider,
+  Switch as ASwitch,
   theme,
 } from 'ant-design-vue'
-import { ReloadOutlined } from '@ant-design/icons-vue'
-import { getSnapshot, openAgentsWindow, setControl } from './bridge'
-import {
-  defaultParticleAgent,
-  loadParticleAgents,
-  resetParticleAgents,
-  saveParticleAgents,
-  subscribeParticleAgents,
-  uniqueAgentName,
-} from './agentRoster'
-import type { ParticleAgent } from './agentRoster'
-import { particleFields } from './particlePanelSchema'
+import { getSnapshot, setControl } from './bridge'
 
-const fps = ref(0)
-const gpuMemory = ref(0)
-const gpuFrameTime = ref(0)
-const gpuBudget = ref(1000 / 120)
-const gpuPressure = ref(0)
-const spaceDrag = ref(0)
-const particleAgents = ref<ParticleAgent[]>([defaultParticleAgent(0)])
-const agentCount = ref(particleAgents.value.length)
-const selectedParticleId = ref(0)
 const connected = ref(false)
-const showResetConfirmation = ref(false)
-const resetInProgress = ref(false)
+const scale = ref(3)
+const basePairs = ref(12)
+const thermal = ref(0.18)
+const bend = ref(0)
+const separation = ref(0)
+const motion = ref(true)
+const smartLod = ref(true)
+const lodBias = ref(0)
+const showBases = ref(true)
 let pollTimer: number | undefined
-let rosterUnlisten: (() => void) | undefined
 
 const { compactAlgorithm, darkAlgorithm } = theme
 const panelTheme = {
   algorithm: [darkAlgorithm, compactAlgorithm],
   token: {
-    colorPrimary: '#26a8e8',
-    colorInfo: '#26a8e8',
-    colorSuccess: '#89d185',
-    colorBgBase: '#151719',
-    colorBgContainer: '#1d2023',
-    colorBgElevated: '#24282c',
-    colorBorder: '#343a40',
-    colorText: '#d7dadd',
-    colorTextSecondary: '#8e969e',
+    colorPrimary: '#35c9e8',
+    colorInfo: '#35c9e8',
+    colorSuccess: '#78d69a',
+    colorBgBase: '#0b1117',
+    colorBgContainer: '#121b24',
+    colorBgElevated: '#18232e',
+    colorBorder: '#293846',
+    colorText: '#e3edf2',
+    colorTextSecondary: '#8297a5',
     fontSize: 12,
-    controlHeight: 26,
-    borderRadius: 3,
+    controlHeight: 28,
+    borderRadius: 5,
   },
 }
 
-const gpuPercent = computed(() => Math.min(100, Math.max(0, gpuPressure.value)))
-const pressureColor = computed(() => {
-  if (gpuPressure.value >= 100) return '#f14c4c'
-  if (gpuPressure.value >= 70) return '#cca700'
-  return '#89d185'
-})
-const agentTypeNames = ['General', 'Scout', 'Builder'] as const
-const selectedParticle = computed(
-  () => particleAgents.value.find((agent) => agent.id === selectedParticleId.value) ?? null,
-)
+const levels = [
+  { value: 0, label: 'Quantum · hydrogen 1s' },
+  { value: 1, label: 'Molecular · nucleotide sites' },
+  { value: 2, label: 'Structural · base pairs' },
+  { value: 3, label: 'Mesoscale · double helix' },
+  { value: 4, label: 'Continuum · elastic DNA' },
+]
+const level = computed(() => levels[scale.value] ?? levels[3])
+const turns = computed(() => basePairs.value / 10.5)
+const lengthNm = computed(() => Math.max(0, basePairs.value - 1) * 0.34)
+const lodPercent = computed(() => Math.round(((scale.value + 1) / levels.length) * 100))
 
-function commitControl(name: string, value: number) {
-  void setControl(name, value).catch(() => {
-    connected.value = false
-  })
+function control(name: string, value: number) {
+  void setControl(name, value).catch(() => { connected.value = false })
 }
 
-function commitDrag(value: number | number[]) {
-  commitControl('interaction.space_drag', typeof value === 'number' ? value : value[0])
+function setScale(value: number) {
+  scale.value = value
+  control('sandbox.scale', value)
 }
 
-function syncSpawnType(type: string) {
-  const index = agentTypeNames.indexOf(type as typeof agentTypeNames[number])
-  commitControl('interaction.agent_type', Math.max(0, index))
+function setNumber(name: string, value: number | number[]) {
+  const next = typeof value === 'number' ? value : value[0]
+  if (name === 'sandbox.base_pairs') basePairs.value = next
+  else if (name === 'sandbox.thermal') thermal.value = next
+  else if (name === 'sandbox.bend') bend.value = next
+  else if (name === 'sandbox.separation') separation.value = next
+  else if (name === 'sandbox.lod_bias') lodBias.value = next
+  control(name, next)
 }
 
-async function persistParticleAgents() {
-  try {
-    particleAgents.value = await saveParticleAgents(particleAgents.value)
-  } catch {
-    connected.value = false
-  }
-}
-
-function updateSelectedField(key: string, value: unknown) {
-  const particle = selectedParticle.value
-  if (!particle) return
-  if (key === 'name' && typeof value === 'string') particle.name = value.trim() || particle.name
-  else if (key === 'type' && typeof value === 'string') {
-    particle.type = value
-    syncSpawnType(value)
-  }
-  else if (key === 'skills' && typeof value === 'string') {
-    particle.skills = value.split(',').map((skill) => skill.trim()).filter(Boolean)
-  } else if (!['id', 'name', 'type', 'skills'].includes(key)) {
-    particle.fields[key] = value
-  }
-  void persistParticleAgents()
-}
-
-function selectedFieldValue(key: string): string | number {
-  const particle = selectedParticle.value
-  if (!particle) return ''
-  if (key === 'id') return particle.id
-  if (key === 'name') return particle.name
-  if (key === 'type') return particle.type
-  if (key === 'skills') return particle.skills.join(', ')
-  const value = particle.fields[key]
-  return typeof value === 'number' || typeof value === 'string' ? value : ''
-}
-
-function linkSelectedParticle() {
-  if (!selectedParticle.value) return
-  selectedParticle.value.agentLinked = true
-  void persistParticleAgents()
-}
-
-function reconcileParticleAgents(nextCount: number, lowMask: number, highMask: number) {
-  const count = Math.max(0, Math.min(32, Math.round(nextCount)))
-  let changed = false
-  for (let id = 0; id < 32; id += 1) {
-    const mask = id < 16 ? lowMask : highMask
-    const active = (Math.round(mask) & (1 << (id % 16))) !== 0
-    if (!active) continue
-    const existing = particleAgents.value.find((agent) => agent.id === id)
-    if (!existing) {
-      const type = selectedParticle.value?.type ?? 'General'
-      particleAgents.value.push(
-        defaultParticleAgent(
-          id,
-          uniqueAgentName(`${type} ${id + 1}`, particleAgents.value),
-          type,
-        ),
-      )
-      changed = true
-    } else if (existing.fields.metalActive === false) {
-      existing.fields.metalActive = true
-      existing.agentLinked = true
-      changed = true
-    }
-  }
-  particleAgents.value.sort((left, right) => left.id - right.id)
-  agentCount.value = count
-  if (changed) void persistParticleAgents()
-}
-
-function wait(milliseconds: number) {
-  return new Promise<void>((resolve) => window.setTimeout(resolve, milliseconds))
-}
-
-async function waitForRuntimeReset() {
-  for (let attempt = 0; attempt < 20; attempt += 1) {
-    const snapshot = await getSnapshot()
-    const count = Math.round(snapshot.values['interaction.agent_count'] ?? -1)
-    const lowMask = Math.round(snapshot.values['interaction.active_mask_low'] ?? -1)
-    const highMask = Math.round(snapshot.values['interaction.active_mask_high'] ?? -1)
-    if (count === 1 && lowMask === 1 && highMask === 0) {
-      await wait(50)
-      return
-    }
-    await wait(50)
-  }
-  throw new Error('The Metal view did not confirm its reset.')
-}
-
-async function resetToGroundZero() {
-  if (resetInProgress.value) return
-  resetInProgress.value = true
-  try {
-    await setControl('interaction.reset', 1)
-    await waitForRuntimeReset()
-    particleAgents.value = await resetParticleAgents()
-    agentCount.value = 1
-    selectedParticleId.value = 0
-    showResetConfirmation.value = false
-  } catch {
-    connected.value = false
-  } finally {
-    resetInProgress.value = false
-  }
-}
-
-function openAgents() {
-  void openAgentsWindow().catch(() => {
-    connected.value = false
-  })
+function setToggle(name: string, value: boolean | string | number) {
+  const checked = value === true
+  if (name === 'sandbox.motion') motion.value = checked
+  else if (name === 'sandbox.show_bases') showBases.value = checked
+  else if (name === 'sandbox.smart_lod') smartLod.value = checked
+  control(name, checked ? 1 : 0)
 }
 
 async function pollSnapshot() {
   try {
     const snapshot = await getSnapshot()
     connected.value = snapshot.connected
-    spaceDrag.value = snapshot.values['interaction.space_drag'] ?? spaceDrag.value
-    fps.value = snapshot.values['interaction.hud_fps'] ?? fps.value
-    gpuMemory.value = snapshot.values['interaction.hud_gpu_mb'] ?? gpuMemory.value
-    gpuFrameTime.value =
-      snapshot.values['interaction.hud_gpu_frame_ms'] ?? gpuFrameTime.value
-    gpuBudget.value =
-      snapshot.values['interaction.hud_gpu_budget_ms'] ?? gpuBudget.value
-    gpuPressure.value =
-      snapshot.values['interaction.hud_gpu_pressure'] ?? gpuPressure.value
-    const nextSelectedParticleId = Math.max(
-      0,
-      Math.min(31, Math.round(snapshot.values['interaction.selected'] ?? selectedParticleId.value)),
-    )
-    if (nextSelectedParticleId !== selectedParticleId.value) {
-      selectedParticleId.value = nextSelectedParticleId
-      const type = particleAgents.value.find((agent) => agent.id === nextSelectedParticleId)?.type
-      if (type) syncSpawnType(type)
-    }
-    if (!resetInProgress.value) {
-      reconcileParticleAgents(
-        snapshot.values['interaction.agent_count'] ?? agentCount.value,
-        snapshot.values['interaction.active_mask_low'] ?? 1,
-        snapshot.values['interaction.active_mask_high'] ?? 0,
-      )
-    }
   } catch {
     connected.value = false
   }
 }
 
-onMounted(async () => {
-  try {
-    rosterUnlisten = await subscribeParticleAgents((roster) => {
-      particleAgents.value = roster
-    })
-    particleAgents.value = await loadParticleAgents()
-    agentCount.value = particleAgents.value.length
-    syncSpawnType(particleAgents.value[0]?.type ?? 'General')
-  } catch {
-    connected.value = false
-  }
+function resetEquilibrium() {
+  thermal.value = 0.18
+  bend.value = 0
+  separation.value = 0
+  motion.value = true
+  ;[
+    ['sandbox.thermal', thermal.value],
+    ['sandbox.bend', bend.value],
+    ['sandbox.separation', separation.value],
+    ['sandbox.motion', 1],
+  ].forEach(([name, value]) => control(name as string, value as number))
+}
+
+onMounted(() => {
   void pollSnapshot()
-  pollTimer = window.setInterval(pollSnapshot, 100)
+  pollTimer = window.setInterval(pollSnapshot, 500)
 })
 
 onBeforeUnmount(() => {
   if (pollTimer !== undefined) window.clearInterval(pollTimer)
-  rosterUnlisten?.()
 })
 </script>
 
 <template>
   <a-config-provider :theme="panelTheme">
-    <main class="panel">
+    <main class="panel sandbox-panel">
       <header class="app-bar">
         <div class="identity">
-          <span class="particle-mark" aria-hidden="true"></span>
+          <span class="dna-mark" aria-hidden="true"></span>
           <div>
-            <h1>Pqo Baseline</h1>
-            <p>Selectable particles · zero gravity</p>
+            <h1>Quantum → DNA</h1>
+            <p>Multiscale physics sandbox</p>
           </div>
         </div>
-        <a-badge
-          :status="connected ? 'success' : 'default'"
-          :text="connected ? 'Live' : 'Waiting'"
-        />
+        <a-badge :status="connected ? 'success' : 'default'" :text="connected ? 'Live' : 'Waiting'" />
       </header>
 
-      <section class="telemetry" aria-label="Runtime telemetry">
-        <div class="metrics">
-          <div><span>FPS</span><strong>{{ Math.round(fps) }}</strong></div>
-          <div><span>GPU memory</span><strong>{{ Math.round(gpuMemory) }}<small> MiB</small></strong></div>
-          <div><span>Add agent</span><strong>⌘ Click</strong></div>
-        </div>
-        <div class="pressure">
-          <div>
-            <span>GPU frame</span>
-            <strong :style="{ color: pressureColor }">{{ gpuFrameTime.toFixed(2) }} ms</strong>
-          </div>
-          <a-progress
-            :percent="gpuPercent"
-            :show-info="false"
-            :stroke-color="pressureColor"
-            trail-color="#343a40"
-            :stroke-width="5"
-            
-          />
-          <p class="smallp">{{ Math.round(gpuPressure) }}% of {{ gpuBudget.toFixed(2) }} ms budget</p>
-        </div>
+      <section class="model-status">
+        <span>ACTIVE REPRESENTATION</span>
+        <strong>{{ level.label }}</strong>
+        <a-progress :percent="lodPercent" :show-info="false" stroke-color="#35c9e8" trail-color="#253442" />
+        <p>Each level has its own model contract; visual LOD does not claim identical physics.</p>
       </section>
 
-      <section class="card selected-particle">
-        <header>
-          <div>
-            <p>SELECTED PARTICLE</p>
-            <h2>{{ selectedParticle?.name ?? 'Waiting for selection' }}</h2>
+      <section class="card">
+        <header><div><p>SCALE</p><h2>Representation hierarchy</h2></div><span>0 → 4</span></header>
+        <div class="control stack">
+          <a-select :value="scale" :options="levels" @change="(value: unknown) => typeof value === 'number' && setScale(value)" />
+          <div class="scale-rail">
+            <button v-for="item in levels" :key="item.value" :class="{ active: item.value === scale }" @click="setScale(item.value)">
+              <b>{{ item.value }}</b><span>{{ ['ψ', 'N', 'bp', 'DNA', 'rod'][item.value] }}</span>
+            </button>
           </div>
-          <span v-if="selectedParticle">#{{ selectedParticle.id }}</span>
-        </header>
-        <div v-if="selectedParticle" class="control metadata-fields">
-          <label v-for="field in particleFields" :key="field.key">
-            <span>{{ field.label }}</span>
-            <output v-if="field.scope === 'readonly'">
-              {{ selectedFieldValue(field.key) }}
-            </output>
-            <a-select
-              v-else-if="field.kind === 'select'"
-              :value="selectedFieldValue(field.key)"
-              :options="field.options?.map((option) => ({ value: option, label: option }))"
-              @change="(value: unknown) => updateSelectedField(field.key, value)"
-            />
-            <a-input
-              v-else
-              :value="selectedFieldValue(field.key)"
-              :placeholder="field.kind === 'skills' ? 'skills/example/SKILL.md' : undefined"
-              @update:value="(value: string) => updateSelectedField(field.key, value)"
-            />
-          </label>
-          <a-button
-            v-if="!selectedParticle.agentLinked"
-            block
-            @click="linkSelectedParticle"
-          >
-            Link to Agents window
-          </a-button>
         </div>
       </section>
 
       <section class="card">
-        <header>
-          <div>
-            <p>PHYSICS</p>
-            <h2>Vacuum</h2>
-          </div>
-          <span>gravity 0 m/s²</span>
-        </header>
-        <div class="control">
-          <div>
-            <label for="space-drag">Space drag</label>
-            <output>{{ spaceDrag.toFixed(2) }} s⁻¹</output>
-          </div>
-          <a-slider
-            id="space-drag"
-            v-model:value="spaceDrag"
-            :min="0"
-            :max="0.5"
-            :step="0.01"
-            @change="commitDrag"
-          />
-          <p><span>vacuum</span><span>damped</span></p>
+        <header><div><p>B-DNA</p><h2>Drew-Dickerson dodecamer</h2></div><span>CGCGAATTCGCG</span></header>
+        <div class="facts">
+          <div><span>Rise</span><strong>0.34 nm/bp</strong></div>
+          <div><span>Twist</span><strong>34.29°/bp</strong></div>
+          <div><span>Length</span><strong>{{ lengthNm.toFixed(2) }} nm</strong></div>
+          <div><span>Turns</span><strong>{{ turns.toFixed(2) }}</strong></div>
         </div>
-        <a-button block class="reset" @click="showResetConfirmation = true">
-          <template #icon><reload-outlined /></template>
-          Reset to ground zero
-        </a-button>
-        <a-button block class="agents" @click="openAgents">
-          Agents
-        </a-button>
-        <p class="interaction-hint">Drag directly · select, then click space to target</p>
+        <div class="control slider-control">
+          <div><label>Base pairs</label><output>{{ basePairs }}</output></div>
+          <a-slider :value="basePairs" :min="2" :max="24" :step="1" @change="(v: number | number[]) => setNumber('sandbox.base_pairs', v)" />
+          <p><span>validated: 12</span><span>&gt;12 repeats sequence</span></p>
+        </div>
       </section>
 
-    </main>
-    <div
-      v-if="showResetConfirmation"
-      class="reset-backdrop"
-      @click.self="!resetInProgress && (showResetConfirmation = false)"
-    >
-      <section class="reset-dialog" role="dialog" aria-modal="true" aria-labelledby="reset-title">
-        <h3 id="reset-title">Reset to ground zero?</h3>
-        <p>This removes added particles, metadata, and agent chats.</p>
-        <div>
-          <a-button :disabled="resetInProgress" @click="showResetConfirmation = false">
-            Cancel
-          </a-button>
-          <a-button danger type="primary" :loading="resetInProgress" @click="resetToGroundZero">
-            Reset
-          </a-button>
+      <section class="card">
+        <header><div><p>PERTURBATIONS</p><h2>Bounded coarse-grained modes</h2></div><span>interactive</span></header>
+        <div class="control slider-control">
+          <div><label>Thermal mode amplitude</label><output>{{ thermal.toFixed(2) }}</output></div>
+          <a-slider :value="thermal" :min="0" :max="1" :step="0.01" @change="(v: number | number[]) => setNumber('sandbox.thermal', v)" />
+          <div><label>Elastic bend</label><output>{{ bend.toFixed(2) }}</output></div>
+          <a-slider :value="bend" :min="-1" :max="1" :step="0.01" @change="(v: number | number[]) => setNumber('sandbox.bend', v)" />
+          <div><label>Central base separation</label><output>{{ separation.toFixed(2) }}</output></div>
+          <a-slider :value="separation" :min="0" :max="1" :step="0.01" @change="(v: number | number[]) => setNumber('sandbox.separation', v)" />
         </div>
       </section>
-    </div>
+
+      <section class="card compact-card">
+        <header><div><p>RENDERING</p><h2>Adaptive presentation</h2></div></header>
+        <div class="toggles">
+          <label><span>Animate modes</span><a-switch :checked="motion" @change="(v: boolean | string | number) => setToggle('sandbox.motion', v)" /></label>
+          <label><span>Show bases</span><a-switch :checked="showBases" @change="(v: boolean | string | number) => setToggle('sandbox.show_bases', v)" /></label>
+          <label><span>Smart LOD</span><a-switch :checked="smartLod" @change="(v: boolean | string | number) => setToggle('sandbox.smart_lod', v)" /></label>
+        </div>
+        <div class="control slider-control">
+          <div><label>LOD quality bias</label><output>{{ lodBias.toFixed(1) }}</output></div>
+          <a-slider :value="lodBias" :min="-2" :max="2" :step="0.1" @change="(v: number | number[]) => setNumber('sandbox.lod_bias', v)" />
+        </div>
+      </section>
+
+      <a-button block class="reset" @click="resetEquilibrium">Return to equilibrium</a-button>
+      <p class="scientific-note">Hydrogen 1s is analytic. DNA views are ideal B-DNA and coarse-grained geometry; they are not an exact many-electron wavefunction or atomistic MD.</p>
+    </main>
   </a-config-provider>
 </template>

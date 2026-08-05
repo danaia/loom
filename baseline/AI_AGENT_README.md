@@ -52,6 +52,14 @@ project's CUDA field through shared memory, so the numerical field and analytic
 view are parallel evaluations of the same equation. Live shared-field volume
 rendering and CUDA-generated indirect draws remain backend integration gates.
 
+The CUDA/Vulkan starter also carries a quantum-to-DNA presentation hierarchy.
+Read `docs/DNA-SANDBOX.md` before extending it. Its DNA levels are an ideal
+B-DNA coarse-grained contract; they do not upgrade the hydrogen solver into a
+many-electron or atomistic DNA simulation. Preserve separate authorities for
+local electronic fields, compact molecular-mechanics atoms and topology,
+nucleotide rigid bodies, base-pair frames, elastic rods, simulation LOD, and
+rendering LOD.
+
 ## Safe world-building sequence
 
 1. State one testable behavior and its controlled inputs.

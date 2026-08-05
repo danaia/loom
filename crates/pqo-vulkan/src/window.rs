@@ -32,6 +32,7 @@ pub enum NativeScene {
     #[default]
     Crystal,
     HydrogenAtom,
+    DnaSandbox,
 }
 
 impl Default for NativeWindowConfig {
@@ -228,6 +229,19 @@ impl CrystalControls {
             return;
         }
         match name {
+            "sandbox.scale" => self.growth = value.round().clamp(0.0, 4.0),
+            "sandbox.thermal" => self.anisotropy = value.clamp(0.0, 1.0),
+            "sandbox.bend" => self.temperature = value.clamp(-1.0, 1.0),
+            "sandbox.separation" => self.damage = value.clamp(0.0, 1.0),
+            "sandbox.show_orbital" => self.show_field = if value >= 0.5 { 1.0 } else { 0.0 },
+            "sandbox.show_bases" => self.show_particles = if value >= 0.5 { 1.0 } else { 0.0 },
+            "sandbox.base_pairs" => self.particle_count = value.round().clamp(2.0, 24.0),
+            "sandbox.yaw" => self.yaw = value,
+            "sandbox.pitch" => self.pitch = value.clamp(-1.45, 1.45),
+            "sandbox.zoom" => self.zoom = value.clamp(0.55, 2.5),
+            "sandbox.smart_lod" => self.smart_lod = if value >= 0.5 { 1.0 } else { 0.0 },
+            "sandbox.lod_bias" => self.lod_bias = value.clamp(-2.0, 2.0),
+            "sandbox.motion" => self.instance_count = value.clamp(0.0, 1.0),
             "crystal.growth" => self.growth = value.clamp(0.08, 1.0),
             "crystal.anisotropy" => self.anisotropy = value.clamp(0.0, 1.0),
             "crystal.temperature" => self.temperature = value.clamp(0.0, 1.0),
@@ -474,6 +488,7 @@ impl NativeRenderer {
             NativeScene::HydrogenAtom => {
                 include_bytes!(concat!(env!("OUT_DIR"), "/atom.frag.spv"))
             }
+            NativeScene::DnaSandbox => include_bytes!(concat!(env!("OUT_DIR"), "/dna.frag.spv")),
         };
         let fragment_code = ash::util::read_spv(&mut Cursor::new(fragment_bytes))
             .map_err(|error| format!("invalid embedded fragment SPIR-V: {error}"))?;
@@ -548,6 +563,18 @@ impl NativeRenderer {
         let mut controls = CrystalControls::default();
         if scene == NativeScene::HydrogenAtom {
             controls.zoom = 2.0;
+        } else if scene == NativeScene::DnaSandbox {
+            controls.growth = 3.0;
+            controls.anisotropy = 0.18;
+            controls.temperature = 0.0;
+            controls.damage = 0.0;
+            controls.show_field = 1.0;
+            controls.show_particles = 1.0;
+            controls.particle_count = 12.0;
+            controls.yaw = -0.42;
+            controls.pitch = -1.02;
+            controls.zoom = 1.0;
+            controls.instance_count = 1.0;
         }
         Ok(Self {
             entry,
@@ -838,6 +865,40 @@ mod tests {
             assert!(embedded.contains(required));
             assert!(baseline.contains(required));
         }
+    }
+
+    #[test]
+    fn dna_shader_preserves_the_b_dna_geometry_contract() {
+        let shader = include_str!("../../../baseline/shaders/dna.frag");
+        for required in [
+            "const float B_DNA_RISE_NM = 0.34",
+            "const float B_DNA_TWIST = 2.0 * PI / 10.5",
+            "Drew-Dickerson: CGCGAATTCGCG",
+            "const int MAX_BASE_PAIRS = 24",
+        ] {
+            assert!(shader.contains(required));
+        }
+    }
+
+    #[test]
+    fn sandbox_controls_are_finite_and_bounded() {
+        let mut controls = CrystalControls::default();
+        controls.set("sandbox.scale", 9.0);
+        controls.set("sandbox.thermal", -2.0);
+        controls.set("sandbox.bend", 3.0);
+        controls.set("sandbox.separation", 0.42);
+        controls.set("sandbox.base_pairs", 99.0);
+        controls.set("sandbox.smart_lod", 0.0);
+        controls.set("sandbox.lod_bias", -5.0);
+        controls.set("sandbox.motion", f32::NAN);
+        assert_eq!(controls.growth, 4.0);
+        assert_eq!(controls.anisotropy, 0.0);
+        assert_eq!(controls.temperature, 1.0);
+        assert_eq!(controls.damage, 0.42);
+        assert_eq!(controls.particle_count, 24.0);
+        assert_eq!(controls.smart_lod, 0.0);
+        assert_eq!(controls.lod_bias, -2.0);
+        assert_eq!(controls.instance_count, 1.0);
     }
 
     #[test]

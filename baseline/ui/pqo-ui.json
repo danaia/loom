@@ -2,8 +2,7 @@
   "framework": "vue3",
   "dist": "dist",
   "entry": "index.html",
-  "title": "Pqo Baseline — Controls",
+  "title": "Pqo — Quantum to DNA Controls",
   "width": 340,
-  "height": 530
+  "height": 720
 }
-

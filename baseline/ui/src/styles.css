@@ -1,313 +1,39 @@
 @import "ant-design-vue/dist/reset.css";
 
-:root {
-  color: #d7dadd;
-  background: #151719;
-  font-family:
-    Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "SF Pro Text",
-    "Segoe UI", sans-serif;
-  font-synthesis: none;
-}
-
-* {
-  box-sizing: border-box;
-}
-
-html,
-body,
-#app {
-  height: 100%;
-  min-height: 100%;
-  margin: 0;
-}
-
-body {
-  min-width: 300px;
-  overflow: hidden;
-  background: #151719;
-}
-
-h1,
-h2,
-p {
-  margin: 0;
-}
-
-.panel {
-  display: flex;
-  height: 100vh;
-  min-height: 0;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  flex-direction: column;
-  gap: 9px;
-  padding: 12px;
-  scrollbar-width: none;
-}
-
-.panel > * {
-  flex: 0 0 auto;
-}
-
-.panel::-webkit-scrollbar {
-  width: 0;
-  height: 0;
-  display: none;
-}
-
-.app-bar,
-.identity,
-.metrics,
-.pressure > div,
-.card > header,
-.control > div {
-  display: flex;
-  align-items: center;
-}
-
-.app-bar,
-.pressure > div,
-.card > header,
-.control > div {
-  justify-content: space-between;
-}
-
-.identity {
-  gap: 10px;
-}
-
-.particle-mark {
-  width: 27px;
-  height: 27px;
-  border-radius: 50%;
-  background:
-    radial-gradient(circle at 33% 28%, #e8fbff 0 5%, transparent 14%),
-    radial-gradient(circle at 40% 35%, #5dd6ff, #0879b3 55%, #063956);
-  box-shadow: 0 0 14px rgb(38 168 232 / 32%);
-}
-
-h1 {
-  font-size: 13px;
-  font-weight: 650;
-}
-
-.identity p,
-.pressure p,
-.control p,
-.card > header > span {
-  color: #7f8992;
-  font-size: 9px;
-}
-
-.ant-badge-status-text {
-  color: #8e969e !important;
-  font-size: 10px !important;
-}
-
-.telemetry,
-.card {
-  overflow: hidden;
-  border: 1px solid #2f353a;
-  border-radius: 4px;
-  background: #1d2023;
-}
-
-.metrics {
-  min-height: 62px;
-  padding: 10px 12px;
-}
-
-.metrics > div {
-  min-width: 0;
-  flex: 1;
-}
-
-.metrics > div + div {
-  padding-left: 13px;
-  border-left: 1px solid #343a40;
-}
-
-.metrics span,
-.pressure span {
-  display: block;
-  color: #7f8992;
-  font-size: 9px;
-}
-
-.metrics strong {
-  display: block;
-  margin-top: 3px;
-  color: #eef1f3;
-  font-size: 17px;
-  font-variant-numeric: tabular-nums;
-  font-weight: 600;
-}
-
-.metrics small {
-  color: #7f8992;
-  font-size: 8px;
-}
-
-.pressure {
-  padding: 9px 12px 10px;
-  border-top: 1px solid #2f353a;
-  background: #1a1d20;
-}
-
-.pressure > div strong {
-  font-size: 10px;
-  font-variant-numeric: tabular-nums;
-}
-
-.pressure .ant-progress {
-  display: block;
-  margin: 3px 0 -2px;
-  line-height: 1;
-}
-
-.pressure p {
-  text-align: right;
-  font-variant-numeric: tabular-nums;
-}
-
-.card > header {
-  min-height: 48px;
-  padding: 9px 11px;
-  border-bottom: 1px solid #2f353a;
-  background: #24282c;
-}
-
-.card > header p {
-  color: #26a8e8;
-  font-size: 8px;
-  font-weight: 700;
-  letter-spacing: 0.12em;
-}
-
-.card h2 {
-  margin-top: 2px;
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.control {
-  padding: 12px 11px 8px;
-}
-
-.control label {
-  font-size: 10px;
-  font-weight: 550;
-}
-
-.control output {
-  color: #64c9f4;
-  font-size: 10px;
-  font-variant-numeric: tabular-nums;
-}
-
-.control .ant-slider {
-  margin: 10px 5px 6px;
-}
-
-.metadata-fields {
-  display: grid;
-  gap: 9px;
-}
-
-.metadata-fields label {
-  display: grid;
-  gap: 4px;
-}
-
-.metadata-fields label > span {
-  color: #8e969e;
-  font-size: 9px;
-}
-
-.metadata-fields output {
-  min-height: 24px;
-  padding: 4px 7px;
-  border: 1px solid #343a40;
-  border-radius: 3px;
-  background: #191c1f;
-}
-
-.control p {
-  display: flex;
-  justify-content: space-between;
-}
-
-.reset.ant-btn,
-.agents.ant-btn {
-  width: calc(100% - 22px);
-  background: #24282c;
-}
-
-.reset.ant-btn {
-  margin: 3px 11px 7px;
-}
-
-.agents.ant-btn {
-  margin: 0 11px 11px;
-  border-color: #167aa9;
-  color: #77d6ff;
-}
-.interaction-hint {
-  display: inline-flex;
-  width: max-content;
-  max-width: calc(100% - 22px);
-  align-self: flex-start;
-  margin: 0 11px 11px;
-  padding: 3px 7px;
-  border: 1px solid #343a40;
-  border-radius: 999px;
-  color: #8e969e;
-  background: #24282c;
-  font-size: 8px;
-  line-height: 1.25;
-}
-
-.reset-backdrop {
-  position: fixed;
-  z-index: 50;
-  inset: 0;
-  display: grid;
-  place-items: center;
-  padding: 18px;
-  background: rgb(0 0 0 / 68%);
-  backdrop-filter: blur(4px);
-}
-
-.reset-dialog {
-  width: 100%;
-  padding: 18px;
-  border: 1px solid #3b4147;
-  border-radius: 8px;
-  background: #24282c;
-  box-shadow: 0 18px 50px rgb(0 0 0 / 45%);
-}
-
-.reset-dialog h3 {
-  margin: 0;
-  font-size: 13px;
-}
-
-.reset-dialog p {
-  margin-top: 7px;
-  color: #8e969e;
-  font-size: 10px;
-  line-height: 1.45;
-}
-
-.reset-dialog > div {
-  display: flex;
-  justify-content: flex-end;
-  gap: 7px;
-  margin-top: 16px;
-}
-
-.smallp {
-  margin-top: 5px;
-  color: #7f8992;
-  font-size: 9px;
-}
+:root { color: #e3edf2; background: #0b1117; font-family: Inter, ui-sans-serif, system-ui, sans-serif; font-synthesis: none; }
+* { box-sizing: border-box; }
+html, body, #app { height: 100%; min-height: 100%; margin: 0; }
+body { min-width: 300px; overflow: hidden; background: #0b1117; }
+h1, h2, p { margin: 0; }
+.panel { display: flex; height: 100vh; min-height: 0; overflow-y: auto; flex-direction: column; gap: 9px; padding: 12px; scrollbar-width: none; }
+.panel::-webkit-scrollbar { display: none; }
+.app-bar, .identity, .card > header, .control > div, .toggles label { display: flex; align-items: center; }
+.app-bar, .card > header, .control > div, .toggles label { justify-content: space-between; }
+.identity { gap: 10px; }
+.dna-mark { width: 28px; height: 28px; border-radius: 50%; background: repeating-linear-gradient(55deg, transparent 0 5px, #72d8ff 6px 7px, transparent 8px 11px), linear-gradient(135deg, #7a38cc, #087ca6); box-shadow: 0 0 18px rgb(53 201 232 / 35%); }
+h1 { font-size: 13px; font-weight: 700; }
+.identity p, .model-status p, .control p, .card > header > span { color: #8297a5; font-size: 9px; }
+.ant-badge-status-text { color: #8297a5 !important; font-size: 10px !important; }
+.model-status, .card { overflow: hidden; border: 1px solid #293846; border-radius: 6px; background: #121b24; }
+.model-status { padding: 11px; background: radial-gradient(circle at 90% 0, rgb(53 201 232 / 9%), transparent 42%), #121b24; }
+.model-status > span, .card > header p { color: #35c9e8; font-size: 8px; font-weight: 750; letter-spacing: .12em; }
+.model-status strong { display: block; margin: 4px 0 6px; font-size: 13px; }
+.model-status .ant-progress { margin: 0; line-height: 1; }
+.model-status p { margin-top: 6px; line-height: 1.4; }
+.card > header { min-height: 47px; padding: 9px 11px; border-bottom: 1px solid #293846; background: #18232e; }
+.card h2 { margin-top: 2px; font-size: 12px; font-weight: 620; }
+.control { padding: 11px; }
+.stack { display: grid; gap: 10px; }
+.scale-rail { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; }
+.scale-rail button { display: grid; place-items: center; min-width: 0; padding: 5px 2px; border: 1px solid #293846; border-radius: 4px; color: #8297a5; background: #0e171f; cursor: pointer; }
+.scale-rail button.active { border-color: #35c9e8; color: #dff8ff; background: #123141; box-shadow: inset 0 0 12px rgb(53 201 232 / 10%); }
+.scale-rail b { font-size: 9px; }.scale-rail span { font-size: 11px; }
+.facts { display: grid; grid-template-columns: 1fr 1fr; border-bottom: 1px solid #293846; }
+.facts div { padding: 8px 11px; }.facts div:nth-child(even) { border-left: 1px solid #293846; }.facts div:nth-child(n+3) { border-top: 1px solid #293846; }
+.facts span { display: block; color: #8297a5; font-size: 8px; }.facts strong { font-size: 10px; font-variant-numeric: tabular-nums; }
+.control label { font-size: 10px; font-weight: 560; }.control output { color: #6bdcf4; font-size: 10px; font-variant-numeric: tabular-nums; }
+.slider-control .ant-slider { margin: 8px 5px 9px; }.slider-control p { display: flex; justify-content: space-between; margin-top: -4px; }
+.toggles { display: grid; gap: 0; padding: 5px 11px; }.toggles label { min-height: 32px; border-bottom: 1px solid #22313d; font-size: 10px; }.toggles label:last-child { border-bottom: 0; }
+.compact-card .control { padding-top: 5px; }
+.reset.ant-btn { border-color: #27657a; color: #8be7f9; background: #142631; }
+.scientific-note { padding: 0 5px 8px; color: #708491; font-size: 8px; line-height: 1.45; }

@@ -63,6 +63,49 @@ stream orbital.parameters_version: u32 {
   init=[1]
 }
 
+// Model 1 is an ideal, equilibrium B-DNA hierarchy. It is a compact
+// nucleotide/base-pair/elastic-helix contract, not an all-atom force field.
+// The canonical 12-base-pair sequence is the Drew-Dickerson dodecamer:
+// 5'-CGCGAATTCGCG-3' paired to its reverse complement.
+stream dna.model: u32 {
+  cap=1 len=1 buffers=2 access=r storage=device domain=shared_presentation
+  init=[1]
+}
+
+stream dna.base_pair_count: u32 {
+  cap=1 len=1 buffers=2 access=r storage=device domain=shared_presentation
+  init=[12]
+}
+
+// Equilibrium B-DNA geometry: 0.34 nm rise and 10.5 base pairs per turn.
+stream dna.helical_rise: f32<m> {
+  cap=1 len=1 buffers=2 access=r storage=device domain=shared_presentation
+  init=[3.4e-10]
+}
+
+stream dna.twist_per_pair: f32 {
+  cap=1 len=1 buffers=2 access=r storage=device domain=shared_presentation
+  init=[0.5983986]
+}
+
+stream dna.helix_radius: f32<m> {
+  cap=1 len=1 buffers=2 access=r storage=device domain=shared_presentation
+  init=[1e-9]
+}
+
+// A reference persistence length for room-temperature double-stranded DNA.
+// It bounds the continuum bending interpretation; it is not an applied force.
+stream dna.persistence_length: f32<m> {
+  cap=1 len=1 buffers=2 access=r storage=device domain=shared_presentation
+  init=[5e-8]
+}
+
+// A=0, C=1, G=2, T=3 for the primary strand.
+stream dna.primary_base: u32 {
+  cap=12 len=12 buffers=2 access=r storage=device domain=shared_presentation
+  init=[1, 2, 1, 2, 0, 0, 3, 3, 1, 2, 1, 2]
+}
+
 stream field.source_version: u32 {
   cap=1 len=1 buffers=1 access=rw storage=device domain=compute_private
   init=[0]
@@ -329,6 +372,8 @@ pass project = project_atom(
 view viewport(
   atom_position=presentation.position
   atom_radius=presentation.radius
+  dna_model=dna.model
+  dna_base_pair_count=dna.base_pair_count
 ) implementations {
   extern glsl {
     vertex_source="shaders/atom.vert"

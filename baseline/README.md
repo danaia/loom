@@ -31,9 +31,12 @@ neutral hydrogen atom as a point nucleus plus a normalized `1s` electron-density
 field sampled over `100^3` GPU cells. A `25^3` hierarchy provides density-aware
 culling, four detail levels, compact shared-presentation streams, and per-LOD
 counters. Its CUDA/Vulkan target opens a dedicated volumetric hydrogen `1s`
-probability-cloud view rather than the procedural crystal. See
-`AI_AGENT_README.md` for the mathematical limits, scaling route, and evidence
-loop an AI coding agent should follow.
+probability-cloud view rather than the procedural crystal. It now also declares
+an ideal B-DNA dodecamer hierarchy and opens a project control panel for moving
+between hydrogen, nucleotide sites, base pairs, double-helix, and continuum
+representations. See `../docs/DNA-SANDBOX.md` for that model's physical limits
+and `AI_AGENT_README.md` for the scaling and evidence loop an AI coding agent
+should follow.
 
 From the repository root:
 

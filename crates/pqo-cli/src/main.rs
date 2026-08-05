@@ -716,21 +716,32 @@ fn run_window(
             .streams
             .iter()
             .any(|stream| stream.name == "field.electron_density");
-        let native_scene = match (has_orbital_model, has_electron_density) {
-            (true, true) => pqo_vulkan::NativeScene::HydrogenAtom,
-            (false, false) => pqo_vulkan::NativeScene::Crystal,
+        let has_dna_model = validated
+            .graph()
+            .resources
+            .streams
+            .iter()
+            .any(|stream| stream.name == "dna.model");
+        let native_scene = match (has_orbital_model, has_electron_density, has_dna_model) {
+            (true, true, true) => pqo_vulkan::NativeScene::DnaSandbox,
+            (true, true, false) => pqo_vulkan::NativeScene::HydrogenAtom,
+            (false, false, false) => pqo_vulkan::NativeScene::Crystal,
             _ => {
                 print_json(&serde_json::json!({
                     "status": "runtime_error",
-                    "message": "the atom view requires both `orbital.model` and `field.electron_density`; refusing to fall back to the crystal scene"
+                    "message": "the multiscale view requires a complete `orbital.model`, `field.electron_density`, and optional `dna.model` contract; refusing to fall back to the crystal scene"
                 }));
                 return Err(1);
             }
         };
-        let title = if native_scene == pqo_vulkan::NativeScene::HydrogenAtom {
-            "Pqo — Hydrogen 1s — CUDA / Vulkan".to_owned()
-        } else {
-            format!("Pqo — {} — CUDA / Vulkan", validated.graph().name)
+        let title = match native_scene {
+            pqo_vulkan::NativeScene::HydrogenAtom => "Pqo — Hydrogen 1s — CUDA / Vulkan".to_owned(),
+            pqo_vulkan::NativeScene::DnaSandbox => {
+                "Pqo — Quantum → B-DNA Sandbox — CUDA / Vulkan".to_owned()
+            }
+            pqo_vulkan::NativeScene::Crystal => {
+                format!("Pqo — {} — CUDA / Vulkan", validated.graph().name)
+            }
         };
         let config = pqo_cuda::CudaConfig {
             ticks: std::env::var("PQO_HEADLESS_TICKS")
@@ -942,6 +953,17 @@ fn serve_linux_panel(
         _ => return Err("Linux UI handshake was rejected".to_owned()),
     }
     let mut values = BTreeMap::from([
+        ("sandbox.scale".to_owned(), 3.0_f32),
+        ("sandbox.thermal".to_owned(), 0.18_f32),
+        ("sandbox.bend".to_owned(), 0.0_f32),
+        ("sandbox.separation".to_owned(), 0.0_f32),
+        ("sandbox.show_orbital".to_owned(), 1.0_f32),
+        ("sandbox.show_bases".to_owned(), 1.0_f32),
+        ("sandbox.base_pairs".to_owned(), 12.0_f32),
+        ("sandbox.zoom".to_owned(), 1.0_f32),
+        ("sandbox.smart_lod".to_owned(), 1.0_f32),
+        ("sandbox.lod_bias".to_owned(), 0.0_f32),
+        ("sandbox.motion".to_owned(), 1.0_f32),
         ("crystal.growth".to_owned(), 0.72_f32),
         ("crystal.anisotropy".to_owned(), 0.68_f32),
         ("crystal.temperature".to_owned(), 0.18_f32),
@@ -975,7 +997,7 @@ fn serve_linux_panel(
                     "type": "reload_status",
                     "generation": generation,
                     "ok": true,
-                    "message": "CUDA crystal UI is current",
+                    "message": "CUDA multiscale sandbox UI is current",
                 });
                 writeln!(stream, "{response}").map_err(|error| error.to_string())?;
                 stream.flush().map_err(|error| error.to_string())?;

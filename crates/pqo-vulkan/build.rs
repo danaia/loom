@@ -6,6 +6,7 @@ fn main() {
         ("shaders/crystal.vert", "vert", "crystal.vert.spv"),
         ("shaders/crystal.frag", "frag", "crystal.frag.spv"),
         ("shaders/atom.frag", "frag", "atom.frag.spv"),
+        ("../../baseline/shaders/dna.frag", "frag", "dna.frag.spv"),
     ] {
         println!("cargo:rerun-if-changed={source}");
         let status = Command::new(env::var_os("PQO_GLSLC").unwrap_or_else(|| "glslc".into()))
