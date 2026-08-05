@@ -1,6 +1,6 @@
-// Gate 1 of the Pqo molecular-water progression: one rigid three-site H2O
-// molecule. The molecule center and quaternion are authoritative; CUDA derives
-// renderer-facing atoms, bonds, and geometry diagnostics every tick.
+// A multiscale water scene: macroscopic liquid is represented as a continuum
+// surface while a selected inspection region resolves one authoritative rigid
+// three-site H2O molecule. The scene never claims to instantiate every molecule.
 
 pqo 0.1
 module water_molecule
@@ -18,6 +18,20 @@ const water_model.oxygen_charge_e: f32 = -0.834
 const water_model.hydrogen_charge_e: f32 = 0.417
 const water_model.sigma_oxygen: f32<m> = 3.15075e-10
 const water_model.epsilon_oxygen: f32<kg*m^2/s^2> = 1.056e-21
+
+// Room-temperature bulk properties used by the macroscopic presentation model.
+// The represented molecule count is metadata conserved across LOD levels.
+const liquid.temperature_kelvin: f32 = 298.15
+const liquid.density_kg_m3: f32 = 997
+const liquid.dynamic_viscosity_pa_s: f32 = 8.90e-4
+const liquid.surface_tension_n_m: f32 = 0.07197
+const liquid.gravity_m_s2: f32 = 9.80665
+const liquid.represented_molecule_count: f32 = 8.0e24
+
+// Interactive solid controls are supplied by the project UI to the Vulkan
+// presentation runtime. A 3 cm sphere displaces about 14.1 g of this water.
+const solids.default_sphere_mass_g: f32 = 18
+const solids.default_sphere_count: u32 = 3
 
 // Model 1 is rigid_water_3site. Quaternion storage is [x, y, z, w].
 stream water.model: u32 {

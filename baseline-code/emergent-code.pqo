@@ -1,0 +1,42 @@
+// PQO owns the initial conditions and rule weights for the browser projection.
+// The UI may submit explicit value overrides through its API boundary.
+
+pqo 0.1
+module emergent_code
+target metal
+
+// @rule spec_attraction|Spec attracts builders|Intent pulls capable agents into its neighborhood.
+const rules.spec_attraction: f32 = 1.25
+// @rule test_inhibition|Tests inhibit regressions|Tests reduce the energy of unsupported changes.
+const rules.test_inhibition: f32 = 1.10
+// @rule api_contracts|API nodes form contracts|Public boundaries attract tests and consumers.
+const rules.api_contracts: f32 = 1.00
+// @rule store_stability|Store stabilizes shared state|Shared state lowers volatility in connected components.
+const rules.store_stability: f32 = 1.15
+
+const growth.ambient_energy: f32 = 0.0008
+const growth.damping: f32 = 0.9992
+
+stream entity.energy: f32 {
+  cap=32 len=32 buffers=1 access=rw storage=device
+  init=[0.92, 0.80, 0.76, 0.72, 0.68, 0.64, 0.60, 0.58, 0.56, 0.54, 0.52, 0.50, 0.48, 0.46, 0.44, 0.42, 0.40, 0.38, 0.36, 0.34, 0.32, 0.30, 0.28, 0.26, 0.24, 0.22, 0.20, 0.18, 0.16, 0.14, 0.12, 0.10]
+}
+
+kernel sustain(
+  energy: rw stream<f32>,
+  ambient_energy: in value<f32>,
+  damping: in value<f32>
+) each i {
+  energy[i] *= damping;
+  energy[i] += ambient_energy;
+}
+
+pass evolve = sustain(
+  energy=entity.energy
+  ambient_energy=growth.ambient_energy
+  damping=growth.damping
+) over entity.energy
+
+flow growth rate=30hz {
+  evolve
+}

@@ -747,9 +747,7 @@ fn run_window(
         };
         let title = match native_scene {
             pqo_vulkan::NativeScene::HydrogenAtom => "Pqo — Hydrogen 1s — CUDA / Vulkan".to_owned(),
-            pqo_vulkan::NativeScene::WaterMolecule => {
-                "Pqo — H₂O — Rigid three-site water".to_owned()
-            }
+            pqo_vulkan::NativeScene::WaterMolecule => "Pqo — Water — Continuum to H₂O".to_owned(),
             pqo_vulkan::NativeScene::Crystal => {
                 format!("Pqo — {} — CUDA / Vulkan", validated.graph().name)
             }
@@ -777,10 +775,7 @@ fn run_window(
                     1
                 })?;
         print_json(&report);
-        let controls = if matches!(
-            native_scene,
-            pqo_vulkan::NativeScene::HydrogenAtom | pqo_vulkan::NativeScene::WaterMolecule
-        ) {
+        let controls = if matches!(native_scene, pqo_vulkan::NativeScene::HydrogenAtom) {
             None
         } else if let (Some(ui), Some(project_root)) = (ui, project_root) {
             let (sender, receiver) = mpsc::channel();
@@ -980,6 +975,9 @@ fn serve_linux_panel(
         ("crystal.smart_lod".to_owned(), 1.0_f32),
         ("crystal.lod_bias".to_owned(), 0.0_f32),
         ("crystal.instance_count".to_owned(), 1.0_f32),
+        ("water.sphere_mass_g".to_owned(), 18.0_f32),
+        ("water.sphere_count".to_owned(), 3.0_f32),
+        ("water.drop_spheres".to_owned(), 0.0_f32),
     ]);
     write_linux_snapshot(&mut stream, &values)?;
     for line in lines {

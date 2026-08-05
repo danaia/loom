@@ -1,2 +1,4 @@
 /target/
 .DS_Store
+/baseline-code/node_modules/
+/examples/water-molecule/ui/node_modules

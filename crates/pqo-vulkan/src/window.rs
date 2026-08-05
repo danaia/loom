@@ -78,6 +78,7 @@ pub fn run_native_window_with_controls(
         .and_then(|value| value.parse::<u64>().ok());
     let mut presented_frames = 0_u64;
     let mut orbiting = false;
+    let mut disturbing_water = false;
     let mut last_cursor: Option<PhysicalPosition<f64>> = None;
 
     event_loop.run_return(|event, _, control_flow| {
@@ -115,8 +116,25 @@ pub fn run_native_window_with_controls(
                     },
                 ..
             } => {
-                orbiting = state == ElementState::Pressed;
-                if !orbiting {
+                if state == ElementState::Pressed {
+                    let cursor = last_cursor.unwrap_or(PhysicalPosition::new(
+                        config.width as f64 * 0.5,
+                        config.height as f64 * 0.5,
+                    ));
+                    let on_water = matches!(config.scene, NativeScene::WaterMolecule)
+                        && cursor.x >= config.width as f64 * 0.19
+                        && cursor.x <= config.width as f64 * 0.81
+                        && cursor.y >= config.height as f64 * 0.24
+                        && cursor.y <= config.height as f64 * 0.72;
+                    disturbing_water = on_water;
+                    orbiting = !on_water;
+                    if disturbing_water {
+                        renderer.disturb_water(cursor, config.width, config.height);
+                    }
+                } else {
+                    orbiting = false;
+                    disturbing_water = false;
+                    renderer.release_water();
                     last_cursor = None;
                 }
             }
@@ -124,15 +142,17 @@ pub fn run_native_window_with_controls(
                 event: WindowEvent::CursorMoved { position, .. },
                 ..
             } => {
-                if orbiting {
+                if disturbing_water {
+                    renderer.disturb_water(position, config.width, config.height);
+                } else if orbiting {
                     if let Some(previous) = last_cursor {
                         renderer.orbit(
                             (position.x - previous.x) as f32 * 0.008,
                             (position.y - previous.y) as f32 * 0.008,
                         );
                     }
-                    last_cursor = Some(position);
                 }
+                last_cursor = Some(position);
             }
             Event::WindowEvent {
                 event: WindowEvent::MouseWheel { delta, .. },
@@ -149,6 +169,8 @@ pub fn run_native_window_with_controls(
                 ..
             } => {
                 orbiting = false;
+                disturbing_water = false;
+                renderer.release_water();
                 last_cursor = None;
             }
             _ => {}
@@ -181,6 +203,7 @@ struct NativeRenderer {
     started: Instant,
     previous_frame: Instant,
     controls: CrystalControls,
+    scene: NativeScene,
 }
 
 #[repr(C)]
@@ -200,6 +223,14 @@ struct CrystalControls {
     smart_lod: f32,
     lod_bias: f32,
     instance_count: f32,
+    pointer_x: f32,
+    pointer_y: f32,
+    pointer_down: f32,
+    splash_time: f32,
+    viewport_aspect: f32,
+    sphere_mass_g: f32,
+    sphere_count: f32,
+    sphere_drop_time: f32,
 }
 
 impl Default for CrystalControls {
@@ -219,6 +250,14 @@ impl Default for CrystalControls {
             smart_lod: 1.0,
             lod_bias: 0.0,
             instance_count: 1.0,
+            pointer_x: 0.0,
+            pointer_y: 0.0,
+            pointer_down: 0.0,
+            splash_time: -10.0,
+            viewport_aspect: 1180.0 / 760.0,
+            sphere_mass_g: 18.0,
+            sphere_count: 3.0,
+            sphere_drop_time: -10.0,
         }
     }
 }
@@ -245,6 +284,9 @@ impl CrystalControls {
             "crystal.smart_lod" => self.smart_lod = if value >= 0.5 { 1.0 } else { 0.0 },
             "crystal.lod_bias" => self.lod_bias = value.clamp(-2.0, 2.0),
             "crystal.instance_count" => self.instance_count = value.round().clamp(1.0, 1_000.0),
+            "water.sphere_mass_g" => self.sphere_mass_g = value.clamp(2.0, 120.0),
+            "water.sphere_count" => self.sphere_count = value.round().clamp(1.0, 5.0),
+            "water.drop_spheres" => self.sphere_drop_time = self.time,
             _ => {}
         }
     }
@@ -256,6 +298,10 @@ impl CrystalControls {
 
     fn zoom(&mut self, amount: f32) {
         self.zoom = (self.zoom * amount.exp()).clamp(0.55, 2.5);
+    }
+
+    fn zoom_water(&mut self, amount: f32) {
+        self.zoom = (self.zoom * amount.exp()).clamp(0.48, 12.0);
     }
 }
 
@@ -553,9 +599,15 @@ impl NativeRenderer {
         if scene == NativeScene::HydrogenAtom {
             controls.zoom = 2.0;
         } else if scene == NativeScene::WaterMolecule {
-            controls.yaw = -0.32;
-            controls.pitch = -1.15;
-            controls.zoom = 1.35;
+            controls.yaw = -0.10;
+            controls.pitch = -0.10;
+            controls.zoom = 0.72;
+            controls.viewport_aspect = extent.width as f32 / extent.height.max(1) as f32;
+            if let Ok(value) = std::env::var("PQO_WATER_START_ZOOM") {
+                if let Ok(value) = value.parse::<f32>() {
+                    controls.zoom = value.clamp(0.48, 12.0);
+                }
+            }
         }
         Ok(Self {
             entry,
@@ -579,6 +631,7 @@ impl NativeRenderer {
             started: Instant::now(),
             previous_frame: Instant::now(),
             controls,
+            scene,
         })
     }
 
@@ -591,7 +644,22 @@ impl NativeRenderer {
     }
 
     fn zoom(&mut self, amount: f32) {
-        self.controls.zoom(amount);
+        if matches!(self.scene, NativeScene::WaterMolecule) {
+            self.controls.zoom_water(amount);
+        } else {
+            self.controls.zoom(amount);
+        }
+    }
+
+    fn disturb_water(&mut self, position: PhysicalPosition<f64>, width: u32, height: u32) {
+        self.controls.pointer_x = position.x as f32 / width.max(1) as f32 * 2.0 - 1.0;
+        self.controls.pointer_y = 1.0 - position.y as f32 / height.max(1) as f32 * 2.0;
+        self.controls.pointer_down = 1.0;
+        self.controls.splash_time = self.started.elapsed().as_secs_f32();
+    }
+
+    fn release_water(&mut self) {
+        self.controls.pointer_down = 0.0;
     }
 
     unsafe fn draw(&mut self) -> Result<(), String> {
@@ -899,5 +967,27 @@ mod tests {
         assert_eq!(controls.yaw, 1.45);
         assert_eq!(controls.pitch, -1.45);
         assert_eq!(controls.zoom, 2.5);
+    }
+
+    #[test]
+    fn water_zoom_crosses_from_cup_to_molecule_scale() {
+        let mut controls = CrystalControls::default();
+        controls.zoom = 0.72;
+        controls.zoom_water(10.0);
+        assert_eq!(controls.zoom, 12.0);
+        controls.zoom_water(-10.0);
+        assert_eq!(controls.zoom, 0.48);
+    }
+
+    #[test]
+    fn water_sphere_controls_bound_mass_count_and_trigger_drop() {
+        let mut controls = CrystalControls::default();
+        controls.time = 4.25;
+        controls.set("water.sphere_mass_g", 240.0);
+        controls.set("water.sphere_count", 3.6);
+        controls.set("water.drop_spheres", 1.0);
+        assert_eq!(controls.sphere_mass_g, 120.0);
+        assert_eq!(controls.sphere_count, 4.0);
+        assert_eq!(controls.sphere_drop_time, 4.25);
     }
 }
