@@ -19,39 +19,56 @@ const presentation.probability_radius_bohr: f32 = 4
 
 // Charge values are expressed in exact elementary-charge units because Pqo 0.1
 // currently has only m, kg, and s as physical unit bases.
-stream atom.position: f32x3<m> {
+stream nucleus.position: f32x3<m> {
   cap=1 len=1 buffers=1 access=r storage=device domain=compute_private
   init=[[0, 0, 0]]
 }
 
-stream atom.atomic_number: u32 {
+stream nucleus.atomic_number: u32 {
   cap=1 len=1 buffers=1 access=r storage=device domain=compute_private
   init=[1]
 }
 
-stream atom.mass: f32<kg> {
+stream nucleus.mass: f32<kg> {
   cap=1 len=1 buffers=1 access=r storage=device domain=compute_private
   init=[1.67353284e-27]
 }
 
-stream atom.nuclear_charge_e: f32 {
+stream nucleus.charge_e: f32 {
   cap=1 len=1 buffers=1 access=r storage=device domain=compute_private
   init=[1]
 }
 
-stream atom.electron_count: f32 {
+// Model 1 is the analytic, isolated, nonrelativistic hydrogen 1s eigenstate.
+// Other atomic numbers must not reuse this model without a new implementation.
+stream orbital.model: u32 {
+  cap=1 len=1 buffers=1 access=r storage=device domain=compute_private
+  init=[1]
+}
+
+stream orbital.occupation: f32 {
   cap=1 len=1 buffers=1 access=r storage=device domain=compute_private
   init=[1]
 }
 
 // 2022 CODATA Bohr radius. For hydrogen 1s,
 // rho(r) = electron_count / (pi*a0^3) * exp(-2r/a0).
-stream atom.bohr_radius: f32<m> {
+stream orbital.bohr_radius: f32<m> {
   cap=1 len=1 buffers=1 access=r storage=device domain=compute_private
   init=[5.29177210544e-11]
 }
 
-stream atom.color: f32x4 {
+stream orbital.parameters_version: u32 {
+  cap=1 len=1 buffers=1 access=rw storage=device domain=compute_private
+  init=[1]
+}
+
+stream field.source_version: u32 {
+  cap=1 len=1 buffers=1 access=rw storage=device domain=compute_private
+  init=[0]
+}
+
+stream presentation.cloud_color: f32x4 {
   cap=1 len=1 buffers=1 access=r storage=device domain=compute_private
   init=[[0.18, 0.72, 1, 1]]
 }
@@ -71,6 +88,26 @@ stream metrics.total_probability: f32 {
 }
 
 stream metrics.radial_moment: f32<m> {
+  cap=1 len=1 buffers=1 access=rw storage=device domain=compute_private
+  init=[0]
+}
+
+stream metrics.hierarchy_probability: f32 {
+  cap=1 len=1 buffers=1 access=rw storage=device domain=compute_private
+  init=[0]
+}
+
+stream metrics.probability_error: f32 {
+  cap=1 len=1 buffers=1 access=rw storage=device domain=compute_private
+  init=[0]
+}
+
+stream metrics.mean_radius_error: f32<m> {
+  cap=1 len=1 buffers=1 access=rw storage=device domain=compute_private
+  init=[0]
+}
+
+stream metrics.hierarchy_probability_error: f32 {
   cap=1 len=1 buffers=1 access=rw storage=device domain=compute_private
   init=[0]
 }
@@ -127,6 +164,9 @@ stream presentation.visible: u32 {
 kernel reset_observables(
   total_probability: rw all stream<f32>,
   radial_moment: rw all stream<f32,m>,
+  hierarchy_probability: rw all stream<f32>,
+  parameters_version: in all stream<u32>,
+  source_version: in all stream<u32>,
   active_lod_counts: rw stream<u32>
 ) extern cuda {
   source="kernels/baseline-cuda.cu"
@@ -134,9 +174,12 @@ kernel reset_observables(
 }
 
 kernel sample_hydrogen_1s(
-  atom_position: in all stream<f32x3,m>,
-  electron_count: in all stream<f32>,
+  nucleus_position: in all stream<f32x3,m>,
+  orbital_model: in all stream<u32>,
+  occupation: in all stream<f32>,
   bohr_radius: in all stream<f32,m>,
+  parameters_version: in all stream<u32>,
+  source_version: in all stream<u32>,
   width: in value<u32>,
   half_extent: in value<f32,m>,
   electron_density: out stream<f32,m^-3>,
@@ -149,8 +192,10 @@ kernel sample_hydrogen_1s(
 
 kernel classify_density_clusters(
   electron_density: in all stream<f32,m^-3>,
-  electron_count: in all stream<f32>,
+  occupation: in all stream<f32>,
   bohr_radius: in all stream<f32,m>,
+  parameters_version: in all stream<u32>,
+  source_version: in all stream<u32>,
   width: in value<u32>,
   half_extent: in value<f32,m>,
   lod0_density_ratio: in value<f32>,
@@ -161,16 +206,40 @@ kernel classify_density_clusters(
   cluster_probability: out stream<f32>,
   cluster_lod: out stream<u32>,
   cluster_visible: out stream<u32>,
-  active_lod_counts: atomic all stream<u32>
+  active_lod_counts: atomic all stream<u32>,
+  hierarchy_probability: atomic all stream<f32>
 ) extern cuda {
   source="kernels/baseline-cuda.cu"
   entry="baseline_cuda_classify_density_clusters"
 }
 
+kernel finalize_errors(
+  total_probability: in all stream<f32>,
+  radial_moment: in all stream<f32,m>,
+  hierarchy_probability: in all stream<f32>,
+  bohr_radius: in all stream<f32,m>,
+  parameters_version: in all stream<u32>,
+  source_version: in all stream<u32>,
+  probability_error: out stream<f32>,
+  mean_radius_error: out stream<f32,m>,
+  hierarchy_probability_error: out stream<f32>
+) extern cuda {
+  source="kernels/baseline-cuda.cu"
+  entry="baseline_cuda_finalize_errors"
+}
+
+kernel commit_field_version(
+  parameters_version: in all stream<u32>,
+  source_version: rw all stream<u32>
+) extern cuda {
+  source="kernels/baseline-cuda.cu"
+  entry="baseline_cuda_commit_field_version"
+}
+
 kernel project_atom(
-  atom_position: in stream<f32x3,m>,
+  nucleus_position: in stream<f32x3,m>,
   bohr_radius: in stream<f32,m>,
-  atom_color: in stream<f32x4>,
+  cloud_color: in stream<f32x4>,
   probability_radius_bohr: in value<f32>,
   presentation_position: out stream<f32x3,m>,
   presentation_radius: out stream<f32,m>,
@@ -185,13 +254,19 @@ kernel project_atom(
 pass reset = reset_observables(
   total_probability=metrics.total_probability
   radial_moment=metrics.radial_moment
+  hierarchy_probability=metrics.hierarchy_probability
+  parameters_version=orbital.parameters_version
+  source_version=field.source_version
   active_lod_counts=hierarchy.active_lod_counts
 ) over hierarchy.active_lod_counts
 
 pass sample = sample_hydrogen_1s(
-  atom_position=atom.position
-  electron_count=atom.electron_count
-  bohr_radius=atom.bohr_radius
+  nucleus_position=nucleus.position
+  orbital_model=orbital.model
+  occupation=orbital.occupation
+  bohr_radius=orbital.bohr_radius
+  parameters_version=orbital.parameters_version
+  source_version=field.source_version
   width=field.width
   half_extent=field.half_extent
   electron_density=field.electron_density
@@ -201,8 +276,10 @@ pass sample = sample_hydrogen_1s(
 
 pass classify = classify_density_clusters(
   electron_density=field.electron_density
-  electron_count=atom.electron_count
-  bohr_radius=atom.bohr_radius
+  occupation=orbital.occupation
+  bohr_radius=orbital.bohr_radius
+  parameters_version=orbital.parameters_version
+  source_version=field.source_version
   width=field.width
   half_extent=field.half_extent
   lod0_density_ratio=field.lod0_density_ratio
@@ -214,19 +291,37 @@ pass classify = classify_density_clusters(
   cluster_lod=hierarchy.cluster_lod
   cluster_visible=hierarchy.cluster_visible
   active_lod_counts=hierarchy.active_lod_counts
+  hierarchy_probability=metrics.hierarchy_probability
 ) over hierarchy.cluster_lod
 
+pass finalize = finalize_errors(
+  total_probability=metrics.total_probability
+  radial_moment=metrics.radial_moment
+  hierarchy_probability=metrics.hierarchy_probability
+  bohr_radius=orbital.bohr_radius
+  parameters_version=orbital.parameters_version
+  source_version=field.source_version
+  probability_error=metrics.probability_error
+  mean_radius_error=metrics.mean_radius_error
+  hierarchy_probability_error=metrics.hierarchy_probability_error
+) over metrics.probability_error
+
+pass commit = commit_field_version(
+  parameters_version=orbital.parameters_version
+  source_version=field.source_version
+) over field.source_version
+
 pass project = project_atom(
-  atom_position=atom.position
-  bohr_radius=atom.bohr_radius
-  atom_color=atom.color
+  nucleus_position=nucleus.position
+  bohr_radius=orbital.bohr_radius
+  cloud_color=presentation.cloud_color
   probability_radius_bohr=presentation.probability_radius_bohr
   presentation_position=presentation.position
   presentation_radius=presentation.radius
   presentation_color=presentation.color
   presentation_lod=presentation.lod
   presentation_visible=presentation.visible
-) over atom.position
+) over nucleus.position
 
 // The current Vulkan runtime recognizes the hydrogen density contract and uses
 // this analytic orbital shader. The declared reads keep presentation intent in
@@ -244,6 +339,6 @@ view viewport(
 }
 
 flow simulation rate=120hz {
-  reset -> sample -> classify -> project
+  reset -> sample -> classify -> finalize -> commit -> project
   draw viewport after project
 }

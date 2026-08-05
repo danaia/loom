@@ -704,17 +704,33 @@ fn run_window(
     ui: Option<package::LoadedUi>,
 ) -> Result<(), u8> {
     if validated.target_profile() == TargetProfile::cuda_vulkan() {
-        let title = format!("Pqo — {} — CUDA / Vulkan", validated.graph().name);
-        let native_scene = if validated
+        let has_orbital_model = validated
             .graph()
             .resources
             .streams
             .iter()
-            .any(|stream| stream.name == "field.electron_density")
-        {
-            pqo_vulkan::NativeScene::HydrogenAtom
+            .any(|stream| stream.name == "orbital.model");
+        let has_electron_density = validated
+            .graph()
+            .resources
+            .streams
+            .iter()
+            .any(|stream| stream.name == "field.electron_density");
+        let native_scene = match (has_orbital_model, has_electron_density) {
+            (true, true) => pqo_vulkan::NativeScene::HydrogenAtom,
+            (false, false) => pqo_vulkan::NativeScene::Crystal,
+            _ => {
+                print_json(&serde_json::json!({
+                    "status": "runtime_error",
+                    "message": "the atom view requires both `orbital.model` and `field.electron_density`; refusing to fall back to the crystal scene"
+                }));
+                return Err(1);
+            }
+        };
+        let title = if native_scene == pqo_vulkan::NativeScene::HydrogenAtom {
+            "Pqo — Hydrogen 1s — CUDA / Vulkan".to_owned()
         } else {
-            pqo_vulkan::NativeScene::Crystal
+            format!("Pqo — {} — CUDA / Vulkan", validated.graph().name)
         };
         let config = pqo_cuda::CudaConfig {
             ticks: std::env::var("PQO_HEADLESS_TICKS")
@@ -739,7 +755,9 @@ fn run_window(
                     1
                 })?;
         print_json(&report);
-        let controls = if let (Some(ui), Some(project_root)) = (ui, project_root) {
+        let controls = if native_scene == pqo_vulkan::NativeScene::HydrogenAtom {
+            None
+        } else if let (Some(ui), Some(project_root)) = (ui, project_root) {
             let (sender, receiver) = mpsc::channel();
             std::thread::spawn(move || {
                 if let Err(message) =

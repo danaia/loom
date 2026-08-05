@@ -19,6 +19,18 @@ Its primitive is:
 point nucleus + complex wavefunction + probability density + observables
 ```
 
+The executable state makes those authorities explicit:
+
+```text
+nucleus.*   identity, point position, mass, and charge
+orbital.*   model, occupation, Bohr scale, and parameter version
+field.*     sampled density and the source version it represents
+```
+
+`orbital.model=1` means only `analytic_hydrogen_1s`. Changing
+`nucleus.atomic_number` does not silently turn this implementation into carbon
+or another many-electron atom.
+
 ## Exact model boundary
 
 Within the time-independent, nonrelativistic Schrödinger equation, a fixed
@@ -78,6 +90,9 @@ while their errors remain explicit in:
 
 - `metrics.total_probability`
 - `metrics.radial_moment`
+- `metrics.probability_error`
+- `metrics.mean_radius_error`
+- `metrics.hierarchy_probability_error`
 
 After each density evaluation, require approximately:
 
@@ -93,7 +108,17 @@ integrated probability     0.99996793
 computed mean radius       7.9378046e-11 m
 analytic mean radius       7.9376582e-11 m
 mean-radius relative error 1.84e-5
+absolute probability error 3.17e-5
+mean-radius absolute error  1.47e-15 m
+hierarchy conservation error 7.81e-6
 ```
+
+The field is versioned. On the first tick,
+`orbital.parameters_version != field.source_version`, so CUDA evaluates the
+field and hierarchy, records errors, then commits the source version. Later
+ticks preserve the field and metrics while gated threads exit before expensive
+math. The CUDA Graph still launches those kernels; true conditional dispatch is
+a later runtime optimization.
 
 ## What the Vulkan view means
 

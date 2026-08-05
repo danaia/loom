@@ -29,7 +29,9 @@ it does not own the simulation.
 The CUDA graph intentionally begins with one atom and preserves the architecture
 needed to grow:
 
-- structure-of-arrays atomic state in `atom.*`;
+- explicitly separated `nucleus.*`, `orbital.*`, and `field.*` state;
+- `orbital.model=1` as a narrow analytic-hydrogen-1s contract rather than a
+  misleading general-element claim;
 - a point nucleus plus the normalized hydrogen `1s` probability density
   `rho(r) = exp(-2r/a0) / (pi*a0^3)`;
 - exactly one million cell-centred field samples in `field.electron_density`;
@@ -94,7 +96,7 @@ have electric current or charge among its physical unit bases.
 The checked-in `100^3` domain is one million computational cells sampling one
 atom; it is not one million interacting atoms. Never allocate a private `100^3`
 density field for every atom. For a `100^3` atomic lattice, turn the aligned
-`atom.*` state into one-million-element SoA streams, deposit all atoms into one
+`nucleus.*` and `orbital.*` state into one-million-element SoA streams, deposit all atoms into one
 shared spatial field, and use fixed-radius cell lists or Verlet lists. Evaluate
 pair interactions only within a cutoff and apply Newton's third law through a
 race-free gather or explicitly validated atomic scheme.
@@ -159,6 +161,8 @@ For this baseline, reject a change if the integrated probability materially
 departs from `1` or if `radial_moment / total_probability` materially departs
 from the analytic result `1.5*a0`. Re-run those invariants whenever field bounds,
 resolution, sampling position, density math, or reduction strategy changes.
-The graph currently recomputes the field every tick so future atom parameters
-may evolve without host intervention; a truly static production scene should
-reuse a completed field instead of paying that cost repeatedly.
+`orbital.parameters_version` and `field.source_version` gate the expensive
+density, hierarchy, reduction, and error work. A static atom reuses its completed
+field after the first tick. The current CUDA Graph still launches the gated
+kernels, whose threads exit immediately; eliminating even that launch work
+requires device-resident conditional dispatch in a later runtime gate.

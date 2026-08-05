@@ -34,12 +34,12 @@ __device__ __forceinline__ unsigned int pqo_dispatch_count(
 
 __device__ __forceinline__ float hydrogen_1s_density(
     const float radius,
-    const float electron_count,
+    const float occupation,
     const float bohr_radius)
 {
     constexpr float inverse_pi = 0.3183098861837907f;
     const float inverse_a0 = 1.0f / bohr_radius;
-    const float normalization = electron_count * inverse_pi
+    const float normalization = occupation * inverse_pi
         * inverse_a0 * inverse_a0 * inverse_a0;
     return normalization * expf(-2.0f * radius * inverse_a0);
 }
@@ -47,24 +47,32 @@ __device__ __forceinline__ float hydrogen_1s_density(
 extern "C" __global__ void baseline_cuda_reset_observables(
     float* total_probability,
     float* radial_moment,
+    float* hierarchy_probability,
+    const unsigned int* parameters_version,
+    const unsigned int* source_version,
     unsigned int* active_lod_counts,
     const unsigned long long dynamic_count,
     const unsigned int maximum_count)
 {
     const unsigned int index = blockIdx.x * blockDim.x + threadIdx.x;
     const unsigned int count = pqo_dispatch_count(dynamic_count, maximum_count);
-    if (index >= count) return;
+    const bool dirty = parameters_version[0] != source_version[0];
+    if (index >= count || !dirty) return;
     active_lod_counts[index] = 0;
     if (index == 0) {
         total_probability[0] = 0.0f;
         radial_moment[0] = 0.0f;
+        hierarchy_probability[0] = 0.0f;
     }
 }
 
 extern "C" __global__ void baseline_cuda_sample_hydrogen_1s(
-    const PqoFloat3* atom_position,
-    const float* electron_count,
+    const PqoFloat3* nucleus_position,
+    const unsigned int* orbital_model,
+    const float* occupation,
     const float* bohr_radius,
+    const unsigned int* parameters_version,
+    const unsigned int* source_version,
     const unsigned int* width,
     const float* half_extent,
     float* electron_density,
@@ -79,7 +87,8 @@ extern "C" __global__ void baseline_cuda_sample_hydrogen_1s(
     const unsigned int index = blockIdx.x * blockDim.x + threadIdx.x;
     const unsigned int local_index = threadIdx.x;
     const unsigned int count = pqo_dispatch_count(dynamic_count, maximum_count);
-    const bool active = index < count;
+    const bool dirty = parameters_version[0] != source_version[0];
+    const bool active = index < count && dirty && orbital_model[0] == 1;
 
     float probability = 0.0f;
     float radial_probability = 0.0f;
@@ -92,7 +101,7 @@ extern "C" __global__ void baseline_cuda_sample_hydrogen_1s(
         const unsigned int y = (index / grid_width) % grid_width;
         const unsigned int z = index / plane;
         const float spacing = (2.0f * half_extent[0]) / static_cast<float>(grid_width);
-        const PqoFloat3 center = atom_position[0];
+        const PqoFloat3 center = nucleus_position[0];
         const float sample_x = -half_extent[0] + (static_cast<float>(x) + 0.5f) * spacing;
         const float sample_y = -half_extent[0] + (static_cast<float>(y) + 0.5f) * spacing;
         const float sample_z = -half_extent[0] + (static_cast<float>(z) + 0.5f) * spacing;
@@ -102,7 +111,7 @@ extern "C" __global__ void baseline_cuda_sample_hydrogen_1s(
         const float radius = sqrtf(dx * dx + dy * dy + dz * dz);
         const float density = hydrogen_1s_density(
             radius,
-            electron_count[0],
+            occupation[0],
             bohr_radius[0]);
         const float voxel_volume = spacing * spacing * spacing;
         probability = density * voxel_volume;
@@ -123,7 +132,7 @@ extern "C" __global__ void baseline_cuda_sample_hydrogen_1s(
         }
         __syncthreads();
     }
-    if (local_index == 0) {
+    if (local_index == 0 && dirty) {
         atomicAdd(total_probability, probability_sums[0]);
         atomicAdd(radial_moment, radial_moment_sums[0]);
     }
@@ -131,8 +140,10 @@ extern "C" __global__ void baseline_cuda_sample_hydrogen_1s(
 
 extern "C" __global__ void baseline_cuda_classify_density_clusters(
     const float* electron_density,
-    const float* electron_count,
+    const float* occupation,
     const float* bohr_radius,
+    const unsigned int* parameters_version,
+    const unsigned int* source_version,
     const unsigned int* width,
     const float* half_extent,
     const float* lod0_density_ratio,
@@ -144,12 +155,14 @@ extern "C" __global__ void baseline_cuda_classify_density_clusters(
     unsigned int* cluster_lod,
     unsigned int* cluster_visible,
     unsigned int* active_lod_counts,
+    float* hierarchy_probability,
     const unsigned long long dynamic_count,
     const unsigned int maximum_count)
 {
     const unsigned int index = blockIdx.x * blockDim.x + threadIdx.x;
     const unsigned int count = pqo_dispatch_count(dynamic_count, maximum_count);
-    if (index >= count) return;
+    const bool dirty = parameters_version[0] != source_version[0];
+    if (index >= count || !dirty) return;
 
     const unsigned int grid_width = min(width[0], PQO_ATOM_FIELD_WIDTH);
     const unsigned int cluster_x = index % PQO_CLUSTERS_PER_AXIS;
@@ -179,7 +192,7 @@ extern "C" __global__ void baseline_cuda_classify_density_clusters(
     const float voxel_volume = spacing * spacing * spacing;
     const float peak_density = hydrogen_1s_density(
         0.0f,
-        electron_count[0],
+        occupation[0],
         bohr_radius[0]);
     const float relative_density = maximum_density / peak_density;
     const bool visible = relative_density >= visible_density_ratio[0];
@@ -193,16 +206,55 @@ extern "C" __global__ void baseline_cuda_classify_density_clusters(
     }
 
     cluster_max_density[index] = maximum_density;
-    cluster_probability[index] = density_sum * voxel_volume;
+    const float integrated_probability = density_sum * voxel_volume;
+    cluster_probability[index] = integrated_probability;
     cluster_lod[index] = lod;
     cluster_visible[index] = visible ? 1u : 0u;
     if (visible) atomicAdd(&active_lod_counts[lod], 1u);
+    atomicAdd(hierarchy_probability, integrated_probability);
+}
+
+extern "C" __global__ void baseline_cuda_finalize_errors(
+    const float* total_probability,
+    const float* radial_moment,
+    const float* hierarchy_probability,
+    const float* bohr_radius,
+    const unsigned int* parameters_version,
+    const unsigned int* source_version,
+    float* probability_error,
+    float* mean_radius_error,
+    float* hierarchy_probability_error,
+    const unsigned long long dynamic_count,
+    const unsigned int maximum_count)
+{
+    const unsigned int index = blockIdx.x * blockDim.x + threadIdx.x;
+    const unsigned int count = pqo_dispatch_count(dynamic_count, maximum_count);
+    const bool dirty = parameters_version[0] != source_version[0];
+    if (index >= count || !dirty) return;
+    const float probability = total_probability[0];
+    const float safe_probability = fmaxf(probability, 1.0e-20f);
+    const float mean_radius = radial_moment[0] / safe_probability;
+    probability_error[index] = fabsf(1.0f - probability);
+    mean_radius_error[index] = fabsf(mean_radius - 1.5f * bohr_radius[0]);
+    hierarchy_probability_error[index] = fabsf(hierarchy_probability[0] - probability);
+}
+
+extern "C" __global__ void baseline_cuda_commit_field_version(
+    const unsigned int* parameters_version,
+    unsigned int* source_version,
+    const unsigned long long dynamic_count,
+    const unsigned int maximum_count)
+{
+    const unsigned int index = blockIdx.x * blockDim.x + threadIdx.x;
+    const unsigned int count = pqo_dispatch_count(dynamic_count, maximum_count);
+    if (index >= count) return;
+    source_version[index] = parameters_version[index];
 }
 
 extern "C" __global__ void baseline_cuda_project_atom(
-    const PqoFloat3* atom_position,
+    const PqoFloat3* nucleus_position,
     const float* bohr_radius,
-    const PqoFloat4* atom_color,
+    const PqoFloat4* cloud_color,
     const float* probability_radius_bohr,
     PqoFloat3* presentation_position,
     float* presentation_radius,
@@ -215,9 +267,9 @@ extern "C" __global__ void baseline_cuda_project_atom(
     const unsigned int index = blockIdx.x * blockDim.x + threadIdx.x;
     const unsigned int count = pqo_dispatch_count(dynamic_count, maximum_count);
     if (index >= count) return;
-    presentation_position[index] = atom_position[index];
+    presentation_position[index] = nucleus_position[index];
     presentation_radius[index] = probability_radius_bohr[0] * bohr_radius[index];
-    presentation_color[index] = atom_color[index];
+    presentation_color[index] = cloud_color[index];
     presentation_lod[index] = 0;
     presentation_visible[index] = 1;
 }
