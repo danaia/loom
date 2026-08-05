@@ -1,0 +1,145 @@
+// Linux/NVIDIA single-particle starter with GPU-resident LOD metadata.
+//
+// The particle count is deliberately one. The streams and pass boundaries are
+// shaped so a new world can scale the population without moving simulation,
+// visibility, or detail selection through the CPU.
+
+pqo 0.1
+module baseline_cuda
+targets [cuda-vulkan, cuda-headless]
+
+const world.gravity: f32x3<m/s^2> = [0, 0, 0]
+const world.velocity_retention: f32 = 0.9995
+
+const camera.position: f32x3<m> = [0, 0, 3]
+const camera.cull_distance: f32<m> = 256
+const camera.lod0_distance: f32<m> = 8
+const camera.lod1_distance: f32<m> = 24
+const camera.lod2_distance: f32<m> = 64
+
+stream particle.position: f32x3<m> {
+  cap=1 len=1 buffers=1 access=rw storage=device domain=compute_private
+  init=[[0, 0, 0]]
+}
+
+stream particle.velocity: f32x3<m/s> {
+  cap=1 len=1 buffers=1 access=rw storage=device domain=compute_private
+  init=[[0.18, 0.07, 0]]
+}
+
+stream particle.radius: f32<m> {
+  cap=1 len=1 buffers=1 access=r storage=device domain=compute_private
+  init=[0.05]
+}
+
+stream particle.color: f32x4 {
+  cap=1 len=1 buffers=1 access=r storage=device domain=compute_private
+  init=[[0.18, 0.72, 1, 1]]
+}
+
+// Compact renderer-facing data. Two versions make the ownership boundary ready
+// for a CUDA/Vulkan presentation ring without duplicating authoritative state.
+stream presentation.position: f32x3<m> {
+  cap=1 len=1 buffers=2 access=rw storage=device domain=shared_presentation
+  init=[[0, 0, 0]]
+}
+
+stream presentation.radius: f32<m> {
+  cap=1 len=1 buffers=2 access=rw storage=device domain=shared_presentation
+  init=[0]
+}
+
+stream presentation.color: f32x4 {
+  cap=1 len=1 buffers=2 access=rw storage=device domain=shared_presentation
+  init=[[0, 0, 0, 0]]
+}
+
+stream presentation.lod: u32 {
+  cap=1 len=1 buffers=2 access=rw storage=device domain=shared_presentation
+  init=[3]
+}
+
+stream presentation.visible: u32 {
+  cap=1 len=1 buffers=2 access=rw storage=device domain=shared_presentation
+  init=[0]
+}
+
+// One counter per detail class: full, medium, coarse, and impostor.
+stream presentation.active_lod_counts: u32 {
+  cap=4 len=4 buffers=2 access=rw storage=device domain=shared_presentation
+  init=[0, 0, 0, 0]
+}
+
+// Same-index arithmetic stays native Pqo and is compiled to CUDA for both
+// declared targets. This keeps the physical rule target-neutral.
+kernel integrate(
+  position: rw stream<f32x3,m>,
+  velocity: rw stream<f32x3,m/s>,
+  gravity: in value<f32x3,m/s^2>,
+  velocity_retention: in value<f32>,
+  dt: in value<f32,s>
+) each i {
+  velocity[i] += gravity * dt;
+  velocity[i] *= velocity_retention;
+  position[i] += velocity[i] * dt;
+}
+
+kernel clear_lod_counts(
+  active_lod_counts: rw stream<u32>
+) extern cuda {
+  source="kernels/baseline-cuda.cu"
+  entry="baseline_cuda_clear_lod_counts"
+}
+
+kernel classify_for_presentation(
+  particle_position: in stream<f32x3,m>,
+  particle_radius: in stream<f32,m>,
+  particle_color: in stream<f32x4>,
+  camera_position: in value<f32x3,m>,
+  cull_distance: in value<f32,m>,
+  lod0_distance: in value<f32,m>,
+  lod1_distance: in value<f32,m>,
+  lod2_distance: in value<f32,m>,
+  presentation_position: out stream<f32x3,m>,
+  presentation_radius: out stream<f32,m>,
+  presentation_color: out stream<f32x4>,
+  presentation_lod: out stream<u32>,
+  presentation_visible: out stream<u32>,
+  active_lod_counts: atomic all stream<u32>
+) extern cuda {
+  source="kernels/baseline-cuda.cu"
+  entry="baseline_cuda_classify_for_presentation"
+}
+
+pass clear_lod = clear_lod_counts(
+  active_lod_counts=presentation.active_lod_counts
+) over presentation.active_lod_counts
+
+pass move = integrate(
+  position=particle.position
+  velocity=particle.velocity
+  gravity=world.gravity
+  velocity_retention=world.velocity_retention
+  dt=simulation.fixed_dt
+) over particle.position
+
+pass classify = classify_for_presentation(
+  particle_position=particle.position
+  particle_radius=particle.radius
+  particle_color=particle.color
+  camera_position=camera.position
+  cull_distance=camera.cull_distance
+  lod0_distance=camera.lod0_distance
+  lod1_distance=camera.lod1_distance
+  lod2_distance=camera.lod2_distance
+  presentation_position=presentation.position
+  presentation_radius=presentation.radius
+  presentation_color=presentation.color
+  presentation_lod=presentation.lod
+  presentation_visible=presentation.visible
+  active_lod_counts=presentation.active_lod_counts
+) over particle.position
+
+flow simulation rate=120hz {
+  clear_lod -> move -> classify
+}

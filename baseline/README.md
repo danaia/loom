@@ -26,12 +26,26 @@ The project keeps the full application path ready for extension:
 - FPS, GPU memory, GPU frame-time, budget, and pressure telemetry
 - a portable `.lmp` build
 
+Linux/NVIDIA projects can start from `baseline-cuda.pqo`. It deliberately runs
+one particle while retaining GPU-resident simulation, visibility culling,
+four-level LOD classification, compact shared-presentation streams, and
+per-LOD counters. See `AI_AGENT_README.md` for the architecture and evidence
+loop an AI coding agent should follow when growing either starter into a
+high-performance 3D world.
+
 From the repository root:
 
 ```sh
 pqo check baseline/baseline.pqo
 pqo build baseline/baseline.pqo
 pqo baseline/baseline.lmp
+```
+
+CUDA headless validation and execution:
+
+```sh
+pqo check baseline/baseline-cuda.pqo --target cuda-headless
+PQO_HEADLESS_TICKS=120 pqo run baseline/baseline-cuda.pqo --target cuda-headless
 ```
 
 `Space drag` defaults to zero. The viewer wraps particle positions at the

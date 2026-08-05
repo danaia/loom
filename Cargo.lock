@@ -2758,6 +2758,7 @@ version = "0.1.19"
 dependencies = [
  "cc",
  "pqo-core",
+ "pqo-syntax",
  "pqo-validator",
  "serde",
  "serde_json",

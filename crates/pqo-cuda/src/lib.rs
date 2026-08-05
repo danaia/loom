@@ -12,9 +12,9 @@ use std::{
 
 use pqo_core::{
     Backend, ComputeBackend, DataType, DispatchDomain, Literal, ResourceId, ScalarType,
-    StreamInitializer, StreamLength, ValueKind, ViewBackend,
+    ScheduleItemId, StreamInitializer, StreamLength, ValueKind, ViewBackend,
 };
-use pqo_validator::ValidatedModuleGraph;
+use pqo_validator::{ExecutionSchedule, PlannedPass, ValidatedModuleGraph};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -590,7 +590,8 @@ unsafe fn execute_in_context(
         unsafe { cuStreamBeginCapture(stream, CU_STREAM_CAPTURE_MODE_GLOBAL) },
         "cuStreamBeginCapture",
     )?;
-    for pass in &validated.execution_plan().schedules[0].passes {
+    let scheduled_passes = scheduled_cuda_passes(&validated.execution_plan().schedules[0])?;
+    for pass in scheduled_passes {
         let entry =
             CString::new(pass.implementation.entry.as_str()).map_err(|error| error.to_string())?;
         let mut function = ptr::null_mut();
@@ -805,6 +806,28 @@ unsafe fn execute_in_context(
     })
 }
 
+fn scheduled_cuda_passes(schedule: &ExecutionSchedule) -> Result<Vec<&PlannedPass>, String> {
+    schedule
+        .order
+        .iter()
+        .filter_map(|item| match item {
+            ScheduleItemId::Pass(pass_id) => Some(
+                schedule
+                    .passes
+                    .iter()
+                    .find(|pass| pass.pass == *pass_id)
+                    .ok_or_else(|| {
+                        format!(
+                            "CUDA execution plan order references missing pass {}",
+                            pass_id.0
+                        )
+                    }),
+            ),
+            ScheduleItemId::View(_) => None,
+        })
+        .collect()
+}
+
 fn summarize_timings(mut samples: Vec<f32>) -> CudaTimingSummary {
     samples.sort_by(|left, right| left.total_cmp(right));
     let percentile = |percent: f32| {
@@ -1006,4 +1029,50 @@ fn uuid_string(bytes: &[u8; 16]) -> String {
         output.push_str(&format!("{byte:02x}"));
     }
     output
+}
+
+#[cfg(test)]
+mod tests {
+    use super::scheduled_cuda_passes;
+    use pqo_core::TargetProfile;
+    use pqo_syntax::parse;
+    use pqo_validator::Validator;
+
+    #[test]
+    fn cuda_capture_follows_declared_flow_instead_of_canonical_pass_storage() {
+        let graph = parse(
+            r#"pqo 0.1
+module cuda_schedule_order
+target portable
+
+stream state: f32 {
+  cap=1 len=1 buffers=1 access=rw storage=device domain=compute_private
+  init=[0]
+}
+
+kernel z_kernel(state: rw stream<f32>) each i { state[i] += 1; }
+kernel a_kernel(state: rw stream<f32>) each i { state[i] += 2; }
+kernel m_kernel(state: rw stream<f32>) each i { state[i] += 3; }
+
+pass z_last = z_kernel(state=state) over state
+pass a_first = a_kernel(state=state) over state
+pass m_middle = m_kernel(state=state) over state
+
+flow simulation rate=120hz {
+  z_last -> a_first -> m_middle
+}
+"#,
+        )
+        .expect("valid source");
+        let report = Validator::validate_for(&graph, TargetProfile::cuda_headless());
+        let validated = report.validated.expect("valid CUDA graph");
+        let ordered = scheduled_cuda_passes(&validated.execution_plan().schedules[0])
+            .expect("resolved scheduled passes");
+        let names = ordered
+            .iter()
+            .map(|pass| graph.pass(pass.pass).expect("pass node").name.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(names, ["z_last", "a_first", "m_middle"]);
+    }
 }
